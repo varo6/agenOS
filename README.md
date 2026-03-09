@@ -24,6 +24,7 @@ En esta primera iteracion el repositorio deja preparada la estructura general de
 Requisitos del host:
 
 - Docker disponible para el usuario actual
+- Para pruebas locales en Arch: `qemu-desktop` y opcionalmente `edk2-ovmf`
 
 Comandos:
 
@@ -32,6 +33,34 @@ make build
 ```
 
 La ISO resultante se copia a `dist/`.
+
+## Probar la ISO en local
+
+Si ya tienes una ISO en `dist/`, puedes arrancarla directamente en una VM local:
+
+```bash
+make vm-live
+```
+
+Eso reutiliza un disco persistente en `state/qemu/` para que el ciclo de instalacion y re-prueba sea rapido. Para arrancar el sistema ya instalado en ese disco:
+
+```bash
+make vm-disk
+```
+
+Si quieres reinstalar desde cero y limpiar el estado persistente de la VM:
+
+```bash
+make vm-reset
+```
+
+Tambien tienes el atajo:
+
+```bash
+make quick-test
+```
+
+Mas detalle en `docs/installer/quick-test.md`.
 
 ## Estado actual
 

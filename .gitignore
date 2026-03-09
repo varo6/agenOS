@@ -1,4 +1,5 @@
 dist/
+state/
 build/live-build/.build/
 build/live-build/binary/
 build/live-build/cache/
