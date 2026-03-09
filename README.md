@@ -32,7 +32,13 @@ Comandos:
 make build
 ```
 
-La ISO resultante se copia a `dist/`.
+La ISO resultante se copia a `dist/`. El build normal reutiliza la cache de `live-build` para acelerar compilaciones repetidas.
+
+Si necesitas forzar un build completamente en frio:
+
+```bash
+LB_PURGE=1 make build
+```
 
 ## Probar la ISO en local
 
@@ -61,6 +67,22 @@ make quick-test
 ```
 
 Mas detalle en `docs/installer/quick-test.md`.
+
+## Publicar una release
+
+Si ya tienes una ISO en `dist/`, puedes publicarla en el servidor para descargarla luego por `rsync` desde tu portatil:
+
+```bash
+make release VERSION=v0.1.0
+```
+
+Si quieres compilar y publicar en un solo paso:
+
+```bash
+make release-build VERSION=v0.1.0
+```
+
+Por defecto se publica en `/srv/agenos/releases/` y se actualiza el symlink `latest`. Mas detalle en `docs/installer/releases.md`.
 
 ## Estado actual
 
