@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+mkdir -p /etc/lightdm/lightdm.conf.d
+
+cat >/etc/lightdm/lightdm.conf.d/90-agenos-live.conf <<'EOF'
+[Seat:*]
+autologin-user=agenos
+autologin-user-timeout=0
+user-session=xfce
+EOF

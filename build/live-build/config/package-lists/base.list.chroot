@@ -1,0 +1,16 @@
+sudo
+bash-completion
+ca-certificates
+curl
+wget
+locales
+network-manager
+pipewire
+pipewire-alsa
+pipewire-pulse
+wireplumber
+alsa-utils
+grub-common
+grub-pc-bin
+grub-efi-amd64-bin
+efibootmgr

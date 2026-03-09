@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+if ! grep -Eq '(^| )boot=live( |$)|(^| )components( |$)' /proc/cmdline; then
+  exit 0
+fi
+
+if pgrep -x calamares >/dev/null 2>&1; then
+  exit 0
+fi
+
+(
+  sleep 8
+  /usr/local/bin/agenos-launch-installer
+) &

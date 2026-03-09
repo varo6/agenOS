@@ -1,0 +1,35 @@
+---
+componentName: agenos
+welcomeStyleCalamares: true
+welcomeExpandingLogo: false
+windowExpanding: normal
+windowSize: 960px,600px
+windowPlacement: center
+
+strings:
+  productName: AgenOS
+  shortProductName: AgenOS
+  version: Prototype 0.1
+  shortVersion: 0.1
+  versionedName: AgenOS Prototype 0.1
+  shortVersionedName: AgenOS 0.1
+  bootloaderEntryName: AgenOS
+  productUrl: https://example.org/agenos
+  supportUrl: https://example.org/agenos/support
+  knownIssuesUrl: https://example.org/agenos/issues
+  releaseNotesUrl: https://example.org/agenos/releases
+  donateUrl: https://example.org/agenos
+
+images:
+  productLogo: agenos-mark.svg
+  productIcon: agenos-mark.svg
+
+slideshow: show.qml
+
+style:
+  sidebarBackground: "#12343B"
+  sidebarText: "#F7F3E9"
+  sidebarBackgroundSelect: "#0E2327"
+  sidebarTextSelect: "#E6B655"
+
+slideshowAPI: 2

@@ -1,0 +1,12 @@
+dist/
+build/live-build/.build/
+build/live-build/binary/
+build/live-build/cache/
+build/live-build/chroot/
+build/live-build/local/
+build/live-build/staging/
+build/live-build/*.build
+build/live-build/*.contents
+build/live-build/*.iso
+build/live-build/initrd.img
+build/live-build/vmlinuz

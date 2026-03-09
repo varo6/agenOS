@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+lb config noauto \
+  --mode debian \
+  --distribution bookworm \
+  --architectures amd64 \
+  --archive-areas "main contrib non-free non-free-firmware" \
+  --binary-images iso-hybrid \
+  --checksums sha256 \
+  --debian-installer none \
+  --firmware-binary true \
+  --firmware-chroot true \
+  --image-name agenos-bookworm \
+  --iso-application "AgenOS Debian Installer" \
+  --iso-publisher "AgenOS" \
+  --iso-volume "AGENOS_BOOKWORM" \
+  --linux-flavours amd64 \
+  --memtest none \
+  --system live \
+  --bootappend-live "boot=live components hostname=agenos username=agenos user-fullname=AgenOS Live locales=es_ES.UTF-8 keyboard-layouts=es timezone=Europe/Madrid"

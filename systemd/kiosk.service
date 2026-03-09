@@ -1,0 +1,14 @@
+[Unit]
+Description=AgenOS Kiosk Session
+After=graphical.target ui.service
+Wants=ui.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --app=http://127.0.0.1:4173
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

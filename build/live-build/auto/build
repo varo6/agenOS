@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+./auto/config
+lb build noauto
