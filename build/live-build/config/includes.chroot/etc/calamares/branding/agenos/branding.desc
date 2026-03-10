@@ -3,7 +3,7 @@ componentName: agenos
 welcomeStyleCalamares: true
 welcomeExpandingLogo: false
 windowExpanding: normal
-windowSize: 960px,600px
+windowSize: 1080px,720px
 windowPlacement: center
 
 strings:
@@ -27,9 +27,9 @@ images:
 slideshow: show.qml
 
 style:
-  sidebarBackground: "#12343B"
-  sidebarText: "#F7F3E9"
-  sidebarBackgroundSelect: "#0E2327"
-  sidebarTextSelect: "#E6B655"
+  sidebarBackground: "#09090B"
+  sidebarText: "#A1A1AA"
+  sidebarBackgroundSelect: "#18181B"
+  sidebarTextSelect: "#3B82F6"
 
 slideshowAPI: 2
