@@ -1,4 +1,6 @@
 dist/
+components/ui/dist/
+components/ui/node_modules/
 state/
 build/live-build/.build/
 build/live-build/binary/
@@ -11,3 +13,6 @@ build/live-build/*.contents
 build/live-build/*.iso
 build/live-build/initrd.img
 build/live-build/vmlinuz
+build/live-build/config/includes.chroot/usr/local/share/agenos-ui/
+__pycache__/
+*.pyc

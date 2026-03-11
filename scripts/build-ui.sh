@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec bash "${ROOT_DIR}/scripts/build-ui.sh"
+UI_DIR="${ROOT_DIR}/components/ui"
+OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/share/agenos-ui"
 
 cd "${UI_DIR}"
 

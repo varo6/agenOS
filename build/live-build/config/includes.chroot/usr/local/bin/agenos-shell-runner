@@ -1,0 +1,63 @@
+#!/bin/sh
+set -eu
+
+MAIN_URL="http://127.0.0.1:4173"
+EMERGENCY_URL="http://127.0.0.1:4174"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+BACKEND_LOG="${RUNTIME_DIR}/agenos-shell-server.log"
+EMERGENCY_LOG="${RUNTIME_DIR}/agenos-shell-emergency.log"
+CHROMIUM_PROFILE_DIR="${RUNTIME_DIR}/agenos-chromium-profile"
+
+mkdir -p "${CHROMIUM_PROFILE_DIR}"
+
+start_backend() {
+  if ! curl --silent --fail "${MAIN_URL}/health" >/dev/null 2>&1; then
+    nohup python3 /usr/local/lib/agenos-shell/server.py >"${BACKEND_LOG}" 2>&1 &
+  fi
+}
+
+start_emergency() {
+  if ! curl --silent --fail "${EMERGENCY_URL}/health" >/dev/null 2>&1; then
+    nohup python3 /usr/local/lib/agenos-shell/emergency.py >"${EMERGENCY_LOG}" 2>&1 &
+  fi
+}
+
+wait_for_backend() {
+  tries=0
+  while ! curl --silent --fail "${MAIN_URL}/health" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "${tries}" -ge 60 ]; then
+      return 1
+    fi
+    sleep 0.25
+  done
+}
+
+launch_browser() {
+  url="$1"
+  swaymsg workspace "1:home" >/dev/null 2>&1 || true
+  chromium \
+    --ozone-platform=wayland \
+    --app="${url}" \
+    --start-fullscreen \
+    --no-first-run \
+    --no-default-browser-check \
+    --user-data-dir="${CHROMIUM_PROFILE_DIR}" \
+    --password-store=basic \
+    --use-mock-keychain \
+    --disable-session-crashed-bubble \
+    --disable-features=Translate,AutofillServerCommunication \
+    --disable-sync
+}
+
+start_emergency
+
+while true; do
+  start_backend
+  if wait_for_backend; then
+    launch_browser "${MAIN_URL}"
+  else
+    launch_browser "${EMERGENCY_URL}"
+  fi
+  sleep 1
+done

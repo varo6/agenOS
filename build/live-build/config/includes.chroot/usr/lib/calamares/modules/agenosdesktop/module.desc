@@ -1,0 +1,6 @@
+# Module metadata file for AgenOS desktop shell provisioning
+---
+type: "job"
+name: "agenosdesktop"
+interface: "python"
+script: "main.py"

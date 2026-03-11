@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+mkdir -p /etc/greetd /etc/agenos /etc/systemd/system/graphical.target.wants /etc/systemd/system/multi-user.target.wants
+
+cat >/etc/greetd/config.toml <<'EOF'
+[terminal]
+vt = 7
+switch = true
+
+[default_session]
+command = "/usr/sbin/agreety --cmd /bin/sh"
+user = "_greetd"
+
+[initial_session]
+command = "sh /usr/local/bin/agenos-session"
+user = "agenos"
+EOF
+
+cat >/etc/agenos/shell.json <<'EOF'
+{
+  "schemaVersion": 1,
+  "bootMode": "installer",
+  "startupAppDesktopId": null,
+  "maintenanceEnabled": true
+}
+EOF
+
+ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/display-manager.service
+ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/graphical.target.wants/greetd.service
+ln -sf /lib/systemd/system/seatd.service /etc/systemd/system/multi-user.target.wants/seatd.service
+rm -f /etc/systemd/system/graphical.target.wants/lightdm.service
