@@ -14,6 +14,15 @@ if [[ "${SKIP_DOCKER_BUILD}" != "1" ]]; then
   docker build -t "${IMAGE_NAME}" "${ROOT_DIR}/tools/live-build"
 fi
 
+docker run --rm \
+  -e DEBIAN_FRONTEND=noninteractive \
+  -e HOME=/tmp \
+  -u "$(id -u):$(id -g)" \
+  -v "${ROOT_DIR}:/workspace" \
+  -w /workspace \
+  "${IMAGE_NAME}" \
+  bash -lc "./scripts/build-installer-ui.sh"
+
 if [[ "${LB_PURGE}" == "1" ]]; then
   BUILD_CMD="./auto/clean --purge && ./auto/config && lb build"
 else

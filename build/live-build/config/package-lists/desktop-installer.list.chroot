@@ -10,6 +10,8 @@ lightdm
 calamares
 calamares-settings-debian
 chromium
+python3
 cage
 plymouth
 x11-xserver-utils
+wmctrl

@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/lib/agenos-installer")
+
+from common import validate_profile
+
+EXEC_SEQUENCE = [
+    "partition",
+    "mount",
+    "unpackfs",
+    "dpkg-unsafe-io",
+    "sources-media",
+    "machineid",
+    "fstab",
+    "locale",
+    "keyboard",
+    "localecfg",
+    "users",
+    "displaymanager",
+    "networkcfg",
+    "hwclock",
+    "services-systemd",
+    "bootloader-config",
+    "grubcfg",
+    "bootloader",
+    "packages",
+    "luksbootkeyfile",
+    "plymouthcfg",
+    "initramfscfg",
+    "initramfs",
+    "dpkg-unsafe-io-undo",
+    "sources-media-unmount",
+    "sources-final",
+    "umount",
+]
+
+
+def original_uid() -> int:
+    value = os.environ.get("PKEXEC_UID")
+    return int(value) if value else 0
+
+
+def allowed_runtime_dir() -> Path:
+    return Path(f"/run/user/{original_uid()}/agenos-installer")
+
+
+def validate_profile_path(path: str) -> Path:
+    candidate = Path(path).resolve()
+    runtime_dir = allowed_runtime_dir().resolve()
+    if runtime_dir not in candidate.parents:
+        raise SystemExit("La ruta del perfil no está dentro de /run/user/<uid>/agenos-installer/")
+    return candidate
+
+
+def load_profile(path: Path) -> dict:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    normalized, errors = validate_profile(
+        {
+            **payload,
+            "user": {
+                **payload["user"],
+                "passwordConfirmation": payload["user"]["password"],
+            },
+        }
+    )
+    if errors or normalized is None:
+        raise SystemExit(f"Perfil inválido: {errors}")
+    return normalized
+
+
+def create_guided_config(profile_path: Path) -> Path:
+    temp_root = Path(tempfile.mkdtemp(prefix="agenos-calamares-"))
+    config_dir = temp_root / "calamares"
+    shutil.copytree("/etc/calamares", config_dir)
+    (config_dir / "modules").mkdir(parents=True, exist_ok=True)
+    os.symlink("/usr/share/calamares/qml", config_dir / "qml", target_is_directory=True)
+
+    settings = [
+        "---",
+        "modules-search:",
+        "  - local",
+        "  - /usr/lib/calamares/modules",
+        "",
+        "oem-setup: false",
+        "disable-cancel: false",
+        "disable-cancel-during-exec: false",
+        "quit-at-end: false",
+        "",
+        "sequence:",
+        "  - exec:",
+        "      - agenosseed",
+        "  - show:",
+        "      - partition",
+        "      - summary",
+        "  - exec:",
+        *[f"      - {module}" for module in EXEC_SEQUENCE],
+        "  - show:",
+        "      - finished",
+        "",
+        "branding: agenos",
+        "prompt-install: false",
+        "dont-chroot: false",
+        "",
+    ]
+    (config_dir / "settings.conf").write_text("\n".join(settings), encoding="utf-8")
+    (config_dir / "modules" / "agenosseed.conf").write_text(
+        "\n".join(
+            [
+                "---",
+                f"profilePath: {json.dumps(str(profile_path))}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return config_dir
+
+
+def move_stale_fstab() -> bool:
+    current = Path("/etc/fstab")
+    backup = Path("/etc/fstab.orig.calamares")
+    if current.exists():
+        current.rename(backup)
+        return True
+    return False
+
+
+def restore_stale_fstab(moved: bool) -> None:
+    if moved:
+        backup = Path("/etc/fstab.orig.calamares")
+        if backup.exists():
+            backup.rename(Path("/etc/fstab"))
+
+
+def allow_root_x11() -> None:
+    display = os.environ.get("DISPLAY", "")
+    if not display:
+        return
+    subprocess.run(["xhost", "+si:localuser:root"], check=False)
+
+
+def revoke_root_x11() -> None:
+    display = os.environ.get("DISPLAY", "")
+    if not display:
+        return
+    subprocess.run(["xhost", "-si:localuser:root"], check=False)
+
+
+def run_calamares(command: list[str]) -> int:
+    env = os.environ.copy()
+    env["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    print(f"[agenos-installer-helper] launching: {' '.join(command)}", flush=True)
+    return subprocess.call(command, env=env)
+
+
+def guided(profile_arg: str) -> int:
+    profile_path = validate_profile_path(profile_arg)
+    load_profile(profile_path)
+    config_dir = create_guided_config(profile_path)
+    moved_fstab = move_stale_fstab()
+    try:
+        allow_root_x11()
+        return run_calamares(["/usr/bin/calamares", "-c", str(config_dir)])
+    finally:
+        revoke_root_x11()
+        restore_stale_fstab(moved_fstab)
+        profile_path.unlink(missing_ok=True)
+        shutil.rmtree(config_dir.parent, ignore_errors=True)
+
+
+def classic() -> int:
+    moved_fstab = move_stale_fstab()
+    try:
+        allow_root_x11()
+        return run_calamares(["/usr/bin/calamares"])
+    finally:
+        revoke_root_x11()
+        restore_stale_fstab(moved_fstab)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    guided_parser = subparsers.add_parser("guided")
+    guided_parser.add_argument("--profile", required=True)
+    subparsers.add_parser("classic")
+
+    args = parser.parse_args()
+    if args.command == "guided":
+        raise SystemExit(guided(args.profile))
+    if args.command == "classic":
+        raise SystemExit(classic())
+    raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    main()

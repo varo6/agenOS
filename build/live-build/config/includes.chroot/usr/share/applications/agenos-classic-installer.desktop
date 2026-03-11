@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Instalación avanzada con Calamares
+Comment=Abre el Calamares clásico con el flujo completo actual
+Exec=/usr/local/bin/agenos-launch-classic-installer
+Icon=system-software-install
+Terminal=false
+StartupNotify=true
+Categories=System;

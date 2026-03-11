@@ -1,0 +1,6 @@
+# Module metadata file for AgenOS profile seeding
+---
+type: "job"
+name: "agenosseed"
+interface: "python"
+script: "main.py"

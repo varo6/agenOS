@@ -1,4 +1,57 @@
 #!/bin/sh
 set -eu
 
-exec /usr/bin/install-debian
+URL="http://127.0.0.1:4173"
+LOG_FILE="${XDG_RUNTIME_DIR:-/tmp}/agenos-installer-server.log"
+CHROMIUM_PROFILE_DIR="${XDG_RUNTIME_DIR:-/tmp}/agenos-chromium-profile"
+
+if ! curl --silent --fail "${URL}/health" >/dev/null 2>&1; then
+  nohup /usr/local/bin/agenos-installer-server >"${LOG_FILE}" 2>&1 &
+fi
+
+TRIES=0
+while ! curl --silent --fail "${URL}/health" >/dev/null 2>&1; do
+  TRIES=$((TRIES + 1))
+  if [ "${TRIES}" -ge 50 ]; then
+    echo "No se pudo arrancar el servidor local del instalador" >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+
+mkdir -p "${CHROMIUM_PROFILE_DIR}"
+
+if pgrep -f "chromium.*${URL}" >/dev/null 2>&1; then
+  exit 0
+fi
+
+chromium \
+  --kiosk \
+  --app="${URL}" \
+  --start-fullscreen \
+  --window-position=0,0 \
+  --no-first-run \
+  --no-default-browser-check \
+  --user-data-dir="${CHROMIUM_PROFILE_DIR}" \
+  --password-store=basic \
+  --use-mock-keychain \
+  --disable-session-crashed-bubble \
+  --disable-features=Translate,AutofillServerCommunication \
+  --disable-sync &
+
+CHROMIUM_PID=$!
+
+if command -v wmctrl >/dev/null 2>&1; then
+  ATTEMPTS=0
+  while [ "${ATTEMPTS}" -lt 50 ]; do
+    WINDOW_ID="$(wmctrl -lp 2>/dev/null | awk -v pid="${CHROMIUM_PID}" '$3 == pid { print $1; exit }')"
+    if [ -n "${WINDOW_ID}" ]; then
+      wmctrl -i -r "${WINDOW_ID}" -b add,fullscreen >/dev/null 2>&1 || true
+      break
+    fi
+    ATTEMPTS=$((ATTEMPTS + 1))
+    sleep 0.2
+  done
+fi
+
+wait "${CHROMIUM_PID}"
