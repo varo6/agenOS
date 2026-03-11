@@ -145,14 +145,54 @@ append_extra_args() {
   QEMU_ARGS+=("${extra_args[@]}")
 }
 
+qemu_device_supported() {
+  local device_name="$1"
+  grep -Fq "name \"${device_name}\"" <<<"${QEMU_DEVICE_HELP}"
+}
+
+select_display_args() {
+  if qemu_device_supported "virtio-vga"; then
+    printf '%s\n' "-device" "virtio-vga"
+    return 0
+  fi
+
+  if qemu_device_supported "bochs-display"; then
+    printf '%s\n' "-device" "bochs-display"
+    return 0
+  fi
+
+  if qemu_device_supported "VGA"; then
+    printf '%s\n' "-device" "VGA"
+    return 0
+  fi
+
+  printf '%s\n' "-vga" "std"
+}
+
+select_pointer_args() {
+  if qemu_device_supported "virtio-tablet-pci"; then
+    printf '%s\n' "-device" "virtio-tablet-pci"
+    return 0
+  fi
+
+  if qemu_device_supported "qemu-xhci" && qemu_device_supported "usb-tablet"; then
+    printf '%s\n' "-device" "qemu-xhci" "-device" "usb-tablet"
+  fi
+}
+
 build_qemu_args() {
+  local -a display_args pointer_args
+
+  mapfile -t display_args < <(select_display_args)
+  mapfile -t pointer_args < <(select_pointer_args)
+
   QEMU_ARGS=(
     -name "${VM_NAME}"
     -machine q35
     -m "${VM_RAM_MB}"
     -smp "${VM_CPUS}"
-    -device virtio-vga
-    -device usb-tablet
+    "${display_args[@]}"
+    "${pointer_args[@]}"
     -drive "if=virtio,format=qcow2,file=${VM_DISK}"
   )
 
@@ -221,6 +261,7 @@ fi
 
 require_command qemu-system-x86_64
 require_command qemu-img
+QEMU_DEVICE_HELP="$(qemu-system-x86_64 -device help 2>/dev/null || true)"
 
 if [[ "${MODE}" == "live" ]]; then
   resolve_iso
