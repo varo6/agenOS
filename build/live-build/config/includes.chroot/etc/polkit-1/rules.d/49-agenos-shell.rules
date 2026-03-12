@@ -1,5 +1,5 @@
 polkit.addRule(function(action, subject) {
-    if (action.id !== "com.agenos.installer.run-helper") {
+    if (action.id !== "com.agenos.shell.run-helper") {
         return polkit.Result.NOT_HANDLED;
     }
 

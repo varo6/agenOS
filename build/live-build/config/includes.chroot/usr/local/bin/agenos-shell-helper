@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import pwd
+import signal
+import subprocess
+from pathlib import Path
+
+
+def original_uid() -> int:
+    value = os.environ.get("PKEXEC_UID")
+    return int(value) if value else os.getuid()
+
+
+def original_user() -> str:
+    return pwd.getpwuid(original_uid()).pw_name
+
+
+def user_env() -> dict[str, str]:
+    uid = original_uid()
+    runtime_dir = Path(f"/run/user/{uid}")
+    return {
+        "HOME": pwd.getpwuid(uid).pw_dir,
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "PATH": os.environ.get("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+        "DISPLAY": os.environ.get("DISPLAY", ""),
+        "WAYLAND_DISPLAY": os.environ.get("WAYLAND_DISPLAY", ""),
+        "XDG_RUNTIME_DIR": os.environ.get("XDG_RUNTIME_DIR", str(runtime_dir)),
+        "XDG_SESSION_TYPE": os.environ.get("XDG_SESSION_TYPE", "wayland"),
+        "XDG_CURRENT_DESKTOP": os.environ.get("XDG_CURRENT_DESKTOP", "AgenOS"),
+        "DBUS_SESSION_BUS_ADDRESS": os.environ.get("DBUS_SESSION_BUS_ADDRESS", ""),
+    }
+
+
+def run_as_original_user(command: list[str]) -> int:
+    uid = original_uid()
+    pw = pwd.getpwuid(uid)
+    env = user_env()
+
+    def demote() -> None:
+        os.setgid(pw.pw_gid)
+        os.setuid(uid)
+
+    process = subprocess.Popen(command, env=env, preexec_fn=demote, start_new_session=True)
+    return process.pid
+
+
+def terminal() -> int:
+    run_as_original_user(["/usr/bin/foot"])
+    return 0
+
+
+def reload_shell() -> int:
+    result = subprocess.run(["pkill", "-u", str(original_uid()), "-f", "chromium.*127.0.0.1"], check=False)
+    return result.returncode if result.returncode in {0, 1} else result.returncode
+
+
+def power(action: str) -> int:
+    return subprocess.call(["/usr/bin/systemctl", action])
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=["poweroff", "reboot", "terminal", "reload-shell"])
+    args = parser.parse_args()
+
+    if args.action == "terminal":
+        raise SystemExit(terminal())
+    if args.action == "reload-shell":
+        raise SystemExit(reload_shell())
+    if args.action == "poweroff":
+        raise SystemExit(power("poweroff"))
+    if args.action == "reboot":
+        raise SystemExit(power("reboot"))
+    raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    main()

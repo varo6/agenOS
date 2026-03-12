@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=AgenOS Installer Autostart
-Comment=Launch AgenOS installer automatically in the live session
-Exec=/usr/local/bin/agenos-autostart-installer
-Terminal=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true

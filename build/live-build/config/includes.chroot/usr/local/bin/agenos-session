@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+export XDG_CURRENT_DESKTOP="AgenOS"
+export XDG_SESSION_DESKTOP="agenos"
+export XDG_SESSION_TYPE="wayland"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export GDK_BACKEND="${GDK_BACKEND:-wayland,x11}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-wayland}"
+export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
+export WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"
+export MOZ_ENABLE_WAYLAND=1
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+mkdir -p "${XDG_RUNTIME_DIR}"
+
+# Force sway to create the primary DRM/libinput backend instead of nesting.
+unset WAYLAND_DISPLAY
+unset DISPLAY
+
+SWAY_CONFIG="/etc/agenos/sway/config"
+
+run_sway() {
+  dbus-run-session sway --config "${SWAY_CONFIG}"
+}
+
+if [ -z "${WLR_RENDERER:-}" ]; then
+  sway_log="$(mktemp)"
+  trap 'rm -f "${sway_log}"' EXIT HUP INT TERM
+
+  if run_sway 2>"${sway_log}"; then
+    exit 0
+  else
+    status=$?
+    cat "${sway_log}" >&2
+
+    if grep -Eq 'EGL_NOT_INITIALIZED|failed to create dri2 screen|wl_display_roundtrip failed|NEEDS EXTENSION' "${sway_log}"; then
+      echo "agenos-session: sway fallo con EGL/GBM, reintentando con WLR_RENDERER=pixman" >&2
+      export WLR_RENDERER=pixman
+      exec dbus-run-session sway --config "${SWAY_CONFIG}"
+    fi
+
+    exit "${status}"
+  fi
+fi
+
+exec dbus-run-session sway --config "${SWAY_CONFIG}"

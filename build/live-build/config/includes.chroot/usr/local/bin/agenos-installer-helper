@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,7 @@ EXEC_SEQUENCE = [
     "networkcfg",
     "hwclock",
     "services-systemd",
+    "agenosdesktop",
     "bootloader-config",
     "grubcfg",
     "bootloader",
@@ -46,6 +48,14 @@ EXEC_SEQUENCE = [
 def original_uid() -> int:
     value = os.environ.get("PKEXEC_UID")
     return int(value) if value else 0
+
+
+def original_user() -> pwd.struct_passwd:
+    return pwd.getpwuid(original_uid())
+
+
+def original_runtime_dir() -> Path:
+    return Path(f"/run/user/{original_uid()}")
 
 
 def allowed_runtime_dir() -> Path:
@@ -154,9 +164,84 @@ def revoke_root_x11() -> None:
     subprocess.run(["xhost", "-si:localuser:root"], check=False)
 
 
-def run_calamares(command: list[str]) -> int:
+def ensure_root_runtime_dir() -> Path:
+    runtime_dir = Path(f"/run/user/{os.getuid()}")
+    runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(runtime_dir, 0o700)
+    return runtime_dir
+
+
+def detect_wayland_socket() -> Path | None:
+    runtime_dir = original_runtime_dir()
+    candidates: list[Path] = []
+
+    configured = os.environ.get("WAYLAND_DISPLAY", "").strip()
+    if configured:
+        candidates.append(Path(configured) if "/" in configured else runtime_dir / configured)
+
+    candidates.extend(sorted(runtime_dir.glob("wayland-*")))
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if candidate.exists() and candidate.is_socket():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def build_gui_env() -> dict[str, str]:
     env = os.environ.copy()
     env["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    env.setdefault("LANG", "C.UTF-8")
+    env.setdefault("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    env.setdefault("XDG_CURRENT_DESKTOP", "AgenOS")
+    env.setdefault("XDG_SESSION_DESKTOP", "agenos")
+
+    user = original_user()
+    runtime_dir = original_runtime_dir()
+    bus_path = runtime_dir / "bus"
+    if not env.get("DBUS_SESSION_BUS_ADDRESS") and bus_path.exists():
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+
+    wayland_socket = detect_wayland_socket()
+    if wayland_socket is not None:
+        env["WAYLAND_DISPLAY"] = str(wayland_socket)
+        env["XDG_SESSION_TYPE"] = "wayland"
+        env["XDG_RUNTIME_DIR"] = str(ensure_root_runtime_dir())
+        env.setdefault("QT_QPA_PLATFORM", "wayland;xcb")
+        return env
+
+    if env.get("DISPLAY"):
+        env.setdefault("XDG_SESSION_TYPE", "x11")
+        env.setdefault("QT_QPA_PLATFORM", "xcb")
+        if not env.get("XAUTHORITY"):
+            candidate = Path(user.pw_dir) / ".Xauthority"
+            if candidate.exists():
+                env["XAUTHORITY"] = str(candidate)
+
+    return env
+
+
+def run_calamares(command: list[str]) -> int:
+    env = build_gui_env()
+    summary = {
+        key: env.get(key, "")
+        for key in (
+            "DISPLAY",
+            "XAUTHORITY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "XDG_SESSION_TYPE",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "QT_QPA_PLATFORM",
+        )
+    }
+    print(f"[agenos-installer-helper] gui env: {json.dumps(summary, ensure_ascii=True)}", flush=True)
     print(f"[agenos-installer-helper] launching: {' '.join(command)}", flush=True)
     return subprocess.call(command, env=env)
 

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "bootMode": "installer",
+  "startupAppDesktopId": null,
+  "maintenanceEnabled": true
+}

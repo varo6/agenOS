@@ -1,16 +1,14 @@
-# UI skeleton
+# AgenOS UI
 
-Estado: pendiente de implementacion.
+Shell canónica Wayland-first para la ISO live y el sistema instalado.
 
-## Objetivo
+## Rutas internas
 
-La UI final no deberia comportarse como un escritorio clasico. La idea es una superficie unica:
+- `/` decide el arranque según `GET /api/bootstrap`
+- `/installer` reutiliza el wrapper guiado actual sobre Calamares
+- `/home` muestra la home mínima con launcher y acciones de sistema
+- `/launching` cubre la transición al abrir apps o disparar acciones
 
-- microfono o campo de texto visible
-- historial corto de acciones
-- confirmaciones claras para acciones con riesgo
-- sensacion de estar hablando con el ordenador y su contenido, no con un chat aislado
+## Build
 
-## Encaje con la ISO actual
-
-La ISO ya incluye `chromium` y `cage` para que la siguiente iteracion pueda sustituir XFCE por una sesion kiosk controlada.
+La salida de producción se copia a `/usr/local/share/agenos-ui` dentro de la imagen.
