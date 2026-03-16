@@ -64,7 +64,7 @@ INTERNAL_APPS = [
     {
         "desktopId": "internal:reload-shell",
         "name": "Recargar shell",
-        "description": "Reinicia Chromium sin reiniciar el sistema.",
+        "description": "Reinicia el instalador sin reiniciar el sistema.",
         "iconName": "view-refresh",
         "exec": "maintenance:reload-shell",
         "categories": ["System"],

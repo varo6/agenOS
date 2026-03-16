@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOST = "127.0.0.1"
 PORT = 4174
 MAIN_URL = "http://127.0.0.1:4173/health"
+INSTALLER_APP = ["/usr/local/bin/agenos-installer-app"]
+INSTALLER_SERVER = ["/usr/local/bin/agenos-installer-server"]
 HTML = """<!doctype html>
 <html lang="es">
   <head>
@@ -68,7 +70,7 @@ HTML = """<!doctype html>
     <main>
       <div>Fallback local</div>
       <h1>La shell principal no ha arrancado.</h1>
-      <p>Esta pantalla es local a la sesión. Puedes reintentar el backend o abrir un terminal de mantenimiento sin reiniciar el equipo.</p>
+      <p>Esta pantalla es local a la sesión. Puedes reintentar la shell Tauri o abrir un terminal de mantenimiento sin reiniciar el equipo.</p>
       <div class="actions">
         <button class="primary" id="retry">Reintentar shell</button>
         <button class="secondary" id="terminal">Abrir terminal de mantenimiento</button>
@@ -89,8 +91,9 @@ HTML = """<!doctype html>
       }
       document.getElementById("retry").addEventListener("click", async () => {
         try {
-          await send("/retry-shell");
-          window.location.href = "http://127.0.0.1:4173";
+          const payload = await send("/retry-shell");
+          status.textContent = payload.message || "La shell principal se está relanzando.";
+          window.close();
         } catch (error) {
           status.textContent = error instanceof Error ? error.message : "No se pudo reintentar la shell.";
         }
@@ -111,6 +114,30 @@ HTML = """<!doctype html>
 def backend_healthy() -> bool:
     result = subprocess.run(["curl", "--silent", "--fail", MAIN_URL], check=False)
     return result.returncode == 0
+
+
+def start_detached(command: list[str]) -> None:
+    subprocess.Popen(
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def relaunch_shell() -> tuple[bool, str]:
+    if not backend_healthy():
+        start_detached(INSTALLER_SERVER)
+
+    for _ in range(40):
+        if backend_healthy():
+            break
+        time.sleep(0.25)
+    else:
+        return False, "El API del instalador no respondió en http://127.0.0.1:4173/health."
+
+    start_detached(INSTALLER_APP)
+    return True, "La shell principal se está relanzando."
 
 
 class EmergencyHandler(BaseHTTPRequestHandler):
@@ -141,21 +168,10 @@ class EmergencyHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self.path == "/retry-shell":
-            if not backend_healthy():
-                subprocess.Popen(
-                    ["/usr/bin/python3", "/usr/local/lib/agenos-shell/server.py"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            for _ in range(40):
-                if backend_healthy():
-                    self._send_json(HTTPStatus.OK, {"ok": True, "message": "La shell principal ha vuelto a responder."})
-                    return
-                time.sleep(0.25)
+            ok, message = relaunch_shell()
             self._send_json(
-                HTTPStatus.INTERNAL_SERVER_ERROR,
-                {"ok": False, "message": "La shell sigue sin responder en http://127.0.0.1:4173."},
+                HTTPStatus.OK if ok else HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"ok": ok, "message": message},
             )
             return
 

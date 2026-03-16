@@ -1,6 +1,9 @@
 dist/
 components/ui/dist/
 components/ui/node_modules/
+components/installer-ui/build/
+components/installer-ui/node_modules/
+components/installer-ui/dist/
 state/
 build/live-build/.build/
 build/live-build/binary/
@@ -10,9 +13,17 @@ build/live-build/local/
 build/live-build/staging/
 build/live-build/*.build
 build/live-build/*.contents
+build/live-build/*.files
 build/live-build/*.iso
+build/live-build/*.packages
+build/live-build/*.zsync
+build/live-build/binary.modified_timestamps
+build/live-build/chroot.packages.install
+build/live-build/chroot.packages.live
 build/live-build/initrd.img
 build/live-build/vmlinuz
+build/live-build/config/includes.chroot/opt/agenos/installer/
 build/live-build/config/includes.chroot/usr/local/share/agenos-ui/
+releases/
 __pycache__/
 *.pyc

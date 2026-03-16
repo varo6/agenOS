@@ -6,7 +6,7 @@ Wants=ui.service
 [Service]
 Type=simple
 Environment=DISPLAY=:0
-ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --app=http://127.0.0.1:4173
+ExecStart=/usr/bin/cage -- /usr/local/bin/agenos-installer-app
 Restart=on-failure
 RestartSec=2
 

@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-exec pkexec /usr/local/bin/agenos-installer-helper classic
+exec /opt/agenos/installer/agenos-installer launch-classic

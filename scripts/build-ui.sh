@@ -7,13 +7,13 @@ OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/share/
 
 cd "${UI_DIR}"
 
-if [[ -f package-lock.json ]]; then
-  npm ci
+if [[ -f bun.lock || -f bun.lockb ]]; then
+  bun install --frozen-lockfile
 else
-  npm install
+  bun install
 fi
 
-npm run build
+bun run build
 
 mkdir -p "${OUTPUT_DIR}"
 rsync -a --delete "${UI_DIR}/dist/" "${OUTPUT_DIR}/"

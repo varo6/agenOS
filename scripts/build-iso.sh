@@ -21,7 +21,7 @@ docker run --rm \
   -v "${ROOT_DIR}:/workspace" \
   -w /workspace \
   "${IMAGE_NAME}" \
-  bash -lc "bash ./scripts/build-ui.sh"
+  bash -lc "bash ./scripts/build-ui.sh && bash ./scripts/build-installer-ui.sh"
 
 if [[ "${LB_PURGE}" == "1" ]]; then
   BUILD_CMD="./auto/clean --purge && ./auto/config && lb build"

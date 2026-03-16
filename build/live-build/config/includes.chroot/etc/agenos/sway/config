@@ -12,8 +12,8 @@ output * bg #14100d solid_color
 workspace 1:home
 
 for_window [workspace="2:app"] fullscreen enable
-for_window [app_id="chromium"] move to workspace "1:home"
-for_window [class="^Chromium$"] move to workspace "1:home"
+for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
+for_window [title="AgenOS Installer"] move to workspace "1:home"
 
 bindsym Ctrl+Alt+Return exec python3 /usr/local/bin/agenos-shell-helper terminal
 bindsym Ctrl+Alt+r exec python3 /usr/local/bin/agenos-shell-helper reload-shell

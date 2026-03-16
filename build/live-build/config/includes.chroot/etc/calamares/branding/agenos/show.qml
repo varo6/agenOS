@@ -31,7 +31,7 @@ Rectangle {
         {
             "tag": "ARCHITECTURE",
             "title": "Pipeline de voz offline-first",
-            "body": "Chromium + Cage + PipeWire + agente local. La infraestructura ya esta preparada para escucharte sin depender de la nube."
+            "body": "Electrobun + Cage + PipeWire + agente local. La infraestructura ya esta preparada para escucharte sin depender de la nube."
         },
         {
             "tag": "AGENTIC",

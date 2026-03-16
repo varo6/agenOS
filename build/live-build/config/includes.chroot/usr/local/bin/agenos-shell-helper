@@ -51,7 +51,16 @@ def terminal() -> int:
 
 
 def reload_shell() -> int:
-    result = subprocess.run(["pkill", "-u", str(original_uid()), "-f", "chromium.*127.0.0.1"], check=False)
+    result = subprocess.run(
+        [
+            "pkill",
+            "-u",
+            str(original_uid()),
+            "-f",
+            "agenos-installer-app|/opt/agenos/installer/agenos-installer$|agenos-installer-ui|/opt/agenos/installer/agenos-installer-ui",
+        ],
+        check=False,
+    )
     return result.returncode if result.returncode in {0, 1} else result.returncode
 
 

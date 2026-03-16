@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-exec python3 /usr/local/lib/agenos-installer/server.py
+exec /opt/agenos/installer/agenos-installer server "$@"
