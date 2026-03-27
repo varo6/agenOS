@@ -1,0 +1,5 @@
+{
+  "name": "agenos-installer-electron-shell",
+  "private": true,
+  "main": "main.cjs"
+}

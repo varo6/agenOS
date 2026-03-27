@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 
 import { INSTALLER_ROUTES } from "../shared/installer-http";
@@ -204,5 +207,23 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(403);
     expect(await jsonPayload(response)).toEqual(launchResponse);
+  });
+
+  test("serves the packaged frontend when a dist dir is available", async () => {
+    const frontendDir = mkdtempSync(join(tmpdir(), "agenos-installer-ui-"));
+    Bun.write(join(frontendDir, "index.html"), "<!doctype html><title>AgenOS Installer</title>");
+    Bun.write(join(frontendDir, "logo.svg"), "<svg xmlns='http://www.w3.org/2000/svg' />");
+
+    const handler = createHandler({
+      frontendDistDir: frontendDir,
+    });
+
+    const indexResponse = await handler.fetch(new Request("http://localhost/"));
+    const assetResponse = await handler.fetch(new Request("http://localhost/logo.svg"));
+
+    expect(indexResponse.status).toBe(200);
+    expect(await indexResponse.text()).toContain("AgenOS Installer");
+    expect(assetResponse.status).toBe(200);
+    expect(await assetResponse.text()).toContain("<svg");
   });
 });

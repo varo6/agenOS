@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { extname, resolve } from "node:path";
+
 import type {
   DiskSummary,
   InstallerProfilePayload,
@@ -8,6 +11,7 @@ import type {
 import {
   INSTALLER_API_HOST,
   INSTALLER_API_PORT,
+  INSTALLER_API_PREFIX,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
@@ -17,6 +21,7 @@ import { readPreflightPayload } from "./installer/preflight";
 import { validateProfile } from "./installer/validate-profile";
 
 export type InstallerApiDependencies = {
+  frontendDistDir: string | null;
   getPreflight: () => PreflightResponse;
   getDisks: () => DiskSummary[];
   validateProfile: (payload: unknown) => ValidationResponse;
@@ -53,10 +58,55 @@ function launchFailureStatus(response: LaunchResponse, defaultStatus: number): n
   return defaultStatus;
 }
 
+function isPathInside(rootDir: string, candidate: string): boolean {
+  return candidate === rootDir || candidate.startsWith(`${rootDir}/`);
+}
+
+function resolveFrontendPath(frontendDistDir: string, pathname: string): string {
+  const relativePath = pathname === "/" ? "index.html" : decodeURIComponent(pathname.replace(/^\/+/, ""));
+  return resolve(frontendDistDir, relativePath);
+}
+
+function frontendResponse(
+  request: Request,
+  url: URL,
+  frontendDistDir: string | null,
+): Response | null {
+  if (request.method !== "GET" || !frontendDistDir) {
+    return null;
+  }
+
+  if (url.pathname === INSTALLER_ROUTES.health || url.pathname.startsWith(INSTALLER_API_PREFIX)) {
+    return null;
+  }
+
+  const rootDir = resolve(frontendDistDir);
+  const requestedFile = resolveFrontendPath(rootDir, url.pathname);
+  if (!isPathInside(rootDir, requestedFile)) {
+    return new Response("Ruta no válida.", { status: 400 });
+  }
+
+  if (existsSync(requestedFile)) {
+    return new Response(Bun.file(requestedFile));
+  }
+
+  if (extname(url.pathname)) {
+    return null;
+  }
+
+  const indexFile = resolve(rootDir, "index.html");
+  if (!existsSync(indexFile)) {
+    return null;
+  }
+
+  return new Response(Bun.file(indexFile));
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
   const deps: InstallerApiDependencies = {
+    frontendDistDir: dependencies.frontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     getPreflight: dependencies.getPreflight ?? readPreflightPayload,
     getDisks: dependencies.getDisks ?? discoverDisks,
     validateProfile: dependencies.validateProfile ?? defaultValidationResponse,
@@ -139,6 +189,11 @@ export function createInstallerApiHandler(
           return json(response, {
             status: 202,
           });
+        }
+
+        const frontend = frontendResponse(request, url, deps.frontendDistDir);
+        if (frontend) {
+          return frontend;
         }
 
         return json(

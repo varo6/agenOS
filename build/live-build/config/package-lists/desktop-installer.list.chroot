@@ -8,6 +8,5 @@ foot
 calamares
 calamares-settings-debian
 libgtk-3-0
-libwebkit2gtk-4.1-0
 python3
 plymouth

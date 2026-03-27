@@ -70,7 +70,7 @@ HTML = """<!doctype html>
     <main>
       <div>Fallback local</div>
       <h1>La shell principal no ha arrancado.</h1>
-      <p>Esta pantalla es local a la sesión. Puedes reintentar la shell Tauri o abrir un terminal de mantenimiento sin reiniciar el equipo.</p>
+      <p>Esta pantalla es local a la sesión. Puedes reintentar la shell principal o abrir un terminal de mantenimiento sin reiniciar el equipo.</p>
       <div class="actions">
         <button class="primary" id="retry">Reintentar shell</button>
         <button class="secondary" id="terminal">Abrir terminal de mantenimiento</button>

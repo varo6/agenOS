@@ -7,11 +7,22 @@ LB_DIR="${ROOT_DIR}/build/live-build"
 DIST_DIR="${ROOT_DIR}/dist"
 SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-0}"
 LB_PURGE="${LB_PURGE:-0}"
+REBUILD_DOCKER_IMAGE="${REBUILD_DOCKER_IMAGE:-0}"
+DOCKERFILE_PATH="${ROOT_DIR}/tools/live-build/Dockerfile"
+DOCKERFILE_HASH="$(sha256sum "${DOCKERFILE_PATH}" | awk '{print $1}')"
 
 mkdir -p "${DIST_DIR}"
 
 if [[ "${SKIP_DOCKER_BUILD}" != "1" ]]; then
-  docker build -t "${IMAGE_NAME}" "${ROOT_DIR}/tools/live-build"
+  CURRENT_IMAGE_HASH="$(docker image inspect --format '{{ index .Config.Labels "agenos.livebuild.hash" }}' "${IMAGE_NAME}" 2>/dev/null || true)"
+  if [[ "${REBUILD_DOCKER_IMAGE}" == "1" || "${CURRENT_IMAGE_HASH}" != "${DOCKERFILE_HASH}" ]]; then
+    docker build \
+      --label "agenos.livebuild.hash=${DOCKERFILE_HASH}" \
+      -t "${IMAGE_NAME}" \
+      "${ROOT_DIR}/tools/live-build"
+  else
+    echo "Reutilizando la imagen Docker ${IMAGE_NAME}."
+  fi
 fi
 
 docker run --rm \
