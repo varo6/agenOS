@@ -1,11 +1,15 @@
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { extname, resolve } from "node:path";
 
 import type {
+  ApiMessageResponse,
   DiskSummary,
   InstallerProfilePayload,
   LaunchResponse,
   PreflightResponse,
+  ShellMode,
+  SwitchModeRequest,
   ValidationResponse,
 } from "../shared/installer-types";
 import {
@@ -18,6 +22,7 @@ import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
+import { appendHelperLog, currentUid, formatTimestamp, removeFileIfPresent, writeShellModeOverride } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 
 export type InstallerApiDependencies = {
@@ -27,6 +32,7 @@ export type InstallerApiDependencies = {
   validateProfile: (payload: unknown) => ValidationResponse;
   launchGuided: (profile: InstallerProfilePayload) => Promise<LaunchResponse>;
   launchClassic: () => Promise<LaunchResponse>;
+  switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -65,6 +71,70 @@ function isPathInside(rootDir: string, candidate: string): boolean {
 function resolveFrontendPath(frontendDistDir: string, pathname: string): string {
   const relativePath = pathname === "/" ? "index.html" : decodeURIComponent(pathname.replace(/^\/+/, ""));
   return resolve(frontendDistDir, relativePath);
+}
+
+function isShellMode(value: unknown): value is ShellMode {
+  return value === "installer" || value === "system";
+}
+
+async function defaultSwitchMode(mode: ShellMode): Promise<ApiMessageResponse> {
+  const uid = currentUid();
+  const modePath = writeShellModeOverride(mode, uid);
+  appendHelperLog(`[${formatTimestamp()}] switching shell mode to ${mode}\n`, uid);
+
+  const child = spawn(
+    "pkexec",
+    ["/usr/bin/python3", "/usr/local/bin/agenos-shell-helper", "reload-shell"],
+    {
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        LANG: process.env.LANG ?? "C.UTF-8",
+        PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      },
+    },
+  );
+
+  const exitCode = await new Promise<number | null>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      child.unref();
+      resolve(null);
+    }, 1000);
+
+    child.once("error", () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(127);
+    });
+
+    child.once("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(code ?? 1);
+    });
+  });
+
+  if (exitCode !== null && exitCode !== 0) {
+    removeFileIfPresent(modePath);
+    return {
+      ok: false,
+      message: `No se pudo recargar la shell para cambiar a ${mode}.`,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Cambiando a ${mode}.`,
+  };
 }
 
 function frontendResponse(
@@ -112,6 +182,7 @@ export function createInstallerApiHandler(
     validateProfile: dependencies.validateProfile ?? defaultValidationResponse,
     launchGuided: dependencies.launchGuided ?? launchGuided,
     launchClassic: dependencies.launchClassic ?? launchClassic,
+    switchMode: dependencies.switchMode ?? defaultSwitchMode,
   };
 
   return {
@@ -183,6 +254,36 @@ export function createInstallerApiHandler(
           if (!response.ok) {
             return json(response, {
               status: launchFailureStatus(response, 500),
+            });
+          }
+
+          return json(response, {
+            status: 202,
+          });
+        }
+
+        if (url.pathname === INSTALLER_ROUTES.switchMode) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const payload = await readJsonBody(request) as Partial<SwitchModeRequest>;
+          if (!isShellMode(payload.mode)) {
+            return json(
+              {
+                ok: false,
+                message: "El modo debe ser installer o system.",
+              },
+              {
+                status: 400,
+              },
+            );
+          }
+
+          const response = await deps.switchMode(payload.mode);
+          if (!response.ok) {
+            return json(response, {
+              status: 500,
             });
           }
 

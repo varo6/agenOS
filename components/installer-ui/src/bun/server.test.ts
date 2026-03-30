@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import { INSTALLER_ROUTES } from "../shared/installer-http";
 import type {
+  ApiMessageResponse,
   InstallerProfilePayload,
   LaunchResponse,
   ValidationResponse,
@@ -62,6 +63,10 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       ok: true,
       launched: true,
       message: "classic ok",
+    }),
+    switchMode: async () => ({
+      ok: true,
+      message: "switch ok",
     }),
     ...overrides,
   });
@@ -207,6 +212,39 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(403);
     expect(await jsonPayload(response)).toEqual(launchResponse);
+  });
+
+  test("returns 202 when switching shell mode succeeds", async () => {
+    const switchResponse: ApiMessageResponse = {
+      ok: true,
+      message: "switch ok",
+    };
+    const handler = createHandler({
+      switchMode: async () => switchResponse,
+    });
+
+    const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.switchMode}`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "system" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toEqual(switchResponse);
+  });
+
+  test("returns 400 when switching shell mode receives an invalid payload", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.switchMode}`, {
+      method: "POST",
+      body: JSON.stringify({ mode: "invalid" }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await jsonPayload(response)).toEqual({
+      ok: false,
+      message: "El modo debe ser installer o system.",
+    });
   });
 
   test("serves the packaged frontend when a dist dir is available", async () => {

@@ -21,6 +21,14 @@ export const STEP_ORDER: StepId[] = [
   "handoff",
 ];
 
+export type InstallerStoreSnapshot = {
+  step: StepId;
+  selectedPresetId: string;
+  profile: InstallerProfilePayload;
+  launchMode: "guided" | "classic" | null;
+  launchMessage: string;
+};
+
 const USERNAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 const HOSTNAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const KEYBOARD_RE = /^[A-Za-z0-9_,+-]+$/;
@@ -312,6 +320,28 @@ export function useInstallerStore() {
     }
   }
 
+  function snapshot(): InstallerStoreSnapshot {
+    return {
+      step,
+      selectedPresetId,
+      profile,
+      launchMode,
+      launchMessage,
+    };
+  }
+
+  function restoreSnapshot(nextSnapshot: InstallerStoreSnapshot) {
+    setStep(nextSnapshot.step);
+    setDirection(1);
+    setSelectedPresetId(nextSnapshot.selectedPresetId);
+    setProfile(nextSnapshot.profile);
+    setLaunchMode(nextSnapshot.launchMode);
+    setLaunchMessage(nextSnapshot.launchMessage);
+    setErrors({});
+    setGlobalError(null);
+    setBusy(false);
+  }
+
   return {
     applyNormalizedProfile,
     applyPreset,
@@ -325,6 +355,7 @@ export function useInstallerStore() {
     launchMessage,
     launchMode,
     profile,
+    restoreSnapshot,
     selectDisk,
     selectedPresetId,
     setBusy,
@@ -332,6 +363,7 @@ export function useInstallerStore() {
     setGlobalError,
     setLaunchMessage,
     setLaunchMode,
+    snapshot,
     step,
     updateProfileField,
     updateUserField,

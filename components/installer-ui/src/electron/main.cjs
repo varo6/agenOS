@@ -1,7 +1,8 @@
 const { app, BrowserWindow, shell } = require("electron");
 
 const APP_URL = process.env.AGENOS_INSTALLER_URL || "http://127.0.0.1:4173/";
-const WINDOW_TITLE = "AgenOS Installer";
+const APP_KIND = process.env.AGENOS_APP_KIND || (APP_URL.includes("/system") ? "system" : "installer");
+const WINDOW_TITLE = APP_KIND === "system" ? "AgenOS Live System" : "AgenOS Installer";
 
 function configureCommandLine() {
   app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");

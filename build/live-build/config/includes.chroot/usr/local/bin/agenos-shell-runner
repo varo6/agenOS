@@ -2,13 +2,54 @@
 set -eu
 
 INSTALLER_APP="/usr/local/bin/agenos-installer-app"
+SYSTEM_APP="/usr/local/bin/agenos-system-app"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"
+MODE_FILE="${RUNTIME_DIR}/shell-mode"
+
+is_live_session() {
+  if [ -e /run/live/medium ]; then
+    return 0
+  fi
+
+  if grep -Eq 'boot=live|components' /proc/cmdline 2>/dev/null; then
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_mode() {
+  if [ -f "${MODE_FILE}" ]; then
+    mode="$(tr -d '\n\r' < "${MODE_FILE}" 2>/dev/null || true)"
+    if [ "${mode}" = "installer" ] || [ "${mode}" = "system" ]; then
+      printf '%s\n' "${mode}"
+      return 0
+    fi
+  fi
+
+  if is_live_session; then
+    printf '%s\n' "installer"
+  else
+    printf '%s\n' "system"
+  fi
+}
 
 launch_installer() {
   swaymsg workspace "1:home" >/dev/null 2>&1 || true
   "${INSTALLER_APP}"
 }
 
+launch_system() {
+  swaymsg workspace "1:home" >/dev/null 2>&1 || true
+  "${SYSTEM_APP}"
+}
+
 while true; do
-  launch_installer
+  mode="$(resolve_mode)"
+  if [ "${mode}" = "system" ]; then
+    launch_system
+  else
+    launch_installer
+  fi
   sleep 1
 done

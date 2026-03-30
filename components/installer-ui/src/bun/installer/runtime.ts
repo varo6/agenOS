@@ -9,8 +9,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import type { ShellMode } from "../../shared/installer-types";
+
 export const INSTALLER_RUNTIME_DIRNAME = "agenos-installer";
 export const DEFAULT_INSTALLER_BINARY_PATH = "/opt/agenos/installer/agenos-installer";
+export const DEFAULT_SHELL_MODE: ShellMode = "installer";
 
 export function currentUid(): number {
   if (typeof process.getuid === "function") {
@@ -42,6 +45,10 @@ export function helperLogPathForUid(uid: number = currentUid()): string {
 
 export function guiLockPathForUid(uid: number = currentUid()): string {
   return join(ensureRuntimeDir(uid), "gui.lock");
+}
+
+export function shellModePathForUid(uid: number = currentUid()): string {
+  return join(ensureRuntimeDir(uid), "shell-mode");
 }
 
 export function resolveInstallerBinaryPath(): string {
@@ -78,6 +85,26 @@ export function removeFileIfPresent(path: string): void {
   if (existsSync(path)) {
     rmSync(path, { force: true });
   }
+}
+
+export function isShellMode(value: unknown): value is ShellMode {
+  return value === "installer" || value === "system";
+}
+
+export function readShellModeOverride(uid: number = currentUid()): ShellMode | null {
+  const path = shellModePathForUid(uid);
+  if (!existsSync(path)) {
+    return null;
+  }
+
+  const rawValue = readFileSync(path, "utf8").trim();
+  return isShellMode(rawValue) ? rawValue : null;
+}
+
+export function writeShellModeOverride(mode: ShellMode, uid: number = currentUid()): string {
+  const path = shellModePathForUid(uid);
+  writeSecureTextFile(path, `${mode}\n`, 0o600);
+  return path;
 }
 
 export function processIsRunning(pid: number): boolean {

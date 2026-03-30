@@ -57,7 +57,7 @@ def reload_shell() -> int:
             "-u",
             str(original_uid()),
             "-f",
-            "agenos-installer-app|/opt/agenos/installer/agenos-installer$|agenos-installer-ui|/opt/agenos/installer/agenos-installer-ui",
+            "agenos-installer-app|agenos-system-app|/opt/agenos/installer/agenos-installer$|agenos-installer-ui|/opt/agenos/installer/agenos-installer-ui|agenos-system-ui|/opt/agenos/installer/agenos-system-ui",
         ],
         check=False,
     )

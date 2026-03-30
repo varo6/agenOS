@@ -29,7 +29,7 @@ CURRENT_HASH="$(
   } | sha256sum | awk '{print $1}'
 )"
 
-if [[ -f "${STAMP_FILE}" && "$(cat "${STAMP_FILE}")" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
+if [[ -f "${STAMP_FILE}" && "$(cat "${STAMP_FILE}")" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi
@@ -74,10 +74,12 @@ printf '%s\n' \
   '#!/bin/sh' \
   'set -eu' \
   'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"' \
+  'APP_KIND="${AGENOS_APP_KIND:-installer}"' \
+  'APP_PATH="${AGENOS_APP_PATH:-/installer}"' \
   'RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"' \
   'PROFILE_DIR="${RUNTIME_DIR}/electron-profile"' \
   'LOCK_FILE="${RUNTIME_DIR}/electron.lock"' \
-  'APP_URL="http://127.0.0.1:4173/"' \
+  'APP_URL="http://127.0.0.1:4173${APP_PATH}"' \
   'ELECTRON_BIN="${SCRIPT_DIR}/electron-dist/electron"' \
   'ELECTRON_APP="${SCRIPT_DIR}/electron-app"' \
   '' \
@@ -88,6 +90,7 @@ printf '%s\n' \
   'fi' \
   '' \
   'export AGENOS_INSTALLER_URL="${APP_URL}"' \
+  'export AGENOS_APP_KIND="${APP_KIND}"' \
   'export ELECTRON_IS_DEV=0' \
   'export ELECTRON_OZONE_PLATFORM_HINT=auto' \
   'export TMPDIR="${RUNTIME_DIR}"' \
@@ -98,6 +101,16 @@ printf '%s\n' \
   > "${OUTPUT_DIR}/agenos-installer-ui"
 
 chmod +x "${OUTPUT_DIR}/agenos-installer-ui"
+
+printf '%s\n' \
+  '#!/bin/sh' \
+  'set -eu' \
+  'export AGENOS_APP_KIND="system"' \
+  'export AGENOS_APP_PATH="/system"' \
+  'exec "$(CDPATH= cd -- "$(dirname "$0")" && pwd)/agenos-installer-ui" "$@"' \
+  > "${OUTPUT_DIR}/agenos-system-ui"
+
+chmod +x "${OUTPUT_DIR}/agenos-system-ui"
 
 printf '%s\n' \
   '#!/bin/sh' \

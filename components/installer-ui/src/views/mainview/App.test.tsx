@@ -16,6 +16,7 @@ const { installerClient } = vi.hoisted(() => ({
     validateProfile: vi.fn<(profile: InstallerProfilePayload) => Promise<ValidationResponse>>(),
     launchGuided: vi.fn<(profile: InstallerProfilePayload) => Promise<LaunchResponse>>(),
     launchClassic: vi.fn<() => Promise<LaunchResponse>>(),
+    switchMode: vi.fn<(mode: "installer" | "system") => Promise<{ ok: boolean; message?: string }>>(),
   },
 }));
 
@@ -128,6 +129,10 @@ async function renderLoadedApp(disks: DiskSummary[] = [singleDisk]) {
     launched: true,
     message: "Se esta abriendo la instalacion avanzada con Calamares.",
   });
+  installerClient.switchMode.mockResolvedValue({
+    ok: true,
+    message: "Cambiando a system.",
+  });
 
   render(<App />);
   await screen.findByRole("heading", { name: "Instalador de AgenOS" });
@@ -171,6 +176,8 @@ async function fillIdentity() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
+  window.history.replaceState({}, "", "/installer");
 });
 
 describe("App", () => {
@@ -192,6 +199,35 @@ describe("App", () => {
 
     await screen.findByRole("alert");
     expect(screen.getByText("Sin acceso al API")).toBeInTheDocument();
+  });
+
+  test("shows the live mode switch in live sessions", async () => {
+    await renderLoadedApp();
+
+    expect(screen.getByRole("button", { name: "Live Installation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Live System" })).toBeInTheDocument();
+  });
+
+  test("hides the mode switch and forces the live system view in installed mode", async () => {
+    installerClient.getPreflight.mockResolvedValue({
+      ...defaultPreflight,
+      isLiveSession: false,
+      checks: [
+        {
+          id: "live",
+          label: "Sesion live",
+          status: "error",
+          detail: "No parece una sesion live soportada por el wrapper.",
+        },
+      ],
+    });
+    installerClient.getDisks.mockResolvedValue([singleDisk]);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "AgenOS" });
+    expect(screen.queryByRole("button", { name: "Live Installation" })).not.toBeInTheDocument();
+    expect(screen.getByText("Installed System")).toBeInTheDocument();
   });
 
   test("renders real preflight checks on the welcome slide", async () => {
@@ -338,5 +374,46 @@ describe("App", () => {
 
     await screen.findByRole("heading", { name: "Calamares toma el tramo final" });
     expect(installerClient.launchClassic).toHaveBeenCalled();
+  });
+
+  test("restores the installer snapshot after remounting", async () => {
+    installerClient.getPreflight.mockResolvedValue(defaultPreflight);
+    installerClient.getDisks.mockResolvedValue([singleDisk]);
+    installerClient.validateProfile.mockResolvedValue({
+      ok: true,
+      errors: {},
+      normalizedProfile: normalizedProfile(),
+    });
+    installerClient.launchGuided.mockResolvedValue({
+      ok: true,
+      launched: true,
+      message: "ok",
+    });
+    installerClient.launchClassic.mockResolvedValue({
+      ok: true,
+      launched: true,
+      message: "ok",
+    });
+    installerClient.switchMode.mockResolvedValue({
+      ok: true,
+      message: "ok",
+    });
+
+    const firstRender = render(<App />);
+    await screen.findByRole("heading", { name: "Instalador de AgenOS" });
+    await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Empezar" }));
+    await screen.findByRole("heading", { name: "Idioma, zona horaria y teclado" });
+    fireEvent.change(screen.getByLabelText("Zona horaria"), {
+      target: { value: "UTC" },
+    });
+
+    firstRender.unmount();
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Idioma, zona horaria y teclado" });
+    expect(screen.getByLabelText("Zona horaria")).toHaveValue("UTC");
   });
 });

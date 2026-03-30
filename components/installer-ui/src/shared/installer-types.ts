@@ -1,4 +1,5 @@
 export type FirmwareType = "UEFI" | "BIOS";
+export type ShellMode = "installer" | "system";
 
 export type StepId =
   | "welcome"
@@ -82,5 +83,14 @@ export type LaunchResponse = {
   ok: boolean;
   launched?: boolean;
   errors?: ValidateErrorMap;
+  message?: string;
+};
+
+export type SwitchModeRequest = {
+  mode: ShellMode;
+};
+
+export type ApiMessageResponse = {
+  ok: boolean;
   message?: string;
 };

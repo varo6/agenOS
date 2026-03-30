@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 
-exec /opt/agenos/installer/agenos-installer "$@"
+exec /opt/agenos/installer/agenos-installer-ui "$@"

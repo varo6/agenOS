@@ -10,6 +10,7 @@ export const INSTALLER_ROUTES = {
   validateProfile: `${INSTALLER_API_PREFIX}/validate-profile`,
   startGuided: `${INSTALLER_API_PREFIX}/start-guided`,
   startClassic: `${INSTALLER_API_PREFIX}/start-classic`,
+  switchMode: `${INSTALLER_API_PREFIX}/switch-mode`,
 } as const;
 
 export function resolveInstallerApiBase(override: string | null | undefined): string {

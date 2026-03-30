@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 
 import type {
   DiskSummary,
+  ShellMode,
   StepId,
   ValidationResponse,
 } from "../../shared/installer-types";
 import { installerClient } from "./installer-client";
 import { GlobalError } from "./components/GlobalError";
+import { LiveSystemView } from "./components/LiveSystemView";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { NavigationBar } from "./components/NavigationBar";
 import { SlideContainer } from "./components/SlideContainer";
+import { TopModeSwitch } from "./components/TopModeSwitch";
 import { VideoBackground } from "./components/VideoBackground";
 import { mapDiskToCardModel, mapPreflightToWelcomeModel } from "./mappers";
 import { ConfirmSlide } from "./slides/ConfirmSlide";
@@ -20,9 +23,19 @@ import { LanguageSlide } from "./slides/LanguageSlide";
 import { WelcomeSlide } from "./slides/WelcomeSlide";
 import {
   STEP_ORDER,
+  buildDefaultProfile,
   mergeNormalizedProfile,
   useInstallerStore,
+  type InstallerStoreSnapshot,
 } from "./store/useInstallerStore";
+
+const INSTALLER_SNAPSHOT_STORAGE_KEY = "agenos.installer.snapshot";
+const INSTALLER_SNAPSHOT_VERSION = 1;
+
+type PersistedInstallerState = {
+  version: number;
+  snapshot: InstallerStoreSnapshot;
+};
 
 function nextLabel(step: StepId, busy: boolean): string {
   if (busy) {
@@ -40,26 +53,165 @@ function nextLabel(step: StepId, busy: boolean): string {
   return "Continuar";
 }
 
+function modeFromPath(pathname: string): ShellMode {
+  return pathname.startsWith("/system") ? "system" : "installer";
+}
+
+function replaceRoute(mode: ShellMode): void {
+  const nextPath = mode === "system" ? "/system" : "/installer";
+  if (window.location.pathname !== nextPath) {
+    window.history.replaceState({}, "", nextPath);
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isInstallerSnapshot(value: unknown): value is InstallerStoreSnapshot {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  if (!STEP_ORDER.includes(value.step as StepId)) {
+    return false;
+  }
+
+  if (typeof value.selectedPresetId !== "string") {
+    return false;
+  }
+
+  if (!isObject(value.profile) || value.profile.schemaVersion !== 1) {
+    return false;
+  }
+
+  if (!isObject(value.profile.user)) {
+    return false;
+  }
+
+  if (!["guided", "classic", null].includes((value.launchMode as string | null) ?? null)) {
+    return false;
+  }
+
+  return typeof value.launchMessage === "string";
+}
+
+function readInstallerSnapshot(): InstallerStoreSnapshot | null {
+  try {
+    const rawValue = window.localStorage.getItem(INSTALLER_SNAPSHOT_STORAGE_KEY);
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsed = JSON.parse(rawValue) as PersistedInstallerState;
+    if (parsed.version !== INSTALLER_SNAPSHOT_VERSION || !isInstallerSnapshot(parsed.snapshot)) {
+      return null;
+    }
+
+    return parsed.snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function writeInstallerSnapshot(snapshot: InstallerStoreSnapshot): void {
+  try {
+    const payload: PersistedInstallerState = {
+      version: INSTALLER_SNAPSHOT_VERSION,
+      snapshot,
+    };
+    window.localStorage.setItem(INSTALLER_SNAPSHOT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage failures in live kiosk mode.
+  }
+}
+
+function normalizeSnapshot(snapshot: InstallerStoreSnapshot): InstallerStoreSnapshot {
+  const defaults = buildDefaultProfile();
+  const profile = snapshot.profile;
+  const user = isObject(profile.user) ? profile.user : {};
+  const safeUser = user as Record<string, unknown>;
+
+  return {
+    step: STEP_ORDER.includes(snapshot.step) ? snapshot.step : "welcome",
+    selectedPresetId: snapshot.selectedPresetId,
+    profile: {
+      schemaVersion: 1,
+      locale: typeof profile.locale === "string" ? profile.locale : defaults.locale,
+      timezone: typeof profile.timezone === "string" ? profile.timezone : defaults.timezone,
+      keyboardLayout: typeof profile.keyboardLayout === "string"
+        ? profile.keyboardLayout
+        : defaults.keyboardLayout,
+      keyboardVariant: typeof profile.keyboardVariant === "string"
+        ? profile.keyboardVariant
+        : defaults.keyboardVariant,
+      targetDisk: typeof profile.targetDisk === "string" ? profile.targetDisk : "",
+      user: {
+        fullName: typeof safeUser.fullName === "string" ? safeUser.fullName : "",
+        username: typeof safeUser.username === "string" ? safeUser.username : "",
+        hostname: typeof safeUser.hostname === "string" ? safeUser.hostname : "",
+        password: typeof safeUser.password === "string" ? safeUser.password : "",
+        passwordConfirmation: typeof safeUser.passwordConfirmation === "string"
+          ? safeUser.passwordConfirmation
+          : typeof safeUser.password === "string"
+            ? safeUser.password
+            : "",
+      },
+      installMode: "erase-disk",
+      rootMode: "same-as-user",
+    },
+    launchMode: snapshot.launchMode,
+    launchMessage: snapshot.launchMessage,
+  };
+}
+
 export default function App() {
   const installer = useInstallerStore();
+  const [requestedMode, setRequestedMode] = useState<ShellMode>(() => modeFromPath(window.location.pathname));
   const [preflightModel, setPreflightModel] = useState<ReturnType<
     typeof mapPreflightToWelcomeModel
   > | null>(null);
+  const [isLiveSession, setIsLiveSession] = useState<boolean | null>(null);
   const [disks, setDisks] = useState<DiskSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
+  const [switchingMode, setSwitchingMode] = useState<ShellMode | null>(null);
+  const [hasHydratedInstaller, setHasHydratedInstaller] = useState(false);
 
   const diskCards = useMemo(() => disks.map(mapDiskToCardModel), [disks]);
   const selectedDisk = useMemo(
     () => diskCards.find((disk) => disk.path === installer.profile.targetDisk) ?? null,
     [diskCards, installer.profile.targetDisk],
   );
+  const currentMode = isLiveSession === false ? "system" : requestedMode;
+  const canSwitchModes = Boolean(isLiveSession);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setRequestedMode(modeFromPath(window.location.pathname));
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isLiveSession !== false || requestedMode === "system") {
+      return;
+    }
+
+    setRequestedMode("system");
+    replaceRoute("system");
+  }, [isLiveSession, requestedMode]);
 
   useEffect(() => {
     let active = true;
 
     async function loadInitialData() {
       setIsLoading(true);
+      setHasHydratedInstaller(false);
       installer.setGlobalError(null);
 
       try {
@@ -73,9 +225,17 @@ export default function App() {
         }
 
         setPreflightModel(mapPreflightToWelcomeModel(preflight));
+        setIsLiveSession(preflight.isLiveSession);
         setDisks(diskResponse);
 
-        if (diskResponse.length === 1) {
+        if (preflight.isLiveSession && modeFromPath(window.location.pathname) === "installer") {
+          const persistedSnapshot = readInstallerSnapshot();
+          if (persistedSnapshot) {
+            installer.restoreSnapshot(normalizeSnapshot(persistedSnapshot));
+          } else if (diskResponse.length === 1) {
+            installer.selectDisk(diskResponse[0].path);
+          }
+        } else if (diskResponse.length === 1) {
           installer.selectDisk(diskResponse[0].path);
         }
       } catch (error) {
@@ -84,6 +244,7 @@ export default function App() {
         }
 
         setPreflightModel(null);
+        setIsLiveSession(null);
         setDisks([]);
         installer.setGlobalError(
           error instanceof Error
@@ -92,6 +253,7 @@ export default function App() {
         );
       } finally {
         if (active) {
+          setHasHydratedInstaller(true);
           setIsLoading(false);
         }
       }
@@ -103,6 +265,24 @@ export default function App() {
       active = false;
     };
   }, [reloadToken]);
+
+  useEffect(() => {
+    if (!hasHydratedInstaller || !isLiveSession || currentMode !== "installer") {
+      return;
+    }
+
+    writeInstallerSnapshot(installer.snapshot());
+  }, [
+    currentMode,
+    hasHydratedInstaller,
+    installer,
+    installer.launchMessage,
+    installer.launchMode,
+    installer.profile,
+    installer.selectedPresetId,
+    installer.step,
+    isLiveSession,
+  ]);
 
   async function validateIdentityRemotely(): Promise<ValidationResponse | null> {
     const localErrors = installer.validateCurrentStep(disks, "identity");
@@ -195,6 +375,28 @@ export default function App() {
       );
     } finally {
       installer.setBusy(false);
+    }
+  }
+
+  async function handleModeSwitch(nextMode: ShellMode) {
+    if (nextMode === currentMode || switchingMode) {
+      return;
+    }
+
+    if (currentMode === "installer") {
+      writeInstallerSnapshot(installer.snapshot());
+    }
+
+    setSwitchingMode(nextMode);
+    installer.setGlobalError(null);
+
+    try {
+      await installerClient.switchMode(nextMode);
+    } catch (error) {
+      installer.setGlobalError(
+        error instanceof Error ? error.message : "No se pudo cambiar de modo.",
+      );
+      setSwitchingMode(null);
     }
   }
 
@@ -326,6 +528,50 @@ export default function App() {
     );
   })();
 
+  const installerView = (
+    <div className="relative z-10 flex min-h-screen flex-col">
+      <header className="px-6 pt-20">
+        <div className="glass-panel mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-4">
+            <div className="brand-mark">A</div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.32em] text-amber-100/60">
+                AgenOS
+              </p>
+              <h1 className="font-display text-2xl font-semibold tracking-tight text-white">
+                Instalador de AgenOS
+              </h1>
+            </div>
+          </div>
+          <div className="hidden text-right text-sm text-white/45 lg:block">
+            <p>Preparacion guiada con traspaso final a Calamares.</p>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex min-h-0 flex-1 px-6 pb-4 pt-4">
+        <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
+          <SlideContainer direction={installer.direction} step={installer.step}>
+            {activeSlide}
+          </SlideContainer>
+        </div>
+      </main>
+
+      {installer.step !== "handoff" ? (
+        <NavigationBar
+          busy={installer.busy || switchingMode !== null}
+          canGoBack={installer.step !== "welcome" && Boolean(preflightModel)}
+          canGoNext={Boolean(preflightModel)}
+          currentStep={installer.step}
+          nextLabel={nextLabel(installer.step, installer.busy)}
+          onBack={handleBack}
+          onClassicLaunch={() => void launchClassic()}
+          onNext={() => void handleNext()}
+        />
+      ) : null}
+    </div>
+  );
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-black text-white">
       <VideoBackground />
@@ -337,47 +583,32 @@ export default function App() {
       {isLoading ? (
         <LoadingScreen />
       ) : (
-        <div className="relative z-10 flex min-h-screen flex-col">
-          <header className="px-6 pt-6">
-            <div className="glass-panel mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4">
-              <div className="flex items-center gap-4">
-                <div className="brand-mark">A</div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.32em] text-amber-100/60">
-                    AgenOS
-                  </p>
-                  <h1 className="font-display text-2xl font-semibold tracking-tight text-white">
-                    Instalador de AgenOS
-                  </h1>
-                </div>
-              </div>
-              <div className="hidden text-right text-sm text-white/45 lg:block">
-                <p>Preparacion guiada con traspaso final a Calamares.</p>
+        <>
+          {canSwitchModes ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-4 pt-4">
+              <div className="pointer-events-auto">
+                <TopModeSwitch
+                  currentMode={currentMode}
+                  disabled={switchingMode !== null}
+                  switchingMode={switchingMode}
+                  onSelectMode={(mode) => void handleModeSwitch(mode)}
+                />
               </div>
             </div>
-          </header>
-
-          <main className="flex min-h-0 flex-1 px-6 pb-4 pt-4">
-            <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0">
-              <SlideContainer direction={installer.direction} step={installer.step}>
-                {activeSlide}
-              </SlideContainer>
-            </div>
-          </main>
-
-          {installer.step !== "handoff" ? (
-            <NavigationBar
-              busy={installer.busy}
-              canGoBack={installer.step !== "welcome" && Boolean(preflightModel)}
-              canGoNext={Boolean(preflightModel)}
-              currentStep={installer.step}
-              nextLabel={nextLabel(installer.step, installer.busy)}
-              onBack={handleBack}
-              onClassicLaunch={() => void launchClassic()}
-              onNext={() => void handleNext()}
-            />
           ) : null}
-        </div>
+
+          {currentMode === "installer" ? installerView : (
+              <LiveSystemView
+              isInstalled={!isLiveSession}
+              isSwitching={switchingMode === "system"}
+              onOpenInstaller={
+                canSwitchModes
+                  ? () => void handleModeSwitch("installer")
+                  : undefined
+              }
+            />
+          )}
+        </>
       )}
     </div>
   );
