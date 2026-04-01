@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import type {
@@ -16,6 +16,7 @@ const { installerClient } = vi.hoisted(() => ({
     validateProfile: vi.fn<(profile: InstallerProfilePayload) => Promise<ValidationResponse>>(),
     launchGuided: vi.fn<(profile: InstallerProfilePayload) => Promise<LaunchResponse>>(),
     launchClassic: vi.fn<() => Promise<LaunchResponse>>(),
+    runMaintenance: vi.fn<(action: "terminal") => Promise<{ ok: boolean; message?: string }>>(),
     switchMode: vi.fn<(mode: "installer" | "system") => Promise<{ ok: boolean; message?: string }>>(),
   },
 }));
@@ -129,6 +130,10 @@ async function renderLoadedApp(disks: DiskSummary[] = [singleDisk]) {
     launched: true,
     message: "Se esta abriendo la instalacion avanzada con Calamares.",
   });
+  installerClient.runMaintenance.mockResolvedValue({
+    ok: true,
+    message: "Acción terminal lanzada.",
+  });
   installerClient.switchMode.mockResolvedValue({
     ok: true,
     message: "Cambiando a system.",
@@ -137,6 +142,39 @@ async function renderLoadedApp(disks: DiskSummary[] = [singleDisk]) {
   render(<App />);
   await screen.findByRole("heading", { name: "Instalador de AgenOS" });
   await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" });
+}
+
+async function renderSystemApp() {
+  window.history.replaceState({}, "", "/system");
+  installerClient.getPreflight.mockResolvedValue(defaultPreflight);
+  installerClient.getDisks.mockResolvedValue([singleDisk]);
+  installerClient.validateProfile.mockResolvedValue({
+    ok: true,
+    errors: {},
+    normalizedProfile: normalizedProfile(),
+  });
+  installerClient.launchGuided.mockResolvedValue({
+    ok: true,
+    launched: true,
+    message: "ok",
+  });
+  installerClient.launchClassic.mockResolvedValue({
+    ok: true,
+    launched: true,
+    message: "ok",
+  });
+  installerClient.runMaintenance.mockResolvedValue({
+    ok: true,
+    message: "Acción terminal lanzada.",
+  });
+  installerClient.switchMode.mockResolvedValue({
+    ok: true,
+    message: "Cambiando a installer.",
+  });
+
+  render(<App />);
+  await screen.findByRole("heading", { name: "AgenOS" });
+  await screen.findByRole("button", { name: "Activar micro" });
 }
 
 async function goToLanguage() {
@@ -176,6 +214,7 @@ async function fillIdentity() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
   window.localStorage.clear();
   window.history.replaceState({}, "", "/installer");
 });
@@ -376,6 +415,66 @@ describe("App", () => {
     expect(installerClient.launchClassic).toHaveBeenCalled();
   });
 
+  test("runs the maintenance terminal from a recognized text command", async () => {
+    await renderSystemApp();
+
+    fireEvent.change(screen.getByLabelText("Comando"), {
+      target: { value: "abre terminal de mantenimiento" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
+
+    await screen.findByText("Acción terminal lanzada.");
+    expect(installerClient.runMaintenance).toHaveBeenCalledWith("terminal");
+    expect(screen.getByText("Abrir terminal de mantenimiento")).toBeInTheDocument();
+    expect(screen.getByText("terminal")).toBeInTheDocument();
+  });
+
+  test("runs the maintenance terminal from the voice demo flow", async () => {
+    await renderSystemApp();
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole("button", { name: "Activar micro" }));
+    expect(screen.getByText("Estado: listening")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(900);
+    });
+    vi.useRealTimers();
+
+    await screen.findByText("Acción terminal lanzada.");
+    expect(installerClient.runMaintenance).toHaveBeenCalledWith("terminal");
+    expect(screen.getByText("voz simulada")).toBeInTheDocument();
+    expect(screen.getByText("abre terminal de mantenimiento")).toBeInTheDocument();
+  });
+
+  test("shows a local error for unsupported system commands", async () => {
+    await renderSystemApp();
+
+    fireEvent.change(screen.getByLabelText("Comando"), {
+      target: { value: "abre fotos" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
+
+    await screen.findByText("No he entendido el comando. Prueba con 'abre terminal de mantenimiento'.");
+    expect(installerClient.runMaintenance).not.toHaveBeenCalled();
+    expect(screen.getByText("Estado: error")).toBeInTheDocument();
+  });
+
+  test("shows backend failures in the system workflow", async () => {
+    await renderSystemApp();
+    installerClient.runMaintenance.mockRejectedValueOnce(
+      new Error("POST /api/system/maintenance falló: helper denegado"),
+    );
+
+    fireEvent.change(screen.getByLabelText("Comando"), {
+      target: { value: "terminal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
+
+    await screen.findByText("POST /api/system/maintenance falló: helper denegado");
+    expect(screen.getByText("Estado: error")).toBeInTheDocument();
+  });
+
   test("restores the installer snapshot after remounting", async () => {
     installerClient.getPreflight.mockResolvedValue(defaultPreflight);
     installerClient.getDisks.mockResolvedValue([singleDisk]);
@@ -394,6 +493,10 @@ describe("App", () => {
       launched: true,
       message: "ok",
     });
+    installerClient.runMaintenance.mockResolvedValue({
+      ok: true,
+      message: "ok",
+    });
     installerClient.switchMode.mockResolvedValue({
       ok: true,
       message: "ok",
@@ -407,6 +510,9 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Idioma, zona horaria y teclado" });
     fireEvent.change(screen.getByLabelText("Zona horaria"), {
       target: { value: "UTC" },
+    });
+    await waitFor(() => {
+      expect(window.localStorage.getItem("agenos.installer.snapshot")).toContain("\"step\":\"language\"");
     });
 
     firstRender.unmount();

@@ -7,6 +7,7 @@ import type {
   DiskSummary,
   InstallerProfilePayload,
   LaunchResponse,
+  MaintenanceAction,
   PreflightResponse,
   ShellMode,
   SwitchModeRequest,
@@ -15,7 +16,6 @@ import type {
 import {
   INSTALLER_API_HOST,
   INSTALLER_API_PORT,
-  INSTALLER_API_PREFIX,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
@@ -24,6 +24,7 @@ import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
 import { appendHelperLog, currentUid, formatTimestamp, removeFileIfPresent, writeShellModeOverride } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
+import { runMaintenance } from "./system/maintenance";
 
 export type InstallerApiDependencies = {
   frontendDistDir: string | null;
@@ -33,6 +34,7 @@ export type InstallerApiDependencies = {
   launchGuided: (profile: InstallerProfilePayload) => Promise<LaunchResponse>;
   launchClassic: () => Promise<LaunchResponse>;
   switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
+  runMaintenance: (action: MaintenanceAction) => Promise<ApiMessageResponse>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -75,6 +77,10 @@ function resolveFrontendPath(frontendDistDir: string, pathname: string): string 
 
 function isShellMode(value: unknown): value is ShellMode {
   return value === "installer" || value === "system";
+}
+
+function isMaintenanceAction(value: unknown): value is MaintenanceAction {
+  return value === "terminal";
 }
 
 async function defaultSwitchMode(mode: ShellMode): Promise<ApiMessageResponse> {
@@ -146,7 +152,7 @@ function frontendResponse(
     return null;
   }
 
-  if (url.pathname === INSTALLER_ROUTES.health || url.pathname.startsWith(INSTALLER_API_PREFIX)) {
+  if (url.pathname === INSTALLER_ROUTES.health || url.pathname.startsWith("/api/")) {
     return null;
   }
 
@@ -183,6 +189,7 @@ export function createInstallerApiHandler(
     launchGuided: dependencies.launchGuided ?? launchGuided,
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? defaultSwitchMode,
+    runMaintenance: dependencies.runMaintenance ?? runMaintenance,
   };
 
   return {
@@ -281,6 +288,36 @@ export function createInstallerApiHandler(
           }
 
           const response = await deps.switchMode(payload.mode);
+          if (!response.ok) {
+            return json(response, {
+              status: 500,
+            });
+          }
+
+          return json(response, {
+            status: 202,
+          });
+        }
+
+        if (url.pathname === INSTALLER_ROUTES.systemMaintenance) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const payload = await readJsonBody(request) as { action?: unknown };
+          if (!isMaintenanceAction(payload.action)) {
+            return json(
+              {
+                ok: false,
+                message: "La acción debe ser terminal.",
+              },
+              {
+                status: 400,
+              },
+            );
+          }
+
+          const response = await deps.runMaintenance(payload.action);
           if (!response.ok) {
             return json(response, {
               status: 500,

@@ -11,6 +11,7 @@ export const INSTALLER_ROUTES = {
   startGuided: `${INSTALLER_API_PREFIX}/start-guided`,
   startClassic: `${INSTALLER_API_PREFIX}/start-classic`,
   switchMode: `${INSTALLER_API_PREFIX}/switch-mode`,
+  systemMaintenance: "/api/system/maintenance",
 } as const;
 
 export function resolveInstallerApiBase(override: string | null | undefined): string {

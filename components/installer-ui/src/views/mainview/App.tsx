@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   DiskSummary,
@@ -28,6 +28,7 @@ import {
   useInstallerStore,
   type InstallerStoreSnapshot,
 } from "./store/useInstallerStore";
+import { SYSTEM_VOICE_DEMO_TRANSCRIPT, interpretSystemCommand } from "./system-command";
 
 const INSTALLER_SNAPSHOT_STORAGE_KEY = "agenos.installer.snapshot";
 const INSTALLER_SNAPSHOT_VERSION = 1;
@@ -36,6 +37,11 @@ type PersistedInstallerState = {
   version: number;
   snapshot: InstallerStoreSnapshot;
 };
+
+type VoiceState = "idle" | "listening" | "processing" | "error";
+type SystemCommandOrigin = "voice" | "text";
+
+const VOICE_DEMO_DELAY_MS = 900;
 
 function nextLabel(step: StepId, busy: boolean): string {
   if (busy) {
@@ -177,6 +183,14 @@ export default function App() {
   const [reloadToken, setReloadToken] = useState(0);
   const [switchingMode, setSwitchingMode] = useState<ShellMode | null>(null);
   const [hasHydratedInstaller, setHasHydratedInstaller] = useState(false);
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [systemCommandDraft, setSystemCommandDraft] = useState("");
+  const [lastCommandOrigin, setLastCommandOrigin] = useState<SystemCommandOrigin | null>(null);
+  const [lastTranscript, setLastTranscript] = useState("");
+  const [lastIntentLabel, setLastIntentLabel] = useState<string | null>(null);
+  const [lastActionLabel, setLastActionLabel] = useState<string | null>(null);
+  const [lastResultMessage, setLastResultMessage] = useState<string | null>(null);
+  const voiceDemoTimerRef = useRef<number | null>(null);
 
   const diskCards = useMemo(() => disks.map(mapDiskToCardModel), [disks]);
   const selectedDisk = useMemo(
@@ -195,6 +209,12 @@ export default function App() {
     return () => {
       window.removeEventListener("popstate", onPopState);
     };
+  }, []);
+
+  useEffect(() => () => {
+    if (voiceDemoTimerRef.current !== null) {
+      window.clearTimeout(voiceDemoTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -400,6 +420,70 @@ export default function App() {
     }
   }
 
+  async function executeSystemCommand(input: string, origin: SystemCommandOrigin) {
+    const transcript = input.trim();
+
+    setLastCommandOrigin(origin);
+    setLastTranscript(transcript);
+    setLastIntentLabel(null);
+    setLastActionLabel(null);
+    setLastResultMessage(null);
+    setVoiceState("processing");
+
+    const interpreted = interpretSystemCommand(transcript);
+    if (!interpreted.ok) {
+      setLastResultMessage(interpreted.message);
+      setVoiceState("error");
+      return;
+    }
+
+    setLastIntentLabel(interpreted.summary);
+    setLastActionLabel(interpreted.action);
+
+    try {
+      const response = await installerClient.runMaintenance(interpreted.action);
+      setLastResultMessage(response.message ?? "Acción completada.");
+      setVoiceState("idle");
+    } catch (error) {
+      setLastResultMessage(
+        error instanceof Error ? error.message : "No se pudo ejecutar la acción de mantenimiento.",
+      );
+      setVoiceState("error");
+    }
+  }
+
+  function handleSystemCommandSubmit() {
+    const trimmed = systemCommandDraft.trim();
+    if (!trimmed || voiceState === "listening" || voiceState === "processing") {
+      return;
+    }
+
+    setSystemCommandDraft("");
+    void executeSystemCommand(trimmed, "text");
+  }
+
+  function handleVoiceDemoStart() {
+    if (voiceState === "listening" || voiceState === "processing") {
+      return;
+    }
+
+    if (voiceDemoTimerRef.current !== null) {
+      window.clearTimeout(voiceDemoTimerRef.current);
+    }
+
+    setLastCommandOrigin("voice");
+    setLastTranscript("");
+    setLastIntentLabel(null);
+    setLastActionLabel(null);
+    setLastResultMessage("Esperando la transcripción simulada...");
+    setVoiceState("listening");
+
+    voiceDemoTimerRef.current = window.setTimeout(() => {
+      voiceDemoTimerRef.current = null;
+      void executeSystemCommand(SYSTEM_VOICE_DEMO_TRANSCRIPT, "voice");
+    }, VOICE_DEMO_DELAY_MS);
+  }
+
   async function handleNext() {
     installer.setGlobalError(null);
 
@@ -598,14 +682,24 @@ export default function App() {
           ) : null}
 
           {currentMode === "installer" ? installerView : (
-              <LiveSystemView
+            <LiveSystemView
+              commandDraft={systemCommandDraft}
               isInstalled={!isLiveSession}
               isSwitching={switchingMode === "system"}
+              lastActionLabel={lastActionLabel}
+              lastCommandOrigin={lastCommandOrigin}
+              lastIntentLabel={lastIntentLabel}
+              lastResultMessage={lastResultMessage}
+              lastTranscript={lastTranscript}
               onOpenInstaller={
                 canSwitchModes
                   ? () => void handleModeSwitch("installer")
                   : undefined
               }
+              onStartVoiceCapture={handleVoiceDemoStart}
+              onSubmitCommand={handleSystemCommandSubmit}
+              onUpdateCommandDraft={setSystemCommandDraft}
+              voiceState={voiceState}
             />
           )}
         </>

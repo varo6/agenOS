@@ -68,6 +68,10 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       ok: true,
       message: "switch ok",
     }),
+    runMaintenance: async () => ({
+      ok: true,
+      message: "maintenance ok",
+    }),
     ...overrides,
   });
 }
@@ -230,6 +234,61 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(202);
     expect(await jsonPayload(response)).toEqual(switchResponse);
+  });
+
+  test("returns 202 when maintenance succeeds", async () => {
+    const handler = createHandler({
+      runMaintenance: async () => ({
+        ok: true,
+        message: "maintenance ok",
+      }),
+    });
+
+    const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "terminal" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      message: "maintenance ok",
+    });
+  });
+
+  test("returns 400 when maintenance receives an invalid action", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "reload-shell" }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await jsonPayload(response)).toEqual({
+      ok: false,
+      message: "La acción debe ser terminal.",
+    });
+  });
+
+  test("returns 500 when maintenance fails", async () => {
+    const handler = createHandler({
+      runMaintenance: async () => ({
+        ok: false,
+        message: "helper fallo",
+      }),
+    });
+
+    const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "terminal" }),
+    }));
+
+    expect(response.status).toBe(500);
+    expect(await jsonPayload(response)).toEqual({
+      ok: false,
+      message: "helper fallo",
+    });
   });
 
   test("returns 400 when switching shell mode receives an invalid payload", async () => {

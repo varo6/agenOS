@@ -24,3 +24,7 @@ Para no bloquear el TFG en una UI o agente aun no implementados, la ISO actual u
 - compilar una imagen instalable desde ya
 - modificar branding y parte de la experiencia visual de instalacion
 - dejar el salto a sesion kiosk como siguiente hito, no como prerequisito
+
+## Estado actual del Live System
+
+Existe una primera vertical slice en `components/installer-ui` con input texto/micro demo y una accion real de mantenimiento. Detalle en [`live-system-slice.md`](./live-system-slice.md).
