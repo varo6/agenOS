@@ -1,32 +1,65 @@
-# Releases por SSH y rsync
+# Releases en `releases/` + Google Drive
 
-El flujo de release de AgenOS esta pensado para un servidor Linux que compila la ISO y la deja lista para descargar desde tu portatil por `rsync` sobre `SSH`.
+El flujo de release de AgenOS deja cada build publicada en una carpeta local `releases/` dentro de este repo y sube esa misma carpeta a Google Drive usando `rclone`.
 
 ## Objetivo
 
-Cada release queda publicada en una carpeta versionada:
+Cada release queda empaquetada en una carpeta local gitignored y en una carpeta homologa de Google Drive:
 
 ```text
-/srv/agenos/releases/
-  v0.1.0/
-    agenos-bookworm-amd64.hybrid.iso
+releases/
+  20260405T173359Z_v0.1.0/
+    agenos-20260405T173359Z_v0.1.0.iso
     SHA256SUMS
     build-info.txt
-  latest -> v0.1.0
 ```
 
-No se sube ningun artefacto a git.
-
-## Preparacion inicial del servidor
-
-Una sola vez, crea el directorio base y deja permisos a tu usuario:
-
-```bash
-sudo mkdir -p /srv/agenos/releases
-sudo chown -R "$USER:$USER" /srv/agenos
+```text
+gdrive:/agenOS/
+  20260405T173359Z_v0.1.0/
+    agenos-20260405T173359Z_v0.1.0.iso
+    SHA256SUMS
+    build-info.txt
 ```
 
-Si prefieres otro directorio, puedes usar `RELEASES_DIR=/ruta/custom`.
+La carpeta `releases/` esta ignorada por git y no se sube al remoto del repositorio.
+
+## Convencion de nombres
+
+Cada release usa un `release_id` con este formato:
+
+```text
+YYYYMMDDTHHMMSSZ_<version>
+```
+
+Ejemplo:
+
+```text
+20260405T173359Z_v0.1.0
+```
+
+Este formato tiene dos ventajas:
+
+- ordena bien por fecha al listar carpetas
+- mantiene visible la version funcional junto al timestamp UTC exacto
+
+La ISO publicada dentro de la release tambien se renombra con ese identificador:
+
+```text
+agenos-20260405T173359Z_v0.1.0.iso
+```
+
+## Preparacion inicial
+
+Una sola vez, asegurate de tener `rclone` configurado con un remoto llamado `gdrive` que apunte a tu Google Drive.
+
+El script sube por defecto a:
+
+```text
+gdrive:/agenOS
+```
+
+Si quieres usar otro remoto o carpeta, puedes cambiarlo con `DRIVE_REMOTE`.
 
 ## Publicar una release
 
@@ -45,11 +78,12 @@ make release-build VERSION=v0.1.0
 El script hace esto:
 
 - toma la ISO mas reciente de `dist/` si no defines `ISO_PATH`
-- crea `/srv/agenos/releases/<version>/`
-- copia la ISO
+- calcula `RELEASE_ID=YYYYMMDDTHHMMSSZ_<version>`
+- crea `releases/<release_id>/`
+- copia la ISO como `agenos-<release_id>.iso`
 - genera `SHA256SUMS`
 - genera `build-info.txt` con commit, rama, fecha y tamano
-- actualiza `latest -> <version>`
+- sube el contenido a `gdrive:/agenOS/<release_id>/`
 
 ## Variables utiles
 
@@ -59,41 +93,53 @@ Publicar una ISO concreta:
 ISO_PATH=dist/agenos-bookworm-amd64.hybrid.iso make release VERSION=v0.1.0
 ```
 
-Usar otro directorio de releases:
+Usar otro directorio local para empaquetar releases:
 
 ```bash
 RELEASES_DIR="$HOME/agenos-releases" make release VERSION=v0.1.0
 ```
 
-Recrear una release existente:
+Usar otra ruta remota de Google Drive:
+
+```bash
+DRIVE_REMOTE="gdrive:/agenOS-dev" make release VERSION=v0.1.0
+```
+
+Fijar manualmente el timestamp de la release:
+
+```bash
+RELEASE_TIMESTAMP=20260405T173359Z make release VERSION=v0.1.0
+```
+
+Fijar manualmente el identificador completo:
+
+```bash
+RELEASE_ID=20260405T173359Z_v0.1.0 make release VERSION=v0.1.0
+```
+
+Empaquetar solo en local sin subir a Drive:
+
+```bash
+UPLOAD_RELEASE=0 make release VERSION=v0.1.0
+```
+
+Recrear una release existente, local y remota:
 
 ```bash
 OVERWRITE_RELEASE=1 make release VERSION=v0.1.0
 ```
 
-No mover el symlink `latest`:
+## Descargar o verificar una release
+
+Descargar una release concreta desde Google Drive:
 
 ```bash
-UPDATE_LATEST=0 make release VERSION=v0.1.0
-```
-
-## Descargar desde tu portatil Arch
-
-Traer la ultima release:
-
-```bash
-rsync -avP usuario@tu-servidor:/srv/agenos/releases/latest/ .
-```
-
-Traer una release concreta:
-
-```bash
-rsync -avP usuario@tu-servidor:/srv/agenos/releases/v0.1.0/ .
+rclone copy gdrive:/agenOS/20260405T173359Z_v0.1.0 ./20260405T173359Z_v0.1.0 -P
 ```
 
 Verificar la ISO descargada:
 
 ```bash
-cd v0.1.0
+cd 20260405T173359Z_v0.1.0
 sha256sum -c SHA256SUMS
 ```

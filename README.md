@@ -70,7 +70,7 @@ Mas detalle en `docs/installer/quick-test.md`.
 
 ## Publicar una release
 
-Si ya tienes una ISO en `dist/`, puedes publicarla en el servidor para descargarla luego por `rsync` desde tu portatil:
+Si ya tienes una ISO en `dist/`, puedes empaquetar la release y subirla a Google Drive:
 
 ```bash
 make release VERSION=v0.1.0
@@ -82,7 +82,7 @@ Si quieres compilar y publicar en un solo paso:
 make release-build VERSION=v0.1.0
 ```
 
-Por defecto se publica en `/srv/agenos/releases/` y se actualiza el symlink `latest`. Mas detalle en `docs/installer/releases.md`.
+Por defecto se crea una carpeta gitignored en `releases/` dentro del repo y se sube esa misma release a `gdrive:/agenOS/` usando `rclone`. El identificador de release sigue el formato `YYYYMMDDTHHMMSSZ_<version>`, por ejemplo `20260405T173359Z_v0.1.0`. Mas detalle en `docs/installer/releases.md`.
 
 ## Estado actual
 

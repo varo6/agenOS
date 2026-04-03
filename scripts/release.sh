@@ -3,10 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${ROOT_DIR}/dist"
-RELEASES_DIR="${RELEASES_DIR:-/srv/agenos/releases}"
+RELEASES_DIR="${RELEASES_DIR:-${ROOT_DIR}/releases}"
+DRIVE_REMOTE="${DRIVE_REMOTE:-gdrive:/agenOS}"
 VERSION="${VERSION:-${1:-}}"
 ISO_PATH="${ISO_PATH:-}"
-UPDATE_LATEST="${UPDATE_LATEST:-1}"
+RELEASE_TIMESTAMP="${RELEASE_TIMESTAMP:-$(date -u +"%Y%m%dT%H%M%SZ")}"
+RELEASE_ID="${RELEASE_ID:-}"
+UPLOAD_RELEASE="${UPLOAD_RELEASE:-1}"
 OVERWRITE_RELEASE="${OVERWRITE_RELEASE:-0}"
 
 usage() {
@@ -17,15 +20,19 @@ Uso:
 
 Variables utiles:
   ISO_PATH=/ruta/a/agenos.iso
-  RELEASES_DIR=/srv/agenos/releases
-  UPDATE_LATEST=1
+  RELEASES_DIR=./releases
+  DRIVE_REMOTE=gdrive:/agenOS
+  RELEASE_TIMESTAMP=20260405T173359Z
+  RELEASE_ID=20260405T173359Z_v0.1.0
+  UPLOAD_RELEASE=1
   OVERWRITE_RELEASE=0
 
 Comportamiento:
   - publica la ISO mas reciente de dist/ si no se define ISO_PATH
-  - crea RELEASES_DIR/VERSION/
-  - copia la ISO, genera SHA256SUMS y build-info.txt
-  - actualiza el symlink RELEASES_DIR/latest -> VERSION
+  - crea RELEASES_DIR/RELEASE_ID/
+  - copia la ISO como agenos-RELEASE_ID.iso
+  - genera SHA256SUMS y build-info.txt
+  - sube la release a DRIVE_REMOTE/RELEASE_ID/ usando rclone
 EOF
 }
 
@@ -71,6 +78,20 @@ validate_version() {
     echo "VERSION contiene caracteres no soportados: ${VERSION}" >&2
     exit 1
   fi
+
+  if [[ ! "${RELEASE_TIMESTAMP}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+    echo "RELEASE_TIMESTAMP debe tener formato YYYYMMDDTHHMMSSZ: ${RELEASE_TIMESTAMP}" >&2
+    exit 1
+  fi
+
+  if [[ -z "${RELEASE_ID}" ]]; then
+    RELEASE_ID="${RELEASE_TIMESTAMP}_${VERSION}"
+  fi
+
+  if [[ ! "${RELEASE_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "RELEASE_ID contiene caracteres no soportados: ${RELEASE_ID}" >&2
+    exit 1
+  fi
 }
 
 ensure_release_dir() {
@@ -86,13 +107,12 @@ ensure_release_dir() {
 }
 
 publish_release() {
-  local release_dir="${RELEASES_DIR}/${VERSION}"
-  local iso_name
+  local release_dir="${RELEASES_DIR}/${RELEASE_ID}"
+  local iso_name="agenos-${RELEASE_ID}.iso"
   local release_iso
   local git_commit
   local git_branch
 
-  iso_name="$(basename "${ISO_PATH}")"
   release_iso="${release_dir}/${iso_name}"
 
   if [[ -e "${release_dir}" && "${OVERWRITE_RELEASE}" != "1" ]]; then
@@ -115,24 +135,41 @@ publish_release() {
 
   cat > "${release_dir}/build-info.txt" <<EOF
 version=${VERSION}
+release_id=${RELEASE_ID}
+release_timestamp_utc=${RELEASE_TIMESTAMP}
 created_at_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 git_branch=${git_branch}
 git_commit=${git_commit}
 source_iso=${ISO_PATH}
 published_iso=${release_iso}
+drive_remote=${DRIVE_REMOTE}/${RELEASE_ID}
 iso_size_bytes=$(stat -c '%s' "${release_iso}")
 EOF
-
-  if [[ "${UPDATE_LATEST}" == "1" ]]; then
-    ln -sfn "${VERSION}" "${RELEASES_DIR}/latest"
-  fi
 
   echo "Release publicada en ${release_dir}"
   echo "ISO: ${release_iso}"
   echo "Checksum: ${release_dir}/SHA256SUMS"
-  if [[ "${UPDATE_LATEST}" == "1" ]]; then
-    echo "Latest: ${RELEASES_DIR}/latest -> ${VERSION}"
+}
+
+upload_release() {
+  local release_dir="${RELEASES_DIR}/${RELEASE_ID}"
+  local remote_release_dir="${DRIVE_REMOTE}/${RELEASE_ID}"
+
+  if [[ "${UPLOAD_RELEASE}" != "1" ]]; then
+    echo "Upload omitido: UPLOAD_RELEASE=${UPLOAD_RELEASE}"
+    return 0
   fi
+
+  if rclone lsf "${remote_release_dir}" >/dev/null 2>&1; then
+    if [[ "${OVERWRITE_RELEASE}" != "1" ]]; then
+      echo "La release remota ${remote_release_dir} ya existe. Usa OVERWRITE_RELEASE=1 si quieres regenerarla." >&2
+      exit 1
+    fi
+    rclone purge "${remote_release_dir}"
+  fi
+
+  rclone copy "${release_dir}" "${remote_release_dir}" -P
+  echo "Upload completado en ${remote_release_dir}"
 }
 
 validate_version
@@ -140,6 +177,10 @@ require_command sha256sum
 require_command install
 require_command stat
 require_command date
+if [[ "${UPLOAD_RELEASE}" == "1" ]]; then
+  require_command rclone
+fi
 resolve_iso
 ensure_release_dir
 publish_release
+upload_release
