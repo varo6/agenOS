@@ -14,7 +14,13 @@ STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 source_hash() {
   (
     cd "${UI_DIR}"
-    find src public package.json bun.lock index.html vite.config.ts vitest.config.ts tsconfig*.json -type f -print 2>/dev/null \
+    local inputs=()
+
+    for path in src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json; do
+      [[ -e "${path}" ]] && inputs+=("${path}")
+    done
+
+    find "${inputs[@]}" -type f -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
@@ -28,8 +34,13 @@ CURRENT_HASH="$(
     sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
+CURRENT_STAMP=""
 
-if [[ -f "${STAMP_FILE}" && "$(cat "${STAMP_FILE}")" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
+if [[ -f "${STAMP_FILE}" ]]; then
+  CURRENT_STAMP="$(cat "${STAMP_FILE}")"
+fi
+
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi

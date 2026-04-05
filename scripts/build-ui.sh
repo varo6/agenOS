@@ -9,7 +9,13 @@ STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 source_hash() {
   (
     cd "${UI_DIR}"
-    find src public package.json bun.lock index.html vite.config.ts tsconfig*.json -type f -print 2>/dev/null \
+    local inputs=()
+
+    for path in src public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json; do
+      [[ -e "${path}" ]] && inputs+=("${path}")
+    done
+
+    find "${inputs[@]}" -type f -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
@@ -18,8 +24,13 @@ source_hash() {
 cd "${UI_DIR}"
 
 CURRENT_HASH="$(source_hash | sha256sum | awk '{print $1}')"
+CURRENT_STAMP=""
 
-if [[ -f "${STAMP_FILE}" && "$(cat "${STAMP_FILE}")" == "${CURRENT_HASH}" && -f "${OUTPUT_DIR}/index.html" ]]; then
+if [[ -f "${STAMP_FILE}" ]]; then
+  CURRENT_STAMP="$(cat "${STAMP_FILE}")"
+fi
+
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${OUTPUT_DIR}/index.html" ]]; then
   echo "components/ui sin cambios; se reutiliza el build empaquetado."
   exit 0
 fi
