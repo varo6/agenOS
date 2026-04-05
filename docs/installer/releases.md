@@ -8,16 +8,16 @@ Cada release queda empaquetada en una carpeta local gitignored y en una carpeta 
 
 ```text
 releases/
-  20260405T173359Z_v0.1.0/
-    agenos-20260405T173359Z_v0.1.0.iso
+  v0.1.0_2026-04-05/
+    agenos-bookworm-amd64-v0.1.0.iso
     SHA256SUMS
     build-info.txt
 ```
 
 ```text
 gdrive:/agenOS/
-  20260405T173359Z_v0.1.0/
-    agenos-20260405T173359Z_v0.1.0.iso
+  v0.1.0_2026-04-05/
+    agenos-bookworm-amd64-v0.1.0.iso
     SHA256SUMS
     build-info.txt
 ```
@@ -29,24 +29,24 @@ La carpeta `releases/` esta ignorada por git y no se sube al remoto del reposito
 Cada release usa un `release_id` con este formato:
 
 ```text
-YYYYMMDDTHHMMSSZ_<version>
+<version>_<fecha>
 ```
 
 Ejemplo:
 
 ```text
-20260405T173359Z_v0.1.0
+v0.1.0_2026-04-05
 ```
 
 Este formato tiene dos ventajas:
 
-- ordena bien por fecha al listar carpetas
-- mantiene visible la version funcional junto al timestamp UTC exacto
+- hace visible la version primero
+- deja una fecha corta y legible para distinguir builds
 
 La ISO publicada dentro de la release tambien se renombra con ese identificador:
 
 ```text
-agenos-20260405T173359Z_v0.1.0.iso
+agenos-bookworm-amd64-v0.1.0.iso
 ```
 
 ## Preparacion inicial
@@ -78,9 +78,9 @@ make release-build VERSION=v0.1.0
 El script hace esto:
 
 - toma la ISO mas reciente de `dist/` si no defines `ISO_PATH`
-- calcula `RELEASE_ID=YYYYMMDDTHHMMSSZ_<version>`
+- calcula `RELEASE_ID=<version>_<fecha>`
 - crea `releases/<release_id>/`
-- copia la ISO como `agenos-<release_id>.iso`
+- copia la ISO como `agenos-bookworm-amd64-<version>.iso`
 - genera `SHA256SUMS`
 - genera `build-info.txt` con commit, rama, fecha y tamano
 - sube el contenido a `gdrive:/agenOS/<release_id>/`
@@ -105,16 +105,28 @@ Usar otra ruta remota de Google Drive:
 DRIVE_REMOTE="gdrive:/agenOS-dev" make release VERSION=v0.1.0
 ```
 
-Fijar manualmente el timestamp de la release:
+Fijar manualmente la fecha o sufijo de release:
 
 ```bash
-RELEASE_TIMESTAMP=20260405T173359Z make release VERSION=v0.1.0
+RELEASE_STAMP=2026-04-05 make release VERSION=v0.1.0
+```
+
+Si necesitas dos builds del mismo dia, puedes usar un sufijo corto:
+
+```bash
+RELEASE_STAMP=2026-04-05a make release VERSION=v0.1.0
+```
+
+Cambiar la etiqueta incluida en el nombre de la ISO:
+
+```bash
+RELEASE_LABEL=bookworm-amd64 make release VERSION=v0.1.0
 ```
 
 Fijar manualmente el identificador completo:
 
 ```bash
-RELEASE_ID=20260405T173359Z_v0.1.0 make release VERSION=v0.1.0
+RELEASE_ID=v0.1.0_2026-04-05 make release VERSION=v0.1.0
 ```
 
 Empaquetar solo en local sin subir a Drive:
@@ -134,12 +146,12 @@ OVERWRITE_RELEASE=1 make release VERSION=v0.1.0
 Descargar una release concreta desde Google Drive:
 
 ```bash
-rclone copy gdrive:/agenOS/20260405T173359Z_v0.1.0 ./20260405T173359Z_v0.1.0 -P
+rclone copy gdrive:/agenOS/v0.1.0_2026-04-05 ./v0.1.0_2026-04-05 -P
 ```
 
 Verificar la ISO descargada:
 
 ```bash
-cd 20260405T173359Z_v0.1.0
+cd v0.1.0_2026-04-05
 sha256sum -c SHA256SUMS
 ```

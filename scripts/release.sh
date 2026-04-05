@@ -7,7 +7,8 @@ RELEASES_DIR="${RELEASES_DIR:-${ROOT_DIR}/releases}"
 DRIVE_REMOTE="${DRIVE_REMOTE:-gdrive:/agenOS}"
 VERSION="${VERSION:-${1:-}}"
 ISO_PATH="${ISO_PATH:-}"
-RELEASE_TIMESTAMP="${RELEASE_TIMESTAMP:-$(date -u +"%Y%m%dT%H%M%SZ")}"
+RELEASE_STAMP="${RELEASE_STAMP:-$(date -u +"%Y-%m-%d")}"
+RELEASE_LABEL="${RELEASE_LABEL:-bookworm-amd64}"
 RELEASE_ID="${RELEASE_ID:-}"
 UPLOAD_RELEASE="${UPLOAD_RELEASE:-1}"
 OVERWRITE_RELEASE="${OVERWRITE_RELEASE:-0}"
@@ -22,15 +23,16 @@ Variables utiles:
   ISO_PATH=/ruta/a/agenos.iso
   RELEASES_DIR=./releases
   DRIVE_REMOTE=gdrive:/agenOS
-  RELEASE_TIMESTAMP=20260405T173359Z
-  RELEASE_ID=20260405T173359Z_v0.1.0
+  RELEASE_STAMP=2026-04-05
+  RELEASE_LABEL=bookworm-amd64
+  RELEASE_ID=v0.1.0_2026-04-05
   UPLOAD_RELEASE=1
   OVERWRITE_RELEASE=0
 
 Comportamiento:
   - publica la ISO mas reciente de dist/ si no se define ISO_PATH
   - crea RELEASES_DIR/RELEASE_ID/
-  - copia la ISO como agenos-RELEASE_ID.iso
+  - copia la ISO como agenos-RELEASE_LABEL-VERSION.iso
   - genera SHA256SUMS y build-info.txt
   - sube la release a DRIVE_REMOTE/RELEASE_ID/ usando rclone
 EOF
@@ -79,13 +81,18 @@ validate_version() {
     exit 1
   fi
 
-  if [[ ! "${RELEASE_TIMESTAMP}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
-    echo "RELEASE_TIMESTAMP debe tener formato YYYYMMDDTHHMMSSZ: ${RELEASE_TIMESTAMP}" >&2
+  if [[ ! "${RELEASE_STAMP}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "RELEASE_STAMP contiene caracteres no soportados: ${RELEASE_STAMP}" >&2
+    exit 1
+  fi
+
+  if [[ ! "${RELEASE_LABEL}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "RELEASE_LABEL contiene caracteres no soportados: ${RELEASE_LABEL}" >&2
     exit 1
   fi
 
   if [[ -z "${RELEASE_ID}" ]]; then
-    RELEASE_ID="${RELEASE_TIMESTAMP}_${VERSION}"
+    RELEASE_ID="${VERSION}_${RELEASE_STAMP}"
   fi
 
   if [[ ! "${RELEASE_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
@@ -108,7 +115,7 @@ ensure_release_dir() {
 
 publish_release() {
   local release_dir="${RELEASES_DIR}/${RELEASE_ID}"
-  local iso_name="agenos-${RELEASE_ID}.iso"
+  local iso_name="agenos-${RELEASE_LABEL}-${VERSION}.iso"
   local release_iso
   local git_commit
   local git_branch
@@ -136,7 +143,8 @@ publish_release() {
   cat > "${release_dir}/build-info.txt" <<EOF
 version=${VERSION}
 release_id=${RELEASE_ID}
-release_timestamp_utc=${RELEASE_TIMESTAMP}
+release_stamp=${RELEASE_STAMP}
+release_label=${RELEASE_LABEL}
 created_at_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 git_branch=${git_branch}
 git_commit=${git_commit}

@@ -82,7 +82,7 @@ Si quieres compilar y publicar en un solo paso:
 make release-build VERSION=v0.1.0
 ```
 
-Por defecto se crea una carpeta gitignored en `releases/` dentro del repo y se sube esa misma release a `gdrive:/agenOS/` usando `rclone`. El identificador de release sigue el formato `YYYYMMDDTHHMMSSZ_<version>`, por ejemplo `20260405T173359Z_v0.1.0`. Mas detalle en `docs/installer/releases.md`.
+Por defecto se crea una carpeta gitignored en `releases/` dentro del repo y se sube esa misma release a `gdrive:/agenOS/` usando `rclone`. El identificador de release sigue el formato `<version>_<fecha>`, por ejemplo `v0.1.0_2026-04-05`, y la ISO publicada se llama `agenos-bookworm-amd64-v0.1.0.iso`. Mas detalle en `docs/installer/releases.md`.
 
 ## Estado actual
 
