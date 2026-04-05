@@ -1,5 +1,6 @@
 export type FirmwareType = "UEFI" | "BIOS";
 export type ShellMode = "installer" | "system";
+export type MaintenanceAction = "terminal";
 
 export type StepId =
   | "welcome"
