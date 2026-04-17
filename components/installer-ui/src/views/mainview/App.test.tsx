@@ -247,6 +247,21 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Live System" })).toBeInTheDocument();
   });
 
+  test("falls back to the live system view if the shell does not relaunch the window", async () => {
+    await renderLoadedApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "Live System" }));
+    expect(installerClient.switchMode).toHaveBeenCalledWith("system");
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/system");
+    }, {
+      timeout: 2500,
+    });
+
+    expect(await screen.findByRole("button", { name: "Activar micro" })).toBeInTheDocument();
+  });
+
   test("hides the mode switch and forces the live system view in installed mode", async () => {
     installerClient.getPreflight.mockResolvedValue({
       ...defaultPreflight,

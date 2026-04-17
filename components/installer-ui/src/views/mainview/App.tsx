@@ -42,6 +42,7 @@ type VoiceState = "idle" | "listening" | "processing" | "error";
 type SystemCommandOrigin = "voice" | "text";
 
 const VOICE_DEMO_DELAY_MS = 900;
+const MODE_SWITCH_FALLBACK_DELAY_MS = 1500;
 
 function nextLabel(step: StepId, busy: boolean): string {
   if (busy) {
@@ -191,6 +192,7 @@ export default function App() {
   const [lastActionLabel, setLastActionLabel] = useState<string | null>(null);
   const [lastResultMessage, setLastResultMessage] = useState<string | null>(null);
   const voiceDemoTimerRef = useRef<number | null>(null);
+  const switchModeFallbackTimerRef = useRef<number | null>(null);
 
   const diskCards = useMemo(() => disks.map(mapDiskToCardModel), [disks]);
   const selectedDisk = useMemo(
@@ -214,6 +216,10 @@ export default function App() {
   useEffect(() => () => {
     if (voiceDemoTimerRef.current !== null) {
       window.clearTimeout(voiceDemoTimerRef.current);
+    }
+
+    if (switchModeFallbackTimerRef.current !== null) {
+      window.clearTimeout(switchModeFallbackTimerRef.current);
     }
   }, []);
 
@@ -403,6 +409,11 @@ export default function App() {
       return;
     }
 
+    if (switchModeFallbackTimerRef.current !== null) {
+      window.clearTimeout(switchModeFallbackTimerRef.current);
+      switchModeFallbackTimerRef.current = null;
+    }
+
     if (currentMode === "installer") {
       writeInstallerSnapshot(installer.snapshot());
     }
@@ -412,6 +423,12 @@ export default function App() {
 
     try {
       await installerClient.switchMode(nextMode);
+      switchModeFallbackTimerRef.current = window.setTimeout(() => {
+        switchModeFallbackTimerRef.current = null;
+        setRequestedMode(nextMode);
+        replaceRoute(nextMode);
+        setSwitchingMode(null);
+      }, MODE_SWITCH_FALLBACK_DELAY_MS);
     } catch (error) {
       installer.setGlobalError(
         error instanceof Error ? error.message : "No se pudo cambiar de modo.",
