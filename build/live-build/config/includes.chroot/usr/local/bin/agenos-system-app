@@ -2,6 +2,6 @@
 set -eu
 
 export AGENOS_APP_KIND="system"
-export AGENOS_APP_PATH="/system"
+export AGENOS_APP_PATH="/"
 
 exec /opt/agenos/installer/agenos-installer "$@"

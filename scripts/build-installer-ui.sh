@@ -3,20 +3,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/installer-ui"
+SYSTEM_UI_DIR="${ROOT_DIR}/components/ui"
 OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/installer"
 API_BUILD_DIR="${UI_DIR}/build/api"
 VIEW_DIST_DIR="${UI_DIR}/dist"
+SYSTEM_DIST_DIR="${SYSTEM_UI_DIR}/dist"
 ELECTRON_APP_DIR="${UI_DIR}/src/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 
 source_hash() {
+  local target_dir="$1"
+  shift
   (
-    cd "${UI_DIR}"
+    cd "${target_dir}"
     local inputs=()
 
-    for path in src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json; do
+    for path in "$@"; do
       [[ -e "${path}" ]] && inputs+=("${path}")
     done
 
@@ -30,7 +34,8 @@ cd "${UI_DIR}"
 
 CURRENT_HASH="$(
   {
-    source_hash
+    source_hash "${UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json
+    source_hash "${SYSTEM_UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
     sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -40,7 +45,7 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi
@@ -53,8 +58,15 @@ fi
 
 bun run build
 
+bash "${ROOT_DIR}/scripts/build-ui.sh"
+
 if [[ ! -f "${VIEW_DIST_DIR}/index.html" ]]; then
   echo "No se encontró la vista compilada en ${VIEW_DIST_DIR}/index.html" >&2
+  exit 1
+fi
+
+if [[ ! -f "${SYSTEM_DIST_DIR}/index.html" ]]; then
+  echo "No se encontró la vista compilada en ${SYSTEM_DIST_DIR}/index.html" >&2
   exit 1
 fi
 
@@ -68,12 +80,13 @@ if [[ ! -x "${PACKAGED_BUN}" ]]; then
   exit 1
 fi
 
-mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist"
+mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/system-dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist"
 
 install -m 0755 "${PACKAGED_BUN}" "${OUTPUT_DIR}/bin/bun"
 install -m 0755 "${API_BUILD_DIR}/server.js" "${OUTPUT_DIR}/api/server.js"
 install -m 0755 "${API_BUILD_DIR}/cli.js" "${OUTPUT_DIR}/api/cli.js"
 rsync -a --delete "${VIEW_DIST_DIR}/" "${OUTPUT_DIR}/dist/"
+rsync -a --delete "${SYSTEM_DIST_DIR}/" "${OUTPUT_DIR}/system-dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${OUTPUT_DIR}/electron-app/"
 rsync -a --delete "${ELECTRON_DIST_DIR}/" "${OUTPUT_DIR}/electron-dist/"
 
@@ -86,7 +99,7 @@ printf '%s\n' \
   'set -eu' \
   'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"' \
   'APP_KIND="${AGENOS_APP_KIND:-installer}"' \
-  'APP_PATH="${AGENOS_APP_PATH:-/installer}"' \
+  'APP_PATH="${AGENOS_APP_PATH:-/installer/}"' \
   'RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"' \
   'PROFILE_DIR="${RUNTIME_DIR}/electron-profile"' \
   'LOCK_FILE="${RUNTIME_DIR}/electron.lock"' \
@@ -117,7 +130,7 @@ printf '%s\n' \
   '#!/bin/sh' \
   'set -eu' \
   'export AGENOS_APP_KIND="system"' \
-  'export AGENOS_APP_PATH="/system"' \
+  'export AGENOS_APP_PATH="/"' \
   'exec "$(CDPATH= cd -- "$(dirname "$0")" && pwd)/agenos-installer-ui" "$@"' \
   > "${OUTPUT_DIR}/agenos-system-ui"
 

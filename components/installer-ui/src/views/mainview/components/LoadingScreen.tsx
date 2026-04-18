@@ -19,11 +19,11 @@ export function LoadingScreen() {
 
         <div>
           <h2 className="font-display text-3xl font-semibold text-white">
-            Preparando instalador
+            Preparando AgenOS
           </h2>
           <p className="mt-2 text-sm text-white/55">
-            Detectando hardware, comprobando la sesion live y leyendo los discos
-            disponibles.
+            Detectando hardware, comprobando el entorno actual y cargando la vista
+            del instalador.
           </p>
         </div>
 

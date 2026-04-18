@@ -1,19 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type {
   DiskSummary,
-  ShellMode,
   StepId,
   ValidationResponse,
 } from "../../shared/installer-types";
-import { installerClient } from "./installer-client";
 import { GlobalError } from "./components/GlobalError";
-import { LiveSystemView } from "./components/LiveSystemView";
 import { LoadingScreen } from "./components/LoadingScreen";
-import { NavigationBar } from "./components/NavigationBar";
-import { SlideContainer } from "./components/SlideContainer";
-import { TopModeSwitch } from "./components/TopModeSwitch";
 import { VideoBackground } from "./components/VideoBackground";
+import { InstallerShell } from "../installer-shell/InstallerShell";
+import { installerClient } from "./installer-client";
 import { mapDiskToCardModel, mapPreflightToWelcomeModel } from "./mappers";
 import { ConfirmSlide } from "./slides/ConfirmSlide";
 import { DiskSlide } from "./slides/DiskSlide";
@@ -28,7 +24,6 @@ import {
   useInstallerStore,
   type InstallerStoreSnapshot,
 } from "./store/useInstallerStore";
-import { SYSTEM_VOICE_DEMO_TRANSCRIPT, interpretSystemCommand } from "./system-command";
 
 const INSTALLER_SNAPSHOT_STORAGE_KEY = "agenos.installer.snapshot";
 const INSTALLER_SNAPSHOT_VERSION = 1;
@@ -37,12 +32,6 @@ type PersistedInstallerState = {
   version: number;
   snapshot: InstallerStoreSnapshot;
 };
-
-type VoiceState = "idle" | "listening" | "processing" | "error";
-type SystemCommandOrigin = "voice" | "text";
-
-const VOICE_DEMO_DELAY_MS = 900;
-const MODE_SWITCH_FALLBACK_DELAY_MS = 1500;
 
 function nextLabel(step: StepId, busy: boolean): string {
   if (busy) {
@@ -58,17 +47,6 @@ function nextLabel(step: StepId, busy: boolean): string {
   }
 
   return "Continuar";
-}
-
-function modeFromPath(pathname: string): ShellMode {
-  return pathname.startsWith("/system") ? "system" : "installer";
-}
-
-function replaceRoute(mode: ShellMode): void {
-  const nextPath = mode === "system" ? "/system" : "/installer";
-  if (window.location.pathname !== nextPath) {
-    window.history.replaceState({}, "", nextPath);
-  }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -174,7 +152,6 @@ function normalizeSnapshot(snapshot: InstallerStoreSnapshot): InstallerStoreSnap
 
 export default function App() {
   const installer = useInstallerStore();
-  const [requestedMode, setRequestedMode] = useState<ShellMode>(() => modeFromPath(window.location.pathname));
   const [preflightModel, setPreflightModel] = useState<ReturnType<
     typeof mapPreflightToWelcomeModel
   > | null>(null);
@@ -182,55 +159,13 @@ export default function App() {
   const [disks, setDisks] = useState<DiskSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
-  const [switchingMode, setSwitchingMode] = useState<ShellMode | null>(null);
   const [hasHydratedInstaller, setHasHydratedInstaller] = useState(false);
-  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [systemCommandDraft, setSystemCommandDraft] = useState("");
-  const [lastCommandOrigin, setLastCommandOrigin] = useState<SystemCommandOrigin | null>(null);
-  const [lastTranscript, setLastTranscript] = useState("");
-  const [lastIntentLabel, setLastIntentLabel] = useState<string | null>(null);
-  const [lastActionLabel, setLastActionLabel] = useState<string | null>(null);
-  const [lastResultMessage, setLastResultMessage] = useState<string | null>(null);
-  const voiceDemoTimerRef = useRef<number | null>(null);
-  const switchModeFallbackTimerRef = useRef<number | null>(null);
 
   const diskCards = useMemo(() => disks.map(mapDiskToCardModel), [disks]);
   const selectedDisk = useMemo(
     () => diskCards.find((disk) => disk.path === installer.profile.targetDisk) ?? null,
     [diskCards, installer.profile.targetDisk],
   );
-  const currentMode = isLiveSession === false ? "system" : requestedMode;
-  const canSwitchModes = Boolean(isLiveSession);
-
-  useEffect(() => {
-    const onPopState = () => {
-      setRequestedMode(modeFromPath(window.location.pathname));
-    };
-
-    window.addEventListener("popstate", onPopState);
-    return () => {
-      window.removeEventListener("popstate", onPopState);
-    };
-  }, []);
-
-  useEffect(() => () => {
-    if (voiceDemoTimerRef.current !== null) {
-      window.clearTimeout(voiceDemoTimerRef.current);
-    }
-
-    if (switchModeFallbackTimerRef.current !== null) {
-      window.clearTimeout(switchModeFallbackTimerRef.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isLiveSession !== false || requestedMode === "system") {
-      return;
-    }
-
-    setRequestedMode("system");
-    replaceRoute("system");
-  }, [isLiveSession, requestedMode]);
 
   useEffect(() => {
     let active = true;
@@ -254,7 +189,7 @@ export default function App() {
         setIsLiveSession(preflight.isLiveSession);
         setDisks(diskResponse);
 
-        if (preflight.isLiveSession && modeFromPath(window.location.pathname) === "installer") {
+        if (preflight.isLiveSession) {
           const persistedSnapshot = readInstallerSnapshot();
           if (persistedSnapshot) {
             installer.restoreSnapshot(normalizeSnapshot(persistedSnapshot));
@@ -293,15 +228,19 @@ export default function App() {
   }, [reloadToken]);
 
   useEffect(() => {
-    if (!hasHydratedInstaller || !isLiveSession || currentMode !== "installer") {
+    if (!hasHydratedInstaller || !isLiveSession) {
       return;
     }
 
-    writeInstallerSnapshot(installer.snapshot());
+    writeInstallerSnapshot({
+      step: installer.step,
+      selectedPresetId: installer.selectedPresetId,
+      profile: installer.profile,
+      launchMode: installer.launchMode,
+      launchMessage: installer.launchMessage,
+    });
   }, [
-    currentMode,
     hasHydratedInstaller,
-    installer,
     installer.launchMessage,
     installer.launchMode,
     installer.profile,
@@ -404,103 +343,6 @@ export default function App() {
     }
   }
 
-  async function handleModeSwitch(nextMode: ShellMode) {
-    if (nextMode === currentMode || switchingMode) {
-      return;
-    }
-
-    if (switchModeFallbackTimerRef.current !== null) {
-      window.clearTimeout(switchModeFallbackTimerRef.current);
-      switchModeFallbackTimerRef.current = null;
-    }
-
-    if (currentMode === "installer") {
-      writeInstallerSnapshot(installer.snapshot());
-    }
-
-    setSwitchingMode(nextMode);
-    installer.setGlobalError(null);
-
-    try {
-      await installerClient.switchMode(nextMode);
-      switchModeFallbackTimerRef.current = window.setTimeout(() => {
-        switchModeFallbackTimerRef.current = null;
-        setRequestedMode(nextMode);
-        replaceRoute(nextMode);
-        setSwitchingMode(null);
-      }, MODE_SWITCH_FALLBACK_DELAY_MS);
-    } catch (error) {
-      installer.setGlobalError(
-        error instanceof Error ? error.message : "No se pudo cambiar de modo.",
-      );
-      setSwitchingMode(null);
-    }
-  }
-
-  async function executeSystemCommand(input: string, origin: SystemCommandOrigin) {
-    const transcript = input.trim();
-
-    setLastCommandOrigin(origin);
-    setLastTranscript(transcript);
-    setLastIntentLabel(null);
-    setLastActionLabel(null);
-    setLastResultMessage(null);
-    setVoiceState("processing");
-
-    const interpreted = interpretSystemCommand(transcript);
-    if (!interpreted.ok) {
-      setLastResultMessage(interpreted.message);
-      setVoiceState("error");
-      return;
-    }
-
-    setLastIntentLabel(interpreted.summary);
-    setLastActionLabel(interpreted.action);
-
-    try {
-      const response = await installerClient.runMaintenance(interpreted.action);
-      setLastResultMessage(response.message ?? "Acción completada.");
-      setVoiceState("idle");
-    } catch (error) {
-      setLastResultMessage(
-        error instanceof Error ? error.message : "No se pudo ejecutar la acción de mantenimiento.",
-      );
-      setVoiceState("error");
-    }
-  }
-
-  function handleSystemCommandSubmit() {
-    const trimmed = systemCommandDraft.trim();
-    if (!trimmed || voiceState === "listening" || voiceState === "processing") {
-      return;
-    }
-
-    setSystemCommandDraft("");
-    void executeSystemCommand(trimmed, "text");
-  }
-
-  function handleVoiceDemoStart() {
-    if (voiceState === "listening" || voiceState === "processing") {
-      return;
-    }
-
-    if (voiceDemoTimerRef.current !== null) {
-      window.clearTimeout(voiceDemoTimerRef.current);
-    }
-
-    setLastCommandOrigin("voice");
-    setLastTranscript("");
-    setLastIntentLabel(null);
-    setLastActionLabel(null);
-    setLastResultMessage("Esperando la transcripción simulada...");
-    setVoiceState("listening");
-
-    voiceDemoTimerRef.current = window.setTimeout(() => {
-      voiceDemoTimerRef.current = null;
-      void executeSystemCommand(SYSTEM_VOICE_DEMO_TRANSCRIPT, "voice");
-    }, VOICE_DEMO_DELAY_MS);
-  }
-
   async function handleNext() {
     installer.setGlobalError(null);
 
@@ -574,6 +416,25 @@ export default function App() {
       );
     }
 
+    if (isLiveSession === false) {
+      return (
+        <section className="mx-auto flex w-full max-w-3xl flex-col items-center gap-6 text-center">
+          <div className="glass-panel max-w-2xl border border-danger/30 bg-danger/10 px-8 py-10">
+            <p className="text-xs uppercase tracking-[0.32em] text-danger/80">
+              Sesión no válida
+            </p>
+            <h2 className="mt-3 font-display text-4xl text-white">
+              El instalador guiado solo vive en modo live
+            </h2>
+            <p className="mt-3 text-base text-white/60">
+              Esta app queda separada del sistema principal y no debería abrirse en
+              una sesión ya instalada.
+            </p>
+          </div>
+        </section>
+      );
+    }
+
     if (installer.step === "welcome") {
       return <WelcomeSlide model={preflightModel} />;
     }
@@ -629,52 +490,8 @@ export default function App() {
     );
   })();
 
-  const installerView = (
-    <div className="relative z-10 flex min-h-screen flex-col">
-      <header className="px-6 pt-20">
-        <div className="glass-panel mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div className="brand-mark">A</div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.32em] text-amber-100/60">
-                AgenOS
-              </p>
-              <h1 className="font-display text-2xl font-semibold tracking-tight text-white">
-                Instalador de AgenOS
-              </h1>
-            </div>
-          </div>
-          <div className="hidden text-right text-sm text-white/45 lg:block">
-            <p>Preparacion guiada con traspaso final a Calamares.</p>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex min-h-0 flex-1 px-6 pb-4 pt-4">
-        <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
-          <SlideContainer direction={installer.direction} step={installer.step}>
-            {activeSlide}
-          </SlideContainer>
-        </div>
-      </main>
-
-      {installer.step !== "handoff" ? (
-        <NavigationBar
-          busy={installer.busy || switchingMode !== null}
-          canGoBack={installer.step !== "welcome" && Boolean(preflightModel)}
-          canGoNext={Boolean(preflightModel)}
-          currentStep={installer.step}
-          nextLabel={nextLabel(installer.step, installer.busy)}
-          onBack={handleBack}
-          onClassicLaunch={() => void launchClassic()}
-          onNext={() => void handleNext()}
-        />
-      ) : null}
-    </div>
-  );
-
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
+    <div className="relative min-h-screen overflow-hidden bg-[#07090f] text-white">
       <VideoBackground />
       <GlobalError
         error={installer.globalError}
@@ -684,42 +501,18 @@ export default function App() {
       {isLoading ? (
         <LoadingScreen />
       ) : (
-        <>
-          {canSwitchModes ? (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-4 pt-4">
-              <div className="pointer-events-auto">
-                <TopModeSwitch
-                  currentMode={currentMode}
-                  disabled={switchingMode !== null}
-                  switchingMode={switchingMode}
-                  onSelectMode={(mode) => void handleModeSwitch(mode)}
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {currentMode === "installer" ? installerView : (
-            <LiveSystemView
-              commandDraft={systemCommandDraft}
-              isInstalled={!isLiveSession}
-              isSwitching={switchingMode === "system"}
-              lastActionLabel={lastActionLabel}
-              lastCommandOrigin={lastCommandOrigin}
-              lastIntentLabel={lastIntentLabel}
-              lastResultMessage={lastResultMessage}
-              lastTranscript={lastTranscript}
-              onOpenInstaller={
-                canSwitchModes
-                  ? () => void handleModeSwitch("installer")
-                  : undefined
-              }
-              onStartVoiceCapture={handleVoiceDemoStart}
-              onSubmitCommand={handleSystemCommandSubmit}
-              onUpdateCommandDraft={setSystemCommandDraft}
-              voiceState={voiceState}
-            />
-          )}
-        </>
+        <InstallerShell
+          activeSlide={activeSlide}
+          busy={installer.busy}
+          canGoBack={isLiveSession !== false && installer.step !== "welcome" && Boolean(preflightModel)}
+          canGoNext={isLiveSession !== false && Boolean(preflightModel)}
+          currentStep={installer.step}
+          direction={installer.direction}
+          nextLabel={nextLabel(installer.step, installer.busy)}
+          onBack={handleBack}
+          onClassicLaunch={() => void launchClassic()}
+          onNext={() => void handleNext()}
+        />
       )}
     </div>
   );

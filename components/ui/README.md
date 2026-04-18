@@ -1,14 +1,27 @@
 # AgenOS UI
 
-Shell canónica Wayland-first para la ISO live y el sistema instalado.
+Proyecto React de la shell principal del sistema. Aquí vive el micro, el comando local y la entrada mínima al mantenimiento.
 
-## Rutas internas
+## Desarrollo local
 
-- `/` decide el arranque según `GET /api/bootstrap`
-- `/installer` reutiliza el wrapper guiado actual sobre Calamares
-- `/home` muestra la home mínima con launcher y acciones de sistema
-- `/launching` cubre la transición al abrir apps o disparar acciones
+```bash
+cd components/ui
+bun install
+bun dev
+```
 
-## Build
+Eso levanta Vite en `http://127.0.0.1:4174` con un backend mock solo para desarrollo. Por defecto simula una sesión instalada para que la shell quede aislada del instalador.
 
-La salida de producción se copia a `/usr/local/share/agenos-ui` dentro de la imagen.
+Si quieres forzar también el acceso discreto al instalador, usa:
+
+```bash
+cd components/ui
+bun run dev:live
+```
+
+## Separación con `components/installer-ui`
+
+- `components/ui`: shell del sistema.
+- `components/installer-ui`: instalador guiado.
+
+En la VM se empaquetan ambos en el mismo runtime compartido, pero cada uno mantiene su propio build y su propia carpeta.

@@ -28,7 +28,7 @@ resolve_mode() {
   fi
 
   if is_live_session; then
-    printf '%s\n' "installer"
+    printf '%s\n' "system"
   else
     printf '%s\n' "system"
   fi

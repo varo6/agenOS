@@ -6,17 +6,24 @@
   "scripts": {
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "dev": "vite",
+    "dev:live": "AGENOS_UI_DEV_LIVE_SESSION=1 vite",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/space-grotesk": "^5.2.8",
+    "lucide-react": "^0.577.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.2.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.3"
   }

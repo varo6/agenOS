@@ -1,11 +1,8 @@
 import type {
-  ApiMessageResponse,
   DiskSummary,
   InstallerProfilePayload,
   LaunchResponse,
-  MaintenanceAction,
   PreflightResponse,
-  ShellMode,
   ValidationResponse,
 } from "../../shared/installer-types";
 import {
@@ -113,24 +110,6 @@ export const installerClient = {
   async launchClassic(): Promise<LaunchResponse> {
     const prefix = `POST ${INSTALLER_ROUTES.startClassic}`;
     const response = await requestJson<LaunchResponse>("POST", INSTALLER_ROUTES.startClassic);
-    if (!response.ok) {
-      throw new Error(`${prefix} devolvió 500: ${JSON.stringify(response)}`);
-    }
-    return response;
-  },
-
-  async switchMode(mode: ShellMode): Promise<ApiMessageResponse> {
-    const prefix = `POST ${INSTALLER_ROUTES.switchMode}`;
-    const response = await requestJson<ApiMessageResponse>("POST", INSTALLER_ROUTES.switchMode, { mode });
-    if (!response.ok) {
-      throw new Error(`${prefix} devolvió 500: ${JSON.stringify(response)}`);
-    }
-    return response;
-  },
-
-  async runMaintenance(action: MaintenanceAction): Promise<ApiMessageResponse> {
-    const prefix = `POST ${INSTALLER_ROUTES.systemMaintenance}`;
-    const response = await requestJson<ApiMessageResponse>("POST", INSTALLER_ROUTES.systemMaintenance, { action });
     if (!response.ok) {
       throw new Error(`${prefix} devolvió 500: ${JSON.stringify(response)}`);
     }

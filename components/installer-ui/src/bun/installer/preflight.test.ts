@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildPreflightResponse, firmwareTypeFromState, isLiveSessionFromState, totalRamBytesFromMeminfo } from "./preflight";
+import {
+  buildPreflightResponse,
+  firmwareTypeFromState,
+  isLiveSessionFromState,
+  liveSessionOverrideFromEnv,
+  totalRamBytesFromMeminfo,
+} from "./preflight";
 
 describe("preflight helpers", () => {
   test("detects live sessions from kernel cmdline or medium path", () => {
@@ -12,6 +18,15 @@ describe("preflight helpers", () => {
   test("detects firmware mode", () => {
     expect(firmwareTypeFromState(true)).toBe("UEFI");
     expect(firmwareTypeFromState(false)).toBe("BIOS");
+  });
+
+  test("accepts a development override for live session detection", () => {
+    expect(liveSessionOverrideFromEnv("1")).toBe(true);
+    expect(liveSessionOverrideFromEnv("true")).toBe(true);
+    expect(liveSessionOverrideFromEnv("0")).toBe(false);
+    expect(liveSessionOverrideFromEnv("no")).toBe(false);
+    expect(liveSessionOverrideFromEnv("maybe")).toBeNull();
+    expect(liveSessionOverrideFromEnv(undefined)).toBeNull();
   });
 
   test("parses total ram from meminfo", () => {

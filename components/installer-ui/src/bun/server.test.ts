@@ -307,20 +307,47 @@ describe("createInstallerApiHandler", () => {
   });
 
   test("serves the packaged frontend when a dist dir is available", async () => {
-    const frontendDir = mkdtempSync(join(tmpdir(), "agenos-installer-ui-"));
-    Bun.write(join(frontendDir, "index.html"), "<!doctype html><title>AgenOS Installer</title>");
-    Bun.write(join(frontendDir, "logo.svg"), "<svg xmlns='http://www.w3.org/2000/svg' />");
+    const installerFrontendDir = mkdtempSync(join(tmpdir(), "agenos-installer-ui-"));
+    const systemFrontendDir = mkdtempSync(join(tmpdir(), "agenos-ui-"));
+    Bun.write(join(installerFrontendDir, "index.html"), "<!doctype html><title>AgenOS Installer</title>");
+    Bun.write(join(installerFrontendDir, "logo.svg"), "<svg xmlns='http://www.w3.org/2000/svg' />");
+    Bun.write(join(systemFrontendDir, "index.html"), "<!doctype html><title>AgenOS System</title>");
+    Bun.write(join(systemFrontendDir, "system.svg"), "<svg xmlns='http://www.w3.org/2000/svg' />");
 
     const handler = createHandler({
-      frontendDistDir: frontendDir,
+      installerFrontendDistDir: installerFrontendDir,
+      systemFrontendDistDir: systemFrontendDir,
     });
 
     const indexResponse = await handler.fetch(new Request("http://localhost/"));
-    const assetResponse = await handler.fetch(new Request("http://localhost/logo.svg"));
+    const systemAssetResponse = await handler.fetch(new Request("http://localhost/system.svg"));
+    const installerIndexResponse = await handler.fetch(new Request("http://localhost/installer/"));
+    const installerAssetResponse = await handler.fetch(new Request("http://localhost/installer/logo.svg"));
 
     expect(indexResponse.status).toBe(200);
-    expect(await indexResponse.text()).toContain("AgenOS Installer");
-    expect(assetResponse.status).toBe(200);
-    expect(await assetResponse.text()).toContain("<svg");
+    expect(await indexResponse.text()).toContain("AgenOS System");
+    expect(systemAssetResponse.status).toBe(200);
+    expect(await systemAssetResponse.text()).toContain("<svg");
+    expect(installerIndexResponse.status).toBe(200);
+    expect(await installerIndexResponse.text()).toContain("AgenOS Installer");
+    expect(installerAssetResponse.status).toBe(200);
+    expect(await installerAssetResponse.text()).toContain("<svg");
+  });
+
+  test("redirects /installer to /installer/ so relative assets resolve correctly", async () => {
+    const installerFrontendDir = mkdtempSync(join(tmpdir(), "agenos-installer-ui-"));
+    const systemFrontendDir = mkdtempSync(join(tmpdir(), "agenos-ui-"));
+    Bun.write(join(installerFrontendDir, "index.html"), "<!doctype html><title>AgenOS Installer</title>");
+    Bun.write(join(systemFrontendDir, "index.html"), "<!doctype html><title>AgenOS System</title>");
+
+    const handler = createHandler({
+      installerFrontendDistDir: installerFrontendDir,
+      systemFrontendDistDir: systemFrontendDir,
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/installer"));
+
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe("http://localhost/installer/");
   });
 });

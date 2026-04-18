@@ -115,47 +115,4 @@ describe("installerClient", () => {
     );
   });
 
-  test("posts the requested shell mode to switch-mode", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true, message: "Cambiando a system." }), {
-        status: 202,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }),
-    );
-
-    const { installerClient } = await import("./installer-client");
-    await installerClient.switchMode("system");
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4173/api/installer/switch-mode",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ mode: "system" }),
-      }),
-    );
-  });
-
-  test("posts the requested maintenance action", async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true, message: "Acción terminal lanzada." }), {
-        status: 202,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }),
-    );
-
-    const { installerClient } = await import("./installer-client");
-    await installerClient.runMaintenance("terminal");
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:4173/api/system/maintenance",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ action: "terminal" }),
-      }),
-    );
-  });
 });

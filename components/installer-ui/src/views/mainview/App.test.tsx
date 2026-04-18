@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import type {
@@ -16,8 +16,6 @@ const { installerClient } = vi.hoisted(() => ({
     validateProfile: vi.fn<(profile: InstallerProfilePayload) => Promise<ValidationResponse>>(),
     launchGuided: vi.fn<(profile: InstallerProfilePayload) => Promise<LaunchResponse>>(),
     launchClassic: vi.fn<() => Promise<LaunchResponse>>(),
-    runMaintenance: vi.fn<(action: "terminal") => Promise<{ ok: boolean; message?: string }>>(),
-    switchMode: vi.fn<(mode: "installer" | "system") => Promise<{ ok: boolean; message?: string }>>(),
   },
 }));
 
@@ -130,51 +128,10 @@ async function renderLoadedApp(disks: DiskSummary[] = [singleDisk]) {
     launched: true,
     message: "Se esta abriendo la instalacion avanzada con Calamares.",
   });
-  installerClient.runMaintenance.mockResolvedValue({
-    ok: true,
-    message: "Acción terminal lanzada.",
-  });
-  installerClient.switchMode.mockResolvedValue({
-    ok: true,
-    message: "Cambiando a system.",
-  });
 
   render(<App />);
   await screen.findByRole("heading", { name: "Instalador de AgenOS" });
   await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" });
-}
-
-async function renderSystemApp() {
-  window.history.replaceState({}, "", "/system");
-  installerClient.getPreflight.mockResolvedValue(defaultPreflight);
-  installerClient.getDisks.mockResolvedValue([singleDisk]);
-  installerClient.validateProfile.mockResolvedValue({
-    ok: true,
-    errors: {},
-    normalizedProfile: normalizedProfile(),
-  });
-  installerClient.launchGuided.mockResolvedValue({
-    ok: true,
-    launched: true,
-    message: "ok",
-  });
-  installerClient.launchClassic.mockResolvedValue({
-    ok: true,
-    launched: true,
-    message: "ok",
-  });
-  installerClient.runMaintenance.mockResolvedValue({
-    ok: true,
-    message: "Acción terminal lanzada.",
-  });
-  installerClient.switchMode.mockResolvedValue({
-    ok: true,
-    message: "Cambiando a installer.",
-  });
-
-  render(<App />);
-  await screen.findByRole("heading", { name: "AgenOS" });
-  await screen.findByRole("button", { name: "Activar micro" });
 }
 
 async function goToLanguage() {
@@ -226,7 +183,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(screen.getByText("Preparando instalador")).toBeInTheDocument();
+    expect(screen.getByText("Preparando AgenOS")).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" });
   });
 
@@ -240,29 +197,15 @@ describe("App", () => {
     expect(screen.getByText("Sin acceso al API")).toBeInTheDocument();
   });
 
-  test("shows the live mode switch in live sessions", async () => {
+  test("renders the live preflight checks on the welcome slide", async () => {
     await renderLoadedApp();
 
-    expect(screen.getByRole("button", { name: "Live Installation" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Live System" })).toBeInTheDocument();
+    expect(screen.getByText("Memoria RAM")).toBeInTheDocument();
+    expect(screen.getByText("UEFI")).toBeInTheDocument();
+    expect(screen.getByText("64 GB")).toBeInTheDocument();
   });
 
-  test("falls back to the live system view if the shell does not relaunch the window", async () => {
-    await renderLoadedApp();
-
-    fireEvent.click(screen.getByRole("button", { name: "Live System" }));
-    expect(installerClient.switchMode).toHaveBeenCalledWith("system");
-
-    await waitFor(() => {
-      expect(window.location.pathname).toBe("/system");
-    }, {
-      timeout: 2500,
-    });
-
-    expect(await screen.findByRole("button", { name: "Activar micro" })).toBeInTheDocument();
-  });
-
-  test("hides the mode switch and forces the live system view in installed mode", async () => {
+  test("shows a blocked state when the installer is opened outside a live session", async () => {
     installerClient.getPreflight.mockResolvedValue({
       ...defaultPreflight,
       isLiveSession: false,
@@ -279,17 +222,8 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByRole("heading", { name: "AgenOS" });
-    expect(screen.queryByRole("button", { name: "Live Installation" })).not.toBeInTheDocument();
-    expect(screen.getByText("Installed System")).toBeInTheDocument();
-  });
-
-  test("renders real preflight checks on the welcome slide", async () => {
-    await renderLoadedApp();
-
-    expect(screen.getByText("Memoria RAM")).toBeInTheDocument();
-    expect(screen.getByText("UEFI")).toBeInTheDocument();
-    expect(screen.getByText("64 GB")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "El instalador guiado solo vive en modo live" });
+    expect(screen.getByRole("button", { name: "Empezar" })).toBeDisabled();
   });
 
   test("language preset updates timezone and keyboard defaults", async () => {
@@ -345,14 +279,12 @@ describe("App", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "El hostname solo puede usar minusculas, numeros y guiones.",
-      ),
+      screen.getByText("El hostname solo puede usar minusculas, numeros y guiones."),
     ).toBeInTheDocument();
     expect(screen.getByText("Las contrasenas no coinciden.")).toBeInTheDocument();
   });
 
-  test("renders remote validation errors in the new identity UI", async () => {
+  test("renders remote validation errors in the identity UI", async () => {
     await renderLoadedApp([singleDisk]);
     await goToIdentity();
     await fillIdentity();
@@ -430,66 +362,6 @@ describe("App", () => {
     expect(installerClient.launchClassic).toHaveBeenCalled();
   });
 
-  test("runs the maintenance terminal from a recognized text command", async () => {
-    await renderSystemApp();
-
-    fireEvent.change(screen.getByLabelText("Comando"), {
-      target: { value: "abre terminal de mantenimiento" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
-
-    await screen.findByText("Acción terminal lanzada.");
-    expect(installerClient.runMaintenance).toHaveBeenCalledWith("terminal");
-    expect(screen.getByText("Abrir terminal de mantenimiento")).toBeInTheDocument();
-    expect(screen.getByText("terminal")).toBeInTheDocument();
-  });
-
-  test("runs the maintenance terminal from the voice demo flow", async () => {
-    await renderSystemApp();
-    vi.useFakeTimers();
-
-    fireEvent.click(screen.getByRole("button", { name: "Activar micro" }));
-    expect(screen.getByText("Estado: listening")).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(900);
-    });
-    vi.useRealTimers();
-
-    await screen.findByText("Acción terminal lanzada.");
-    expect(installerClient.runMaintenance).toHaveBeenCalledWith("terminal");
-    expect(screen.getByText("voz simulada")).toBeInTheDocument();
-    expect(screen.getByText("abre terminal de mantenimiento")).toBeInTheDocument();
-  });
-
-  test("shows a local error for unsupported system commands", async () => {
-    await renderSystemApp();
-
-    fireEvent.change(screen.getByLabelText("Comando"), {
-      target: { value: "abre fotos" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
-
-    await screen.findByText("No he entendido el comando. Prueba con 'abre terminal de mantenimiento'.");
-    expect(installerClient.runMaintenance).not.toHaveBeenCalled();
-    expect(screen.getByText("Estado: error")).toBeInTheDocument();
-  });
-
-  test("shows backend failures in the system workflow", async () => {
-    await renderSystemApp();
-    installerClient.runMaintenance.mockRejectedValueOnce(
-      new Error("POST /api/system/maintenance falló: helper denegado"),
-    );
-
-    fireEvent.change(screen.getByLabelText("Comando"), {
-      target: { value: "terminal" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar comando" }));
-
-    await screen.findByText("POST /api/system/maintenance falló: helper denegado");
-    expect(screen.getByText("Estado: error")).toBeInTheDocument();
-  });
-
   test("restores the installer snapshot after remounting", async () => {
     installerClient.getPreflight.mockResolvedValue(defaultPreflight);
     installerClient.getDisks.mockResolvedValue([singleDisk]);
@@ -506,14 +378,6 @@ describe("App", () => {
     installerClient.launchClassic.mockResolvedValue({
       ok: true,
       launched: true,
-      message: "ok",
-    });
-    installerClient.runMaintenance.mockResolvedValue({
-      ok: true,
-      message: "ok",
-    });
-    installerClient.switchMode.mockResolvedValue({
-      ok: true,
       message: "ok",
     });
 

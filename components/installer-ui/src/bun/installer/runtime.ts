@@ -13,7 +13,7 @@ import type { ShellMode } from "../../shared/installer-types";
 
 export const INSTALLER_RUNTIME_DIRNAME = "agenos-installer";
 export const DEFAULT_INSTALLER_BINARY_PATH = "/opt/agenos/installer/agenos-installer";
-export const DEFAULT_SHELL_MODE: ShellMode = "installer";
+export const DEFAULT_SHELL_MODE: ShellMode = "system";
 
 export function currentUid(): number {
   if (typeof process.getuid === "function") {

@@ -3,6 +3,23 @@ import { existsSync, readFileSync } from "node:fs";
 import type { DiskSummary, FirmwareType, PreflightResponse } from "../../shared/installer-types";
 import { discoverDisks, formatBytes } from "./disks";
 
+export function liveSessionOverrideFromEnv(value: string | undefined): boolean | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+}
+
 export function isLiveSessionFromState(cmdline: string, hasLiveMedium: boolean): boolean {
   return cmdline.includes("boot=live") || cmdline.includes("components") || hasLiveMedium;
 }
@@ -69,7 +86,8 @@ export function buildPreflightResponse(input: {
 export function readPreflightPayload(): PreflightResponse {
   const disks = discoverDisks();
   const totalRamBytes = totalRamBytesFromMeminfo(readFileSync("/proc/meminfo", "utf8"));
-  const isLiveSession = isLiveSessionFromState(
+  const liveSessionOverride = liveSessionOverrideFromEnv(process.env.AGENOS_DEV_FORCE_LIVE_SESSION);
+  const isLiveSession = liveSessionOverride ?? isLiveSessionFromState(
     readFileSync("/proc/cmdline", "utf8"),
     existsSync("/run/live/medium"),
   );

@@ -27,7 +27,8 @@ import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 
 export type InstallerApiDependencies = {
-  frontendDistDir: string | null;
+  installerFrontendDistDir: string | null;
+  systemFrontendDistDir: string | null;
   getPreflight: () => PreflightResponse;
   getDisks: () => DiskSummary[];
   validateProfile: (payload: unknown) => ValidationResponse;
@@ -143,21 +144,43 @@ async function defaultSwitchMode(mode: ShellMode): Promise<ApiMessageResponse> {
   };
 }
 
-function frontendResponse(
+function stripPrefix(pathname: string, prefix: string): string | null {
+  if (prefix === "/") {
+    return pathname;
+  }
+
+  if (pathname === prefix || pathname === `${prefix}/`) {
+    return "/";
+  }
+
+  if (!pathname.startsWith(`${prefix}/`)) {
+    return null;
+  }
+
+  return pathname.slice(prefix.length) || "/";
+}
+
+function frontendResponseForPrefix(
   request: Request,
-  url: URL,
+  pathname: string,
   frontendDistDir: string | null,
+  prefix: string,
 ): Response | null {
   if (request.method !== "GET" || !frontendDistDir) {
     return null;
   }
 
-  if (url.pathname === INSTALLER_ROUTES.health || url.pathname.startsWith("/api/")) {
+  if (pathname === INSTALLER_ROUTES.health || pathname.startsWith("/api/")) {
+    return null;
+  }
+
+  const relativePathname = stripPrefix(pathname, prefix);
+  if (relativePathname === null) {
     return null;
   }
 
   const rootDir = resolve(frontendDistDir);
-  const requestedFile = resolveFrontendPath(rootDir, url.pathname);
+  const requestedFile = resolveFrontendPath(rootDir, relativePathname);
   if (!isPathInside(rootDir, requestedFile)) {
     return new Response("Ruta no válida.", { status: 400 });
   }
@@ -166,7 +189,7 @@ function frontendResponse(
     return new Response(Bun.file(requestedFile));
   }
 
-  if (extname(url.pathname)) {
+  if (extname(relativePathname)) {
     return null;
   }
 
@@ -178,11 +201,41 @@ function frontendResponse(
   return new Response(Bun.file(indexFile));
 }
 
+function frontendResponse(
+  request: Request,
+  url: URL,
+  frontend: {
+    installerFrontendDistDir: string | null;
+    systemFrontendDistDir: string | null;
+  },
+): Response | null {
+  if (request.method === "GET" && url.pathname === "/installer") {
+    return Response.redirect(new URL("/installer/", url).toString(), 308);
+  }
+
+  if (url.pathname.startsWith("/installer")) {
+    return frontendResponseForPrefix(
+      request,
+      url.pathname,
+      frontend.installerFrontendDistDir,
+      "/installer",
+    );
+  }
+
+  return frontendResponseForPrefix(
+    request,
+    url.pathname,
+    frontend.systemFrontendDistDir,
+    "/",
+  );
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
   const deps: InstallerApiDependencies = {
-    frontendDistDir: dependencies.frontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
+    installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
+    systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
     getPreflight: dependencies.getPreflight ?? readPreflightPayload,
     getDisks: dependencies.getDisks ?? discoverDisks,
     validateProfile: dependencies.validateProfile ?? defaultValidationResponse,
@@ -329,7 +382,10 @@ export function createInstallerApiHandler(
           });
         }
 
-        const frontend = frontendResponse(request, url, deps.frontendDistDir);
+        const frontend = frontendResponse(request, url, {
+          installerFrontendDistDir: deps.installerFrontendDistDir,
+          systemFrontendDistDir: deps.systemFrontendDistDir,
+        });
         if (frontend) {
           return frontend;
         }
