@@ -8,5 +8,7 @@ foot
 calamares
 calamares-settings-debian
 libgtk-3-0
+libnspr4
+libnss3
 python3
 plymouth
