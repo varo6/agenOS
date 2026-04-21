@@ -1,251 +1,351 @@
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowUpRight, LoaderCircle, Mic, TerminalSquare } from "lucide-react";
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  LoaderCircle,
+  LogOut,
+  MessageSquareText,
+  Mic,
+  RefreshCcw,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
+
 import { VideoBackground } from "./components/VideoBackground";
+import { createPiClient, PiClientError } from "./lib/pi-client";
+import {
+  createSpeechRecognitionController,
+  isSpeechRecognitionSupported,
+  type SpeechRecognitionController,
+  type SpeechRecognitionError,
+} from "./lib/speech-recognition";
+import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
 
-type MaintenanceAction = "terminal";
-type VoiceState = "idle" | "listening" | "processing" | "error";
-type CommandOrigin = "voice" | "text";
-type FirmwareType = "UEFI" | "BIOS";
+type VoiceState = "idle" | "listening" | "unsupported" | "error";
+type ChatState = "idle" | "processing" | "error";
 
-type ApiMessageResponse = {
-  ok: boolean;
-  message?: string;
-};
+const piClient = createPiClient();
 
-type PreflightCheck = {
-  id: string;
-  label: string;
-  status: "ok" | "warning" | "error";
-  detail: string;
-};
-
-type PreflightResponse = {
-  firmware: FirmwareType;
-  isLiveSession: boolean;
-  totalRamBytes: number;
-  installableDiskBytes: number;
-  checks: PreflightCheck[];
-};
-
-type ShellMode = "installer" | "system";
-
-const VOICE_DEMO_DELAY_MS = 900;
-const SYSTEM_VOICE_DEMO_TRANSCRIPT = "abre terminal de mantenimiento";
-const TERMINAL_COMMANDS = new Set([
-  "terminal",
-  "abre terminal",
-  "abrir terminal",
-  "abre la terminal",
-  "abrir la terminal",
-  "terminal de mantenimiento",
-  "abre terminal de mantenimiento",
-  "abrir terminal de mantenimiento",
-]);
-
-function normalizeSystemCommand(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-}
-
-function interpretSystemCommand(input: string):
-  | { ok: true; action: MaintenanceAction; summary: string }
-  | { ok: false; message: string } {
-  if (TERMINAL_COMMANDS.has(normalizeSystemCommand(input))) {
-    return {
-      ok: true,
-      action: "terminal",
-      summary: "Abrir terminal de mantenimiento",
-    };
+function describeClientError(error: unknown): string {
+  if (error instanceof PiClientError || error instanceof Error) {
+    return error.message;
   }
 
-  return {
-    ok: false,
-    message: "No he entendido el comando. Prueba con 'abre terminal de mantenimiento'.",
-  };
+  return "No se pudo completar la accion.";
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(path, init);
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : String(error));
+function describeAuthState(authState: PiAuthState): string {
+  switch (authState) {
+    case "connected":
+      return "Conexion local lista para ChatGPT/Codex.";
+    case "authorizing":
+      return "Esperando a que termine el login del navegador.";
+    case "error":
+      return "La autenticacion necesita atencion.";
+    default:
+      return "Conecta ChatGPT para empezar.";
   }
-
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) as T | ApiMessageResponse : undefined;
-  if (!response.ok) {
-    if (payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string") {
-      throw new Error(payload.message);
-    }
-    throw new Error(`${response.status} ${response.statusText}`);
-  }
-
-  return payload as T;
-}
-
-async function getPreflight(): Promise<PreflightResponse> {
-  return requestJson<PreflightResponse>("/api/installer/preflight");
-}
-
-async function runMaintenance(action: MaintenanceAction): Promise<ApiMessageResponse> {
-  return requestJson<ApiMessageResponse>("/api/system/maintenance", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ action }),
-  });
-}
-
-async function switchMode(mode: ShellMode): Promise<ApiMessageResponse> {
-  return requestJson<ApiMessageResponse>("/api/installer/switch-mode", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ mode }),
-  });
 }
 
 export default function App() {
-  const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [harnessAvailable, setHarnessAvailable] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
-  const [commandDraft, setCommandDraft] = useState("");
+  const [authState, setAuthState] = useState<PiAuthState>("disconnected");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [isSwitchingToInstaller, setIsSwitchingToInstaller] = useState(false);
-  const [lastCommandOrigin, setLastCommandOrigin] = useState<CommandOrigin | null>(null);
-  const [lastTranscript, setLastTranscript] = useState("");
-  const [lastIntentLabel, setLastIntentLabel] = useState<string | null>(null);
-  const [lastActionLabel, setLastActionLabel] = useState<string | null>(null);
-  const [lastResultMessage, setLastResultMessage] = useState<string | null>(null);
-  const voiceDemoTimerRef = useRef<number | null>(null);
+  const [chatState, setChatState] = useState<ChatState>("idle");
+  const [providerName, setProviderName] = useState("ChatGPT/Codex");
+  const [modelId, setModelId] = useState("gpt-5.4-mini");
+  const [serverBusy, setServerBusy] = useState(false);
+  const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
+  const [manualCodeInput, setManualCodeInput] = useState("");
+  const [draft, setDraft] = useState("");
+  const [lastInput, setLastInput] = useState("");
+  const [lastReply, setLastReply] = useState("");
+  const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
+  const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
+
+  const applyStatus = useEffectEvent((status: PiStatusResponse) => {
+    setHarnessAvailable(true);
+    setProviderName(status.providerName);
+    setModelId(status.modelId);
+    setServerBusy(status.busy);
+    setPendingAttempt(status.pendingAttempt ?? null);
+    setAuthState(status.authState);
+    if (status.error) {
+      setGlobalError(status.error);
+    }
+  });
+
+  const refreshStatus = useEffectEvent(async () => {
+    try {
+      const status = await piClient.getStatus();
+      applyStatus(status);
+      if (!status.error) {
+        setGlobalError((current) =>
+          current === "Harness de desarrollo no disponible." ? null : current,
+        );
+      }
+      return status;
+    } catch (error) {
+      const message = describeClientError(error);
+      setHarnessAvailable(false);
+      setAuthState("error");
+      setServerBusy(false);
+      setPendingAttempt(null);
+      setGlobalError(message);
+      throw error;
+    }
+  });
+
+  const sendPrompt = useEffectEvent(async (message: string, source: PiChatSource) => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (authState !== "connected") {
+      setAuthState("error");
+      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
+      return;
+    }
+
+    setChatState("processing");
+    setGlobalError(null);
+    setLastInput(trimmed);
+    setLastReply("");
+    if (source === "text") {
+      setDraft("");
+    }
+
+    try {
+      const response = await piClient.sendMessage(trimmed, source);
+      setLastReply(response.reply ?? "");
+      setModelId(response.modelId);
+      setChatState("idle");
+      await refreshStatus();
+    } catch (error) {
+      const message = describeClientError(error);
+      setChatState("error");
+      setGlobalError(message);
+      if (error instanceof PiClientError && error.status === 401) {
+        setAuthState("error");
+      }
+      try {
+        await refreshStatus();
+      } catch {
+        // refreshStatus already updated the UI with the relevant failure
+      }
+    }
+  });
+
+  const handleVoiceResult = useEffectEvent((transcript: string) => {
+    setVoiceState("idle");
+    setVoiceIssue(null);
+    void sendPrompt(transcript, "voice");
+  });
+
+  const handleVoiceError = useEffectEvent((error: SpeechRecognitionError) => {
+    setVoiceIssue(error.message);
+    setVoiceState(error.disableVoice ? "unsupported" : "error");
+  });
+
+  const handleVoiceEnd = useEffectEvent(() => {
+    setVoiceState((current) => (current === "listening" ? "idle" : current));
+  });
 
   useEffect(() => {
-    let active = true;
+    const controller = createSpeechRecognitionController({
+      onResult: handleVoiceResult,
+      onError: handleVoiceError,
+      onEnd: handleVoiceEnd,
+    });
 
-    void getPreflight()
-      .then((response) => {
-        if (!active) {
-          return;
-        }
+    speechControllerRef.current = controller;
 
-        setPreflight(response);
-        setGlobalError(null);
-      })
-      .catch((error) => {
-        if (!active) {
-          return;
-        }
+    if (!controller.supported) {
+      setVoiceState("unsupported");
+      setVoiceIssue("Este navegador no expone Web Speech API. Usa texto.");
+    }
 
-        setGlobalError(error instanceof Error ? error.message : "No se pudo cargar la vista principal.");
-      })
+    void refreshStatus()
       .finally(() => {
-        if (active) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
       });
 
     return () => {
-      active = false;
-      if (voiceDemoTimerRef.current !== null) {
-        window.clearTimeout(voiceDemoTimerRef.current);
+      controller.dispose();
+      speechControllerRef.current = null;
+    };
+  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshStatus]);
+
+  useEffect(() => {
+    if (!pendingAttempt) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollAttempt = async () => {
+      try {
+        const attempt = await piClient.getAuthAttempt(pendingAttempt.attemptId);
+        if (cancelled) {
+          return;
+        }
+
+        if (attempt.status === "pending") {
+          return;
+        }
+
+        if (attempt.status === "success") {
+          setManualCodeInput("");
+          setGlobalError(null);
+          await refreshStatus();
+          return;
+        }
+
+        setAuthState("error");
+        setPendingAttempt(null);
+        setGlobalError(attempt.error ?? "No se pudo completar el login.");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setAuthState("error");
+        setPendingAttempt(null);
+        setGlobalError(describeClientError(error));
       }
     };
-  }, []);
 
-  async function executeSystemCommand(input: string, origin: CommandOrigin) {
-    const transcript = input.trim();
+    void pollAttempt();
+    const intervalId = window.setInterval(() => {
+      void pollAttempt();
+    }, 1250);
 
-    setLastCommandOrigin(origin);
-    setLastTranscript(transcript);
-    setLastIntentLabel(null);
-    setLastActionLabel(null);
-    setLastResultMessage(null);
-    setVoiceState("processing");
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [pendingAttempt, refreshStatus]);
 
-    const interpreted = interpretSystemCommand(transcript);
-    if (!interpreted.ok) {
-      setLastResultMessage(interpreted.message);
-      setVoiceState("error");
+  async function handleStartAuth() {
+    if (!harnessAvailable || chatState === "processing") {
       return;
     }
 
-    setLastIntentLabel(interpreted.summary);
-    setLastActionLabel(interpreted.action);
+    setGlobalError(null);
+    setAuthState("authorizing");
 
     try {
-      const response = await runMaintenance(interpreted.action);
-      setLastResultMessage(response.message ?? "Acción completada.");
-      setVoiceState("idle");
+      const attempt = await piClient.startAuth();
+      setPendingAttempt(attempt);
+      setManualCodeInput("");
+
+      const popup = window.open(attempt.url, "_blank", "noopener");
+      if (!popup) {
+        setGlobalError("No se pudo abrir una pestana nueva. Usa el campo manual.");
+      }
     } catch (error) {
-      setLastResultMessage(
-        error instanceof Error ? error.message : "No se pudo ejecutar la acción de mantenimiento.",
-      );
-      setVoiceState("error");
+      setAuthState("error");
+      setGlobalError(describeClientError(error));
     }
   }
 
-  function handleSystemCommandSubmit() {
-    const trimmed = commandDraft.trim();
-    if (!trimmed || voiceState === "listening" || voiceState === "processing") {
+  async function handleLogout() {
+    if (!harnessAvailable) {
       return;
     }
 
-    setCommandDraft("");
-    void executeSystemCommand(trimmed, "text");
-  }
-
-  function handleVoiceDemoStart() {
-    if (voiceState === "listening" || voiceState === "processing") {
-      return;
-    }
-
-    if (voiceDemoTimerRef.current !== null) {
-      window.clearTimeout(voiceDemoTimerRef.current);
-    }
-
-    setLastCommandOrigin("voice");
-    setLastTranscript("");
-    setLastIntentLabel(null);
-    setLastActionLabel(null);
-    setLastResultMessage("Esperando la transcripción simulada...");
-    setVoiceState("listening");
-
-    voiceDemoTimerRef.current = window.setTimeout(() => {
-      voiceDemoTimerRef.current = null;
-      void executeSystemCommand(SYSTEM_VOICE_DEMO_TRANSCRIPT, "voice");
-    }, VOICE_DEMO_DELAY_MS);
-  }
-
-  async function handleOpenInstaller() {
-    if (!preflight?.isLiveSession || isSwitchingToInstaller) {
-      return;
-    }
-
-    setIsSwitchingToInstaller(true);
     setGlobalError(null);
 
     try {
-      await switchMode("installer");
+      await piClient.logout();
+      setPendingAttempt(null);
+      setManualCodeInput("");
+      setLastInput("");
+      setLastReply("");
+      setChatState("idle");
+      setServerBusy(false);
+      setAuthState("disconnected");
+      if (isSpeechRecognitionSupported()) {
+        setVoiceState((current) => (current === "unsupported" ? "unsupported" : "idle"));
+      }
     } catch (error) {
-      setGlobalError(error instanceof Error ? error.message : "No se pudo abrir el instalador.");
-      setIsSwitchingToInstaller(false);
+      setGlobalError(describeClientError(error));
     }
   }
 
-  const isBusy = isSwitchingToInstaller || voiceState === "listening" || voiceState === "processing";
-  const statusCopy = {
-    idle: "Listo para recibir un comando por texto o activar el micro simulado.",
-    listening: "Escuchando entrada de audio local para resolver intención.",
-    processing: "Interpretando el comando y conectando con el sistema local.",
-    error: "El último intento no se pudo interpretar o ejecutar.",
-  } as const;
+  async function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingAttempt) {
+      return;
+    }
+
+    try {
+      await piClient.submitManualCode(pendingAttempt.attemptId, manualCodeInput);
+      setManualCodeInput("");
+      setGlobalError(null);
+    } catch (error) {
+      setGlobalError(describeClientError(error));
+    }
+  }
+
+  function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (chatState === "processing" || serverBusy) {
+      return;
+    }
+
+    void sendPrompt(draft, "text");
+  }
+
+  function handleVoiceStart() {
+    if (
+      !speechControllerRef.current?.supported
+      || authState !== "connected"
+      || chatState === "processing"
+      || serverBusy
+    ) {
+      return;
+    }
+
+    setGlobalError(null);
+    setVoiceIssue(null);
+    setVoiceState("listening");
+
+    const started = speechControllerRef.current.start();
+    if (!started) {
+      setVoiceState("error");
+    }
+  }
+
+  const isProcessing = chatState === "processing" || serverBusy;
+  const micDisabled =
+    !harnessAvailable
+    || authState !== "connected"
+    || voiceState === "unsupported"
+    || isProcessing;
+  const textDisabled =
+    !harnessAvailable
+    || authState !== "connected"
+    || isProcessing;
+  const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
+  const voiceHint =
+    voiceState === "unsupported"
+      ? voiceIssue ?? "Este navegador no expone Web Speech API. Usa texto."
+      : authState !== "connected"
+        ? "Conecta ChatGPT para activar el micro."
+        : isProcessing
+          ? "Esperando la respuesta final del agente."
+          : voiceState === "listening"
+            ? "Escuchando una sola frase para enviarla al agente."
+            : voiceState === "error"
+              ? voiceIssue ?? "No se pudo usar el micro. Usa texto."
+              : "Habla o escribe una frase corta.";
+  const authHint = pendingAttempt
+    ? pendingAttempt.instructions
+    : describeAuthState(authState);
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[#07090f] text-white selection:bg-white/20">
@@ -256,7 +356,7 @@ export default function App() {
           <div className="glass-panel flex items-start gap-4 border-danger/30 bg-danger/10 p-4">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-white">Error del sistema</p>
+              <p className="text-sm font-medium text-white">Estado del harness</p>
               <p className="mt-1 text-sm text-white/70">{globalError}</p>
             </div>
             <button
@@ -276,43 +376,64 @@ export default function App() {
           <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
             <LoaderCircle className="h-6 w-6 animate-spin text-white/60" />
             <p className="font-mono text-sm uppercase tracking-widest text-white/60">
-              Iniciando Secuencia
+              Iniciando Harness
             </p>
           </div>
         </div>
       ) : (
-        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-4xl flex-col items-center justify-center px-6 py-20 sm:py-32">
-          
-          <div className="w-full flex flex-col items-center gap-12 text-center">
-            
+        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-5xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+          <div className="flex w-full flex-col items-center gap-12 text-center">
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-white/60 backdrop-blur-md">
-                <span className={`h-1.5 w-1.5 rounded-full ${voiceState === "error" ? "bg-danger" : voiceState === "idle" ? "bg-white/40" : "bg-accent"}`} />
-                {preflight?.isLiveSession ? "Live Environment" : "System Core"}
+                <span
+                  className={[
+                    "h-1.5 w-1.5 rounded-full",
+                    authState === "connected"
+                      ? "bg-accent"
+                      : authState === "error"
+                        ? "bg-danger"
+                        : "bg-white/35",
+                  ].join(" ")}
+                />
+                {harnessAvailable ? "UI Dev Harness" : "Dev Harness Offline"}
               </div>
-              
+
               <h1 className="font-display text-5xl font-medium tracking-tight text-white sm:text-7xl lg:text-8xl">
                 AgenOS
               </h1>
-              
-              <p className="mx-auto max-w-lg text-base text-white/50 sm:text-lg">
-                Interfaz de terminal inteligente.
+
+              <p className="mx-auto max-w-xl text-base text-white/55 sm:text-lg">
+                Shell visual de AgenOS sobre un harness local de ChatGPT/Codex para desarrollo web.
               </p>
             </div>
 
-            <div className="relative flex justify-center py-6">
+            <div className="relative flex justify-center py-4">
               <button
                 aria-label="Activar micro"
-                className="group relative flex h-32 w-32 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[0.98] hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-40 sm:w-40"
-                disabled={isBusy}
-                onClick={handleVoiceDemoStart}
+                className="group relative flex h-32 w-32 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[0.98] hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45 sm:h-40 sm:w-40"
+                disabled={micDisabled}
+                onClick={handleVoiceStart}
                 type="button"
               >
-                <div className={`absolute inset-0 rounded-full border border-white/5 transition-transform duration-700 ${voiceState === "processing" ? "animate-spin-slow scale-[1.15] border-t-white/30" : "scale-100"}`} />
-                <div className={`absolute inset-[-1px] rounded-full border border-white/10 transition-transform duration-1000 ${voiceState === "processing" ? "animate-spin-slow scale-105 border-b-accent/40" : "scale-100"}`} />
-                
+                <div
+                  className={[
+                    "absolute inset-0 rounded-full border border-white/5 transition-transform duration-700",
+                    voiceState === "listening"
+                      ? "animate-spin-slow scale-[1.15] border-t-white/30"
+                      : "scale-100",
+                  ].join(" ")}
+                />
+                <div
+                  className={[
+                    "absolute inset-[-1px] rounded-full border border-white/10 transition-transform duration-1000",
+                    isProcessing
+                      ? "animate-spin-slow scale-105 border-b-accent/40"
+                      : "scale-100",
+                  ].join(" ")}
+                />
+
                 <div className="flex items-center justify-center text-white/70 transition-colors group-hover:text-white">
-                  {voiceState === "processing" ? (
+                  {isProcessing ? (
                     <LoaderCircle className="h-8 w-8 animate-spin sm:h-10 sm:w-10" strokeWidth={1.5} />
                   ) : (
                     <Mic className="h-8 w-8 sm:h-10 sm:w-10" strokeWidth={1.5} />
@@ -321,91 +442,179 @@ export default function App() {
               </button>
             </div>
 
-            <div className="mt-8 grid w-full gap-4 text-left sm:grid-cols-2">
-              <div className="glass-panel p-8 flex flex-col gap-6">
-                <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-widest text-white/40">
-                  <TerminalSquare className="h-4 w-4" />
-                  <span>Consola Manual</span>
-                </div>
-                <div className="space-y-4">
-                  <input
-                    className="glass-input text-sm"
-                    disabled={isBusy}
-                    onChange={(event) => setCommandDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        handleSystemCommandSubmit();
-                      }
-                    }}
-                    placeholder="ej. abre terminal"
-                    value={commandDraft}
-                  />
-                  <button
-                    className="btn-primary w-full"
-                    disabled={isBusy || !commandDraft.trim()}
-                    onClick={handleSystemCommandSubmit}
-                    type="button"
-                  >
-                    Ejecutar orden
-                  </button>
-                </div>
-              </div>
+            <div className="w-full max-w-xl text-center">
+              <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
+                Micro Local
+              </p>
+              <p className="mt-3 text-sm text-white/60 sm:text-base">{voiceHint}</p>
+            </div>
 
-              <div className="glass-panel p-8 flex flex-col justify-between gap-6">
-                <div className="space-y-4">
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-white/40">Estado del Módulo</p>
-                  <p className="text-sm leading-relaxed text-white/70">
-                    {isSwitchingToInstaller ? "Iniciando secuencia de instalación..." : statusCopy[voiceState]}
-                  </p>
-                </div>
-                
-                {preflight?.isLiveSession && (
-                  <button
-                    className="btn-secondary group flex w-full items-center justify-center gap-2"
-                    disabled={isSwitchingToInstaller}
-                    onClick={() => void handleOpenInstaller()}
-                    type="button"
-                  >
-                    <span>{isSwitchingToInstaller ? "Cargando" : "Abrir Instalador"}</span>
-                    <ArrowUpRight className="h-4 w-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-                  </button>
-                )}
-              </div>
-
-              {(lastCommandOrigin || lastTranscript || lastResultMessage) && (
-                <div className="glass-panel sm:col-span-2 p-8 text-left">
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-6">
-                    Registro de Telemetría
-                  </p>
-                  <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
-                    <div>
-                      <dt className="text-[10px] uppercase tracking-widest text-white/40">Origen</dt>
-                      <dd className="mt-1.5 font-mono text-sm text-white/80">
-                        {lastCommandOrigin === "voice" ? "Audio Local" : lastCommandOrigin === "text" ? "Consola" : "—"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] uppercase tracking-widest text-white/40">Entrada</dt>
-                      <dd className="mt-1.5 font-mono text-sm text-white/80 truncate">
-                        {lastTranscript || "—"}
-                      </dd>
-                    </div>
-                    <div className="lg:col-span-2">
-                      <dt className="text-[10px] uppercase tracking-widest text-white/40">Intención Resuelta</dt>
-                      <dd className="mt-1.5 font-mono text-sm text-white/80 truncate">
-                        {lastIntentLabel || lastActionLabel || "—"}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2 lg:col-span-4 pt-4 border-t border-white/5">
-                      <dt className="text-[10px] uppercase tracking-widest text-white/40">Salida del Sistema</dt>
-                      <dd className={`mt-2 text-sm leading-relaxed ${voiceState === "error" ? "text-danger" : "text-white/70"}`}>
-                        {lastResultMessage || "—"}
-                      </dd>
-                    </div>
+            <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
+                      Estado de Conexion
+                    </p>
+                    <h2 className="mt-3 text-2xl font-medium text-white">
+                      {providerName}
+                    </h2>
+                    <p className="mt-2 text-sm text-white/55">{authHint}</p>
+                  </div>
+                  <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 font-mono text-[11px] text-white/60">
+                    {modelId}
                   </div>
                 </div>
-              )}
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    className="btn-primary inline-flex items-center gap-2"
+                    disabled={!harnessAvailable || authState === "authorizing" || isProcessing}
+                    onClick={handleStartAuth}
+                    type="button"
+                  >
+                    {authState === "authorizing" ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ArrowUpRight className="h-4 w-4" />
+                    )}
+                    {connectLabel}
+                  </button>
+
+                  <button
+                    className="btn-secondary inline-flex items-center gap-2"
+                    disabled={!harnessAvailable || authState === "authorizing"}
+                    onClick={handleLogout}
+                    type="button"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                    <div className="flex items-center gap-2 text-sm text-white/75">
+                      {authState === "connected" ? (
+                        <ShieldCheck className="h-4 w-4 text-accent" />
+                      ) : (
+                        <ShieldX className="h-4 w-4 text-danger" />
+                      )}
+                      Cuenta
+                    </div>
+                    <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-white/35">
+                      {authState}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                    <div className="flex items-center gap-2 text-sm text-white/75">
+                      <MessageSquareText className="h-4 w-4 text-white/70" />
+                      Turno
+                    </div>
+                    <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-white/35">
+                      {isProcessing ? "processing" : chatState}
+                    </p>
+                  </div>
+                </div>
+
+                {pendingAttempt ? (
+                  <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
+                    <div>
+                      <label
+                        className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
+                        htmlFor="manual-code"
+                      >
+                        Pegar URL o Codigo Manual
+                      </label>
+                      <input
+                        className="glass-input mt-3"
+                        id="manual-code"
+                        onChange={(event) => setManualCodeInput(event.target.value)}
+                        placeholder="http://localhost:1455/auth/callback?... o el code"
+                        value={manualCodeInput}
+                      />
+                    </div>
+
+                    <button className="btn-secondary self-start" type="submit">
+                      Enviar fallback manual
+                    </button>
+                  </form>
+                ) : null}
+
+                <form className="flex flex-col gap-3" onSubmit={handleTextSubmit}>
+                  <div>
+                    <label
+                      className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
+                      htmlFor="message"
+                    >
+                      Texto
+                    </label>
+                    <input
+                      className="glass-input mt-3"
+                      disabled={textDisabled}
+                      id="message"
+                      onChange={(event) => setDraft(event.target.value)}
+                      placeholder="Escribe una frase corta en espanol"
+                      value={draft}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button className="btn-primary" disabled={textDisabled} type="submit">
+                      {isProcessing ? "Procesando..." : "Enviar"}
+                    </button>
+
+                    <button
+                      className="btn-secondary inline-flex items-center gap-2"
+                      disabled={!harnessAvailable}
+                      onClick={() => {
+                        void refreshStatus();
+                      }}
+                      type="button"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refrescar estado
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
+                    Ultimo Turno
+                  </p>
+                  <h2 className="mt-3 text-2xl font-medium text-white">
+                    Respuesta minima
+                  </h2>
+                  <p className="mt-2 text-sm text-white/55">
+                    Este MVP solo muestra el ultimo input y la ultima respuesta del agente.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/8 bg-black/20 p-5">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
+                    Input
+                  </p>
+                  <p className="mt-3 min-h-[4.5rem] text-sm leading-6 text-white/80">
+                    {lastInput || "Todavia no enviaste ningun mensaje."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/8 bg-black/20 p-5">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
+                    Respuesta
+                  </p>
+                  <p className="mt-3 min-h-[10rem] whitespace-pre-wrap text-sm leading-6 text-white/85">
+                    {lastReply || (isProcessing ? "Esperando respuesta final..." : "Todavia no hay respuesta.")}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/8 bg-black/20 p-5 text-sm text-white/60">
+                  Disponible solo en `http://127.0.0.1:4174` con `bun dev`.
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -2,6 +2,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { Plugin } from "vite";
 
+import { createPiHarness, PiHarnessError } from "./pi-harness";
+
+const piHarness = createPiHarness();
+
 function createDevPreflight() {
   const isLiveSession = process.env.AGENOS_UI_DEV_LIVE_SESSION === "1";
 
@@ -56,6 +60,16 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf-8"));
 }
 
+function sendPiError(response: ServerResponse, error: unknown): void {
+  const status = error instanceof PiHarnessError ? error.status : 500;
+  const message = error instanceof Error ? error.message : "Error del harness de desarrollo.";
+
+  sendJson(response, status, {
+    ok: false,
+    message,
+  });
+}
+
 async function handleDevApi(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const method = request.method ?? "GET";
@@ -102,6 +116,81 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
       ok: true,
       message: `Modo local: cambio a '${mode}' simulado.`,
     });
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/status" && method === "GET") {
+    try {
+      sendJson(response, 200, piHarness.getStatus());
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/auth/start" && method === "POST") {
+    try {
+      sendJson(response, 200, await piHarness.startAuth());
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  const attemptMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)$/);
+  if (attemptMatch && method === "GET") {
+    try {
+      sendJson(response, 200, piHarness.getAuthAttempt(decodeURIComponent(attemptMatch[1] ?? "")));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  const manualAttemptMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)\/manual-code$/);
+  if (manualAttemptMatch && method === "POST") {
+    try {
+      const payload = await readJsonBody(request);
+      const input =
+        payload && typeof payload === "object" && "input" in payload ? String(payload.input ?? "") : "";
+
+      sendJson(response, 202, piHarness.submitManualCode(decodeURIComponent(manualAttemptMatch[1] ?? ""), input));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/auth/logout" && method === "POST") {
+    try {
+      piHarness.logout();
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/chat" && method === "POST") {
+    try {
+      const payload = await readJsonBody(request);
+      const message =
+        payload && typeof payload === "object" && "message" in payload ? String(payload.message ?? "") : "";
+      const source =
+        payload && typeof payload === "object" && "source" in payload ? String(payload.source ?? "") : "";
+
+      if (source !== "text" && source !== "voice") {
+        sendJson(response, 400, {
+          ok: false,
+          message: "El origen debe ser text o voice.",
+        });
+        return true;
+      }
+
+      sendJson(response, 200, await piHarness.chat({ message, source }));
+    } catch (error) {
+      sendPiError(response, error);
+    }
     return true;
   }
 
