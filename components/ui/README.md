@@ -25,3 +25,12 @@ bun run dev:live
 - `components/installer-ui`: instalador guiado.
 
 En la VM se empaquetan ambos en el mismo runtime compartido, pero cada uno mantiene su propio build y su propia carpeta.
+
+## Runtime empaquetado
+
+En modo `system`, esta UI ya no se carga desde `http://127.0.0.1:4173/` como camino principal. Electron monta `dist/index.html` desde `system-dist` con `loadFile(...)` y el renderer consume el sistema mediante un cliente con dos caminos:
+
+- IPC por `window.agenosSystem` cuando el preload está disponible.
+- Fallback HTTP al API Bun para desarrollo web, rollback y compatibilidad.
+
+El flujo detallado está documentado en [docs/installer/electron-system-shell.md](/home/varose/code/agenOS/docs/installer/electron-system-shell.md).

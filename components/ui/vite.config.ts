@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { createMockShellApiPlugin } from "./dev/mock-shell-api";
 
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss(), createMockShellApiPlugin()],
   build: {
     outDir: "dist",

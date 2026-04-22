@@ -1,6 +1,9 @@
 export type FirmwareType = "UEFI" | "BIOS";
 export type ShellMode = "installer" | "system";
 export type MaintenanceAction = "terminal";
+export type SystemBridgeMode = "ipc" | "http";
+export type SystemRuntimeHost = "electron" | "web";
+export type GpuState = "on" | "off";
 
 export type StepId =
   | "welcome"
@@ -94,4 +97,11 @@ export type SwitchModeRequest = {
 export type ApiMessageResponse = {
   ok: boolean;
   message?: string;
+};
+
+export type SystemRuntimeInfo = {
+  mode: SystemBridgeMode;
+  host: SystemRuntimeHost;
+  gpu: GpuState;
+  version: string;
 };

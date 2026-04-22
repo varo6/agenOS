@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
 import { extname, resolve } from "node:path";
 
 import type {
@@ -18,11 +17,12 @@ import {
   INSTALLER_API_PORT,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
+import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
-import { appendHelperLog, currentUid, formatTimestamp, removeFileIfPresent, writeShellModeOverride } from "./installer/runtime";
+import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 
@@ -74,74 +74,6 @@ function isPathInside(rootDir: string, candidate: string): boolean {
 function resolveFrontendPath(frontendDistDir: string, pathname: string): string {
   const relativePath = pathname === "/" ? "index.html" : decodeURIComponent(pathname.replace(/^\/+/, ""));
   return resolve(frontendDistDir, relativePath);
-}
-
-function isShellMode(value: unknown): value is ShellMode {
-  return value === "installer" || value === "system";
-}
-
-function isMaintenanceAction(value: unknown): value is MaintenanceAction {
-  return value === "terminal";
-}
-
-async function defaultSwitchMode(mode: ShellMode): Promise<ApiMessageResponse> {
-  const uid = currentUid();
-  const modePath = writeShellModeOverride(mode, uid);
-  appendHelperLog(`[${formatTimestamp()}] switching shell mode to ${mode}\n`, uid);
-
-  const child = spawn(
-    "pkexec",
-    ["/usr/bin/python3", "/usr/local/bin/agenos-shell-helper", "reload-shell"],
-    {
-      detached: true,
-      stdio: "ignore",
-      env: {
-        ...process.env,
-        LANG: process.env.LANG ?? "C.UTF-8",
-        PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      },
-    },
-  );
-
-  const exitCode = await new Promise<number | null>((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      settled = true;
-      child.unref();
-      resolve(null);
-    }, 1000);
-
-    child.once("error", () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(127);
-    });
-
-    child.once("close", (code) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(code ?? 1);
-    });
-  });
-
-  if (exitCode !== null && exitCode !== 0) {
-    removeFileIfPresent(modePath);
-    return {
-      ok: false,
-      message: `No se pudo recargar la shell para cambiar a ${mode}.`,
-    };
-  }
-
-  return {
-    ok: true,
-    message: `Cambiando a ${mode}.`,
-  };
 }
 
 function stripPrefix(pathname: string, prefix: string): string | null {
@@ -241,7 +173,7 @@ export function createInstallerApiHandler(
     validateProfile: dependencies.validateProfile ?? defaultValidationResponse,
     launchGuided: dependencies.launchGuided ?? launchGuided,
     launchClassic: dependencies.launchClassic ?? launchClassic,
-    switchMode: dependencies.switchMode ?? defaultSwitchMode,
+    switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
   };
 

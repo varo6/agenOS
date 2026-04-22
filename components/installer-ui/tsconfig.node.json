@@ -12,6 +12,7 @@
   },
   "include": [
     "src/bun/**/*.ts",
+    "src/electron/**/*.ts",
     "src/shared/**/*.ts",
     "vite.config.ts",
     "vitest.config.ts"

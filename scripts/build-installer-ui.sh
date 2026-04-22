@@ -8,7 +8,7 @@ OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/insta
 API_BUILD_DIR="${UI_DIR}/build/api"
 VIEW_DIST_DIR="${UI_DIR}/dist"
 SYSTEM_DIST_DIR="${SYSTEM_UI_DIR}/dist"
-ELECTRON_APP_DIR="${UI_DIR}/src/electron"
+ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
@@ -103,6 +103,7 @@ printf '%s\n' \
   'RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"' \
   'PROFILE_DIR="${RUNTIME_DIR}/electron-profile"' \
   'LOCK_FILE="${RUNTIME_DIR}/electron.lock"' \
+  'SYSTEM_DIST_DIR="${SCRIPT_DIR}/system-dist"' \
   'APP_URL="http://127.0.0.1:4173${APP_PATH}"' \
   'ELECTRON_BIN="${SCRIPT_DIR}/electron-dist/electron"' \
   'ELECTRON_APP="${SCRIPT_DIR}/electron-app"' \
@@ -115,6 +116,9 @@ printf '%s\n' \
   '' \
   'export AGENOS_INSTALLER_URL="${APP_URL}"' \
   'export AGENOS_APP_KIND="${APP_KIND}"' \
+  'export AGENOS_SYSTEM_DIST_DIR="${SYSTEM_DIST_DIR}"' \
+  'export AGENOS_SYSTEM_BRIDGE_MODE="${AGENOS_SYSTEM_BRIDGE_MODE:-ipc}"' \
+  'export AGENOS_ELECTRON_GPU_MODE="${AGENOS_ELECTRON_GPU_MODE:-auto}"' \
   'export ELECTRON_IS_DEV=0' \
   'export ELECTRON_OZONE_PLATFORM_HINT=auto' \
   'export TMPDIR="${RUNTIME_DIR}"' \
