@@ -17,5 +17,6 @@
     "types": ["vite/client"],
     "jsx": "react-jsx"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.js"]
 }

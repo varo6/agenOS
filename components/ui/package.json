@@ -7,11 +7,14 @@
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "dev": "vite",
     "dev:live": "AGENOS_UI_DEV_LIVE_SESSION=1 vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "bun test src/lib dev"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "@mariozechner/pi-ai": "^0.68.0",
+    "@mariozechner/pi-coding-agent": "^0.68.0",
     "@fontsource/space-grotesk": "^5.2.8",
     "lucide-react": "^0.577.0",
     "react": "^19.1.1",
