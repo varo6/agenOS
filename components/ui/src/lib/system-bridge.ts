@@ -4,7 +4,7 @@ import type {
   PreflightResponse,
   ShellMode,
   SystemRuntimeInfo,
-} from "../../../installer-ui/src/shared/installer-types";
+} from "./system-types";
 
 export type AgenosSystemBridge = {
   getPreflight(): Promise<PreflightResponse>;

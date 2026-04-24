@@ -6,7 +6,9 @@ import type {
   PiPendingAttempt,
   PiStatusResponse,
 } from "./pi-types";
-import { PI_DEV_HARNESS_ORIGIN } from "./pi-types";
+import { getPiBridge } from "./pi-bridge";
+
+const PI_API_BASE_DEFAULT = "http://127.0.0.1:4173";
 
 type ErrorPayload = {
   message?: string;
@@ -21,18 +23,17 @@ export class PiClientError extends Error {
   }
 }
 
-function ensureHarnessOrigin(): string {
-  const origin = globalThis.window?.location?.origin;
-  if (origin !== PI_DEV_HARNESS_ORIGIN) {
-    throw new PiClientError("Harness de desarrollo no disponible.");
+function resolveHttpBase(): string {
+  const location = globalThis.window?.location;
+  if (location && (location.protocol === "http:" || location.protocol === "https:")) {
+    return location.origin;
   }
 
-  return origin;
+  return PI_API_BASE_DEFAULT;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const origin = ensureHarnessOrigin();
-  const response = await fetch(new URL(path, `${origin}/`).toString(), init);
+  const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), init);
   const text = await response.text();
   const payload = text ? JSON.parse(text) as T | ErrorPayload : undefined;
 
@@ -47,9 +48,53 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+async function bridgeRequest<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof PiClientError) {
+      throw error;
+    }
+
+    const status = error && typeof error === "object" && "status" in error && typeof error.status === "number"
+      ? error.status
+      : undefined;
+    throw new PiClientError(error instanceof Error ? error.message : String(error), status);
+  }
+}
+
 export type PiClient = ReturnType<typeof createPiClient>;
 
 export function createPiClient() {
+  const bridge = getPiBridge();
+  if (bridge?.isAvailable()) {
+    return {
+      getStatus(): Promise<PiStatusResponse> {
+        return bridgeRequest(() => bridge.getStatus());
+      },
+
+      startAuth(): Promise<PiPendingAttempt> {
+        return bridgeRequest(() => bridge.startAuth());
+      },
+
+      getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse> {
+        return bridgeRequest(() => bridge.getAuthAttempt(attemptId));
+      },
+
+      submitManualCode(attemptId: string, input: string): Promise<PiAuthAttemptResponse> {
+        return bridgeRequest(() => bridge.submitManualCode(attemptId, input));
+      },
+
+      logout(): Promise<void> {
+        return bridgeRequest(() => bridge.logout());
+      },
+
+      sendMessage(message: string, source: PiChatRequest["source"]): Promise<PiChatResponse> {
+        return bridgeRequest(() => bridge.sendMessage(message, source));
+      },
+    };
+  }
+
   return {
     getStatus(): Promise<PiStatusResponse> {
       return requestJson<PiStatusResponse>("/api/pi/status");

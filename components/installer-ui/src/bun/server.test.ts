@@ -31,6 +31,38 @@ const validProfile: InstallerProfilePayload = {
 };
 
 function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
+  const piHarness = {
+    getStatus: () => ({
+      authState: "connected" as const,
+      providerName: "ChatGPT/Codex",
+      modelId: "gpt-5.4-mini",
+      busy: false,
+    }),
+    startAuth: async () => ({
+      attemptId: "att_123",
+      url: "https://auth.example",
+      instructions: "Completa el login",
+      expiresAt: "2026-04-21T00:10:00.000Z",
+    }),
+    getAuthAttempt: (attemptId: string) => ({
+      attemptId,
+      status: "pending" as const,
+      expiresAt: "2026-04-21T00:10:00.000Z",
+    }),
+    submitManualCode: (attemptId: string) => ({
+      attemptId,
+      status: "pending" as const,
+      expiresAt: "2026-04-21T00:10:00.000Z",
+    }),
+    logout: () => undefined,
+    chat: async () => ({
+      ok: true,
+      reply: "hola",
+      provider: "openai-codex" as const,
+      modelId: "gpt-5.4-mini",
+    }),
+  };
+
   return createInstallerApiHandler({
     getPreflight: () => ({
       firmware: "UEFI",
@@ -72,6 +104,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       ok: true,
       message: "maintenance ok",
     }),
+    piHarness,
     ...overrides,
   });
 }
@@ -288,6 +321,40 @@ describe("createInstallerApiHandler", () => {
     expect(await jsonPayload(response)).toEqual({
       ok: false,
       message: "helper fallo",
+    });
+  });
+
+  test("serves pi status through the packaged API", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/status"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toEqual({
+      authState: "connected",
+      providerName: "ChatGPT/Codex",
+      modelId: "gpt-5.4-mini",
+      busy: false,
+    });
+  });
+
+  test("serves pi chat through the packaged API", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        message: "hola",
+        source: "text",
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      reply: "hola",
+      provider: "openai-codex",
+      modelId: "gpt-5.4-mini",
     });
   });
 

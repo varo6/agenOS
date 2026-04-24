@@ -56,6 +56,46 @@ describe("createPiClient", () => {
     expect(requestedUrl).toBe(`${PI_DEV_HARNESS_ORIGIN}/api/pi/status`);
   });
 
+  test("prefers the native Electron Pi bridge when available", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      throw new Error("fetch should not be called");
+    };
+
+    globalThis.window = {
+      location: new URL("file:///opt/agenos/system/dist/index.html"),
+      agenosPi: {
+        isAvailable: () => true,
+        getStatus: async () => ({
+          authState: "connected",
+          providerName: "ChatGPT/Codex",
+          modelId: "gpt-5.4-mini",
+          busy: false,
+        }),
+        startAuth: async () => {
+          throw new Error("not used");
+        },
+        getAuthAttempt: async () => {
+          throw new Error("not used");
+        },
+        submitManualCode: async () => {
+          throw new Error("not used");
+        },
+        logout: async () => undefined,
+        sendMessage: async () => {
+          throw new Error("not used");
+        },
+      },
+    } as Window & typeof globalThis;
+
+    const client = createPiClient();
+    await expect(client.getStatus()).resolves.toMatchObject({
+      authState: "connected",
+    });
+    expect(fetchCalls).toBe(0);
+  });
+
   test("starts the auth flow with POST", async () => {
     setWindowOrigin(PI_DEV_HARNESS_ORIGIN);
 
@@ -144,12 +184,55 @@ describe("createPiClient", () => {
     } satisfies Partial<PiClientError>);
   });
 
-  test("fails clearly outside the dev harness origin", async () => {
+  test("uses the current HTTP origin outside the Vite harness", async () => {
     setWindowOrigin("http://127.0.0.1:3000");
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        authState: "disconnected",
+        providerName: "ChatGPT/Codex",
+        modelId: "gpt-5.4-mini",
+        busy: false,
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    };
+
     const client = createPiClient();
 
-    await expect(client.getStatus()).rejects.toMatchObject({
-      message: "Harness de desarrollo no disponible.",
+    await expect(client.getStatus()).resolves.toMatchObject({
+      authState: "disconnected",
     });
+    expect(requestedUrl).toBe("http://127.0.0.1:3000/api/pi/status");
+  });
+
+  test("uses the packaged API when loaded from a file origin", async () => {
+    setWindowOrigin("file:///opt/agenos/installer/system-dist/index.html");
+
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        authState: "connected",
+        providerName: "ChatGPT/Codex",
+        modelId: "gpt-5.4-mini",
+        busy: false,
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    };
+
+    const client = createPiClient();
+    await expect(client.getStatus()).resolves.toMatchObject({
+      authState: "connected",
+    });
+    expect(requestedUrl).toBe("http://127.0.0.1:4173/api/pi/status");
   });
 });

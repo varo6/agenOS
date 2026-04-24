@@ -1,7 +1,4 @@
 #!/bin/sh
 set -eu
 
-export AGENOS_APP_KIND="system"
-export AGENOS_APP_PATH="/"
-
-exec /opt/agenos/installer/agenos-installer "$@"
+exec /opt/agenos/system/agenos-system-ui "$@"

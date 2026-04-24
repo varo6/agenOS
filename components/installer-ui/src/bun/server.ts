@@ -25,6 +25,23 @@ import { readPreflightPayload } from "./installer/preflight";
 import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
+import { createPiHarness, PiHarnessError } from "./pi-harness";
+import type {
+  PiAuthAttemptResponse,
+  PiChatRequest,
+  PiChatResponse,
+  PiPendingAttempt,
+  PiStatusResponse,
+} from "../../../ui/src/lib/pi-types";
+
+type PiHarnessApi = {
+  getStatus(): PiStatusResponse;
+  startAuth(): Promise<PiPendingAttempt>;
+  getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
+  submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
+  logout(): void;
+  chat(request: PiChatRequest): Promise<PiChatResponse>;
+};
 
 export type InstallerApiDependencies = {
   installerFrontendDistDir: string | null;
@@ -36,6 +53,7 @@ export type InstallerApiDependencies = {
   launchClassic: () => Promise<LaunchResponse>;
   switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
   runMaintenance: (action: MaintenanceAction) => Promise<ApiMessageResponse>;
+  piHarness: PiHarnessApi;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -162,6 +180,21 @@ function frontendResponse(
   );
 }
 
+function piErrorResponse(error: unknown): Response {
+  const status = error instanceof PiHarnessError ? error.status : 500;
+  const message = error instanceof Error ? error.message : "Error del harness de desarrollo.";
+
+  return json(
+    {
+      ok: false,
+      message,
+    },
+    {
+      status,
+    },
+  );
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
@@ -175,6 +208,7 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
+    piHarness: dependencies.piHarness ?? createPiHarness(),
   };
 
   return {
@@ -312,6 +346,107 @@ export function createInstallerApiHandler(
           return json(response, {
             status: 202,
           });
+        }
+
+        if (url.pathname === "/api/pi/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getStatus());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/auth/start") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            return json(await deps.piHarness.startAuth());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        const authAttemptMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)$/);
+        if (authAttemptMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getAuthAttempt(decodeURIComponent(authAttemptMatch[1] ?? "")));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        const manualCodeMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)\/manual-code$/);
+        if (manualCodeMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { input?: unknown };
+            return json(
+              deps.piHarness.submitManualCode(
+                decodeURIComponent(manualCodeMatch[1] ?? ""),
+                typeof payload.input === "string" ? payload.input : "",
+              ),
+              {
+                status: 202,
+              },
+            );
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/auth/logout") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            deps.piHarness.logout();
+            return json({ ok: true });
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/chat") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
+            const source = typeof payload.source === "string" ? payload.source : "";
+            if (source !== "text" && source !== "voice") {
+              return json(
+                {
+                  ok: false,
+                  message: "El origen debe ser text o voice.",
+                },
+                {
+                  status: 400,
+                },
+              );
+            }
+
+            return json(await deps.piHarness.chat({
+              message: typeof payload.message === "string" ? payload.message : "",
+              source,
+            }));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
         }
 
         const frontend = frontendResponse(request, url, {

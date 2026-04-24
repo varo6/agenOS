@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
+    "build:electron": "rm -rf build/electron && mkdir -p build/electron && bun build --target=node --format=esm --external electron ./src/electron/main.ts --outfile build/electron/main.mjs && bun build --target=node --format=cjs --external electron ./src/electron/preload.ts --outfile build/electron/preload.cjs && install -m 0644 ./src/electron/package.json ./build/electron/package.json",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && bun run build:electron && vite build",
     "dev": "vite",
     "dev:live": "AGENOS_UI_DEV_LIVE_SESSION=1 vite",
     "preview": "vite preview",
@@ -28,6 +29,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.2",
+    "electron": "^37.4.0",
     "vite": "^7.1.3"
   }
 }

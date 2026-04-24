@@ -1,5 +1,6 @@
 dist/
 components/ui/dist/
+components/ui/build/
 components/ui/node_modules/
 components/installer-ui/build/
 components/installer-ui/node_modules/
@@ -23,6 +24,7 @@ build/live-build/chroot.packages.live
 build/live-build/initrd.img
 build/live-build/vmlinuz
 build/live-build/config/includes.chroot/opt/agenos/installer/
+build/live-build/config/includes.chroot/opt/agenos/system/
 build/live-build/config/includes.chroot/usr/local/share/agenos-ui/
 releases/
 __pycache__/

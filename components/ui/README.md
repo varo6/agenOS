@@ -28,9 +28,11 @@ En la VM se empaquetan ambos en el mismo runtime compartido, pero cada uno manti
 
 ## Runtime empaquetado
 
-En modo `system`, esta UI ya no se carga desde `http://127.0.0.1:4173/` como camino principal. Electron monta `dist/index.html` desde `system-dist` con `loadFile(...)` y el renderer consume el sistema mediante un cliente con dos caminos:
+En modo `system`, esta UI tiene su propio runtime Electron compilado desde `components/ui/src/electron`. La imagen live lo empaqueta en `/opt/agenos/system` y `/usr/local/bin/agenos-system-app` arranca ese paquete directamente.
 
-- IPC por `window.agenosSystem` cuando el preload está disponible.
+Electron monta `dist/index.html` con `loadFile(...)` y el renderer consume capacidades nativas mediante clientes con dos caminos:
+
+- IPC por `window.agenosSystem` y `window.agenosPi` cuando el preload está disponible.
 - Fallback HTTP al API Bun para desarrollo web, rollback y compatibilidad.
 
 El flujo detallado está documentado en [docs/installer/electron-system-shell.md](/home/varose/code/agenOS/docs/installer/electron-system-shell.md).
