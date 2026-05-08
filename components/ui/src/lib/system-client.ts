@@ -4,7 +4,7 @@ import type {
   PreflightResponse,
   ShellMode,
   SystemRuntimeInfo,
-} from "../../../installer-ui/src/shared/installer-types";
+} from "./system-types";
 import { getSystemBridge } from "./system-bridge";
 
 const INSTALLER_API_BASE_DEFAULT = "http://127.0.0.1:4173";

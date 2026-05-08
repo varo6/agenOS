@@ -56,9 +56,8 @@ else
   bun install
 fi
 
-bun run build
-
 bash "${ROOT_DIR}/scripts/build-ui.sh"
+bun run build
 
 if [[ ! -f "${VIEW_DIST_DIR}/index.html" ]]; then
   echo "No se encontró la vista compilada en ${VIEW_DIST_DIR}/index.html" >&2
