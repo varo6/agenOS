@@ -2,6 +2,8 @@ import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "rea
 import {
   AlertTriangle,
   ArrowUpRight,
+  Clipboard,
+  ExternalLink,
   LoaderCircle,
   LogOut,
   MessageSquareText,
@@ -229,7 +231,7 @@ export default function App() {
     };
   }, [pendingAttempt, refreshStatus]);
 
-  async function handleStartAuth() {
+  async function handleStartAuth(method: "device" | "browser" = "device") {
     if (!harnessAvailable || chatState === "processing") {
       return;
     }
@@ -238,13 +240,15 @@ export default function App() {
     setAuthState("authorizing");
 
     try {
-      const attempt = await piClient.startAuth();
+      const attempt = await piClient.startAuth(method);
       setPendingAttempt(attempt);
       setManualCodeInput("");
 
-      const popup = window.open(attempt.url, "_blank", "noopener");
-      if (!popup) {
-        setGlobalError("No se pudo abrir una pestana nueva. Usa el campo manual.");
+      if (method === "browser") {
+        const popup = window.open(attempt.url, "_blank", "noopener");
+        if (!popup) {
+          setGlobalError("No se pudo abrir una pestana nueva. Usa el campo manual.");
+        }
       }
     } catch (error) {
       setAuthState("error");
@@ -470,7 +474,9 @@ export default function App() {
                   <button
                     className="btn-primary inline-flex items-center gap-2"
                     disabled={!harnessAvailable || authState === "authorizing" || isProcessing}
-                    onClick={handleStartAuth}
+                    onClick={() => {
+                      void handleStartAuth("device");
+                    }}
                     type="button"
                   >
                     {authState === "authorizing" ? (
@@ -478,7 +484,19 @@ export default function App() {
                     ) : (
                       <ArrowUpRight className="h-4 w-4" />
                     )}
-                    {connectLabel}
+                    {connectLabel} con codigo
+                  </button>
+
+                  <button
+                    className="btn-secondary inline-flex items-center gap-2"
+                    disabled={!harnessAvailable || authState === "authorizing" || isProcessing}
+                    onClick={() => {
+                      void handleStartAuth("browser");
+                    }}
+                    type="button"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Abrir navegador
                   </button>
 
                   <button
@@ -519,27 +537,65 @@ export default function App() {
                 </div>
 
                 {pendingAttempt ? (
-                  <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
-                    <div>
-                      <label
-                        className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
-                        htmlFor="manual-code"
-                      >
-                        Pegar URL o Codigo Manual
-                      </label>
-                      <input
-                        className="glass-input mt-3"
-                        id="manual-code"
-                        onChange={(event) => setManualCodeInput(event.target.value)}
-                        placeholder="http://localhost:1455/auth/callback?... o el code"
-                        value={manualCodeInput}
-                      />
-                    </div>
+                  pendingAttempt.method === "device" ? (
+                    <div className="grid gap-3 rounded-lg border border-white/8 bg-black/20 p-4">
+                      <div>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
+                          Device Auth
+                        </p>
+                        <a
+                          className="mt-2 inline-flex min-w-0 items-center gap-2 break-all text-sm text-accent-light hover:text-white"
+                          href={pendingAttempt.url}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {pendingAttempt.url}
+                          <ExternalLink className="h-4 w-4 shrink-0" />
+                        </a>
+                      </div>
 
-                    <button className="btn-secondary self-start" type="submit">
-                      Enviar fallback manual
-                    </button>
-                  </form>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <code className="rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-lg tracking-[0.18em] text-white">
+                          {pendingAttempt.userCode ?? "Esperando codigo..."}
+                        </code>
+                        <button
+                          className="btn-secondary inline-flex items-center gap-2"
+                          disabled={!pendingAttempt.userCode}
+                          onClick={() => {
+                            if (pendingAttempt.userCode) {
+                              void navigator.clipboard?.writeText(pendingAttempt.userCode);
+                            }
+                          }}
+                          type="button"
+                        >
+                          <Clipboard className="h-4 w-4" />
+                          Copiar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
+                      <div>
+                        <label
+                          className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
+                          htmlFor="manual-code"
+                        >
+                          Pegar URL o Codigo Manual
+                        </label>
+                        <input
+                          className="glass-input mt-3"
+                          id="manual-code"
+                          onChange={(event) => setManualCodeInput(event.target.value)}
+                          placeholder="http://localhost:1455/auth/callback?... o el code"
+                          value={manualCodeInput}
+                        />
+                      </div>
+
+                      <button className="btn-secondary self-start" type="submit">
+                        Enviar fallback manual
+                      </button>
+                    </form>
+                  )
                 ) : null}
 
                 <form className="flex flex-col gap-3" onSubmit={handleTextSubmit}>
@@ -607,7 +663,12 @@ export default function App() {
                     Respuesta
                   </p>
                   <p className="mt-3 min-h-[10rem] whitespace-pre-wrap text-sm leading-6 text-white/85">
-                    {lastReply || (isProcessing ? "Esperando respuesta final..." : "Todavia no hay respuesta.")}
+                    {lastReply
+                      || (chatState === "error" && globalError
+                        ? globalError
+                        : isProcessing
+                          ? "Esperando respuesta final..."
+                          : "Todavia no hay respuesta.")}
                   </p>
                 </div>
 

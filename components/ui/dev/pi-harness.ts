@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +16,7 @@ import {
 
 import type {
   PiAuthAttemptResponse,
+  PiAuthMethod,
   PiAuthAttemptStatus,
   PiChatRequest,
   PiChatResponse,
@@ -23,10 +26,11 @@ import type {
 
 export const PI_PROVIDER_ID = "openai-codex" as const;
 export const PI_PROVIDER_NAME = "ChatGPT Plus/Pro (Codex Subscription)";
-export const PI_AUTH_TTL_MS = 10 * 60 * 1000;
+export const PI_AUTH_TTL_MS = 15 * 60 * 1000;
 
 const PI_AGENT_DIR = join(homedir(), ".agenos", "ui-dev", "pi");
 const PI_AUTH_PATH = join(PI_AGENT_DIR, "auth.json");
+const PI_CODEX_DEVICE_DIR = join(PI_AGENT_DIR, "codex-device");
 const PI_SYSTEM_PROMPT = [
   "Responde siempre en espanol.",
   "Se breve y util.",
@@ -35,6 +39,8 @@ const PI_SYSTEM_PROMPT = [
 ].join("\n");
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
+const PI_DEVICE_AUTH_INSTRUCTIONS =
+  "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
 
 type PiModelLike = {
   id: string;
@@ -85,6 +91,17 @@ type PiLoginOpenAICodexOptions = {
   originator?: string;
 };
 
+type CodexDeviceAuthUpdate = {
+  url?: string;
+  userCode?: string;
+};
+
+type CodexDeviceAuthOptions = {
+  codexHome: string;
+  signal: AbortSignal;
+  onAuth: (info: CodexDeviceAuthUpdate) => void;
+};
+
 type PiHarnessDependencies = {
   authStorage: PiAuthStorageLike;
   modelRegistry: PiModelRegistryLike;
@@ -94,6 +111,7 @@ type PiHarnessDependencies = {
     sessionManager: PiSessionManagerLike;
   }) => Promise<{ session: PiAgentSessionLike }>;
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
+  loginOpenAICodexDevice: (options: CodexDeviceAuthOptions) => Promise<OAuthCredentials>;
   now: () => number;
   setTimeout: typeof globalThis.setTimeout;
   clearTimeout: typeof globalThis.clearTimeout;
@@ -103,17 +121,21 @@ type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
+  settled: boolean;
 };
 
 type LoginAttempt = {
   attemptId: string;
+  method: PiAuthMethod;
   status: PiAuthAttemptStatus;
   url?: string;
   instructions?: string;
+  userCode?: string;
   expiresAt: string;
   error?: string;
   authInfo: Deferred<PiPendingAttempt>;
   manualInput: Deferred<string>;
+  abortController: AbortController;
   timer: ReturnType<typeof setTimeout> | null;
 };
 
@@ -131,11 +153,18 @@ function createDeferred<T>(): Deferred<T> {
   let reject!: (reason?: unknown) => void;
 
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
+    resolve = (value) => {
+      deferred.settled = true;
+      resolvePromise(value);
+    };
+    reject = (reason) => {
+      deferred.settled = true;
+      rejectPromise(reason);
+    };
   });
 
-  return { promise, resolve, reject };
+  const deferred = { promise, resolve, reject, settled: false };
+  return deferred;
 }
 
 function normalizeErrorMessage(error: unknown): string {
@@ -166,21 +195,167 @@ function extractTextContent(content: unknown): string {
 function toPendingAttempt(attempt: LoginAttempt): PiPendingAttempt {
   return {
     attemptId: attempt.attemptId,
+    method: attempt.method,
     url: attempt.url ?? "",
     instructions: attempt.instructions ?? PI_AUTH_INSTRUCTIONS,
     expiresAt: attempt.expiresAt,
+    userCode: attempt.userCode,
   };
 }
 
 function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
   return {
     attemptId: attempt.attemptId,
+    method: attempt.method,
     status: attempt.status,
     url: attempt.url,
     instructions: attempt.instructions,
     expiresAt: attempt.expiresAt,
+    userCode: attempt.userCode,
     error: attempt.error,
   };
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "");
+}
+
+function parseCodexDeviceAuthOutput(rawOutput: string): CodexDeviceAuthUpdate {
+  const output = stripAnsi(rawOutput);
+  const url = output.match(/https:\/\/auth\.openai\.com\/codex\/device\b/)?.[0];
+  const codeMatches = [...output.matchAll(/\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+\b/g)];
+  const userCode = codeMatches.length > 0 ? codeMatches[codeMatches.length - 1]?.[0] : undefined;
+
+  return { url, userCode };
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    const payload = parts[1];
+    if (!payload) {
+      return null;
+    }
+
+    const padded = payload.padEnd(payload.length + ((4 - payload.length % 4) % 4), "=");
+    return JSON.parse(Buffer.from(padded, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function accountIdFromAccessToken(accessToken: string): string | undefined {
+  const auth = decodeJwtPayload(accessToken)?.["https://api.openai.com/auth"];
+  if (!auth || typeof auth !== "object") {
+    return undefined;
+  }
+
+  const accountId = (auth as { chatgpt_account_id?: unknown }).chatgpt_account_id;
+  return typeof accountId === "string" && accountId ? accountId : undefined;
+}
+
+function expiryFromAccessToken(accessToken: string): number | undefined {
+  const exp = decodeJwtPayload(accessToken)?.exp;
+  return typeof exp === "number" ? exp * 1000 : undefined;
+}
+
+async function readCodexDeviceCredentials(codexHome: string): Promise<OAuthCredentials> {
+  const raw = await readFile(join(codexHome, "auth.json"), "utf8");
+  const parsed = JSON.parse(raw) as {
+    tokens?: {
+      access_token?: unknown;
+      refresh_token?: unknown;
+      id_token?: unknown;
+      account_id?: unknown;
+    };
+    account_id?: unknown;
+  };
+
+  const access = parsed.tokens?.access_token;
+  const refresh = parsed.tokens?.refresh_token;
+  const idToken = parsed.tokens?.id_token;
+  if (typeof access !== "string" || typeof refresh !== "string") {
+    throw new Error("Codex no escribio credenciales OAuth completas.");
+  }
+
+  const accountId = typeof parsed.account_id === "string" && parsed.account_id
+    ? parsed.account_id
+    : typeof parsed.tokens?.account_id === "string" && parsed.tokens.account_id
+      ? parsed.tokens.account_id
+      : accountIdFromAccessToken(access)
+        ?? (typeof idToken === "string" ? accountIdFromAccessToken(idToken) : undefined);
+  if (!accountId) {
+    throw new Error("No se pudo leer el accountId de Codex.");
+  }
+
+  return {
+    access,
+    refresh,
+    expires: expiryFromAccessToken(access) ?? Date.now() + 60 * 60 * 1000,
+    accountId,
+  };
+}
+
+async function loginOpenAICodexDevice(options: CodexDeviceAuthOptions): Promise<OAuthCredentials> {
+  await mkdir(options.codexHome, { recursive: true });
+
+  return new Promise<OAuthCredentials>((resolve, reject) => {
+    const child = spawn(process.env.AGENOS_CODEX_BIN?.trim() || "codex", ["login", "--device-auth"], {
+      env: {
+        ...process.env,
+        CODEX_HOME: options.codexHome,
+        NO_COLOR: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    let settled = false;
+
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      options.signal.removeEventListener("abort", abortLogin);
+      callback();
+    };
+
+    const abortLogin = () => {
+      child.kill("SIGTERM");
+      settle(() => reject(new Error("Login cancelado.")));
+    };
+
+    const consume = (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      const info = parseCodexDeviceAuthOutput(output);
+      if (info.url || info.userCode) {
+        options.onAuth(info);
+      }
+    };
+
+    options.signal.addEventListener("abort", abortLogin, { once: true });
+    child.stdout?.on("data", consume);
+    child.stderr?.on("data", consume);
+    child.on("error", (error) => {
+      settle(() => reject(new Error(`No se pudo ejecutar codex login --device-auth: ${error.message}`)));
+    });
+    child.on("exit", (code, signal) => {
+      if (settled) {
+        return;
+      }
+
+      if (code !== 0) {
+        const suffix = signal ? ` (${signal})` : "";
+        settle(() => reject(new Error(`codex login --device-auth termino con codigo ${code ?? "desconocido"}${suffix}.`)));
+        return;
+      }
+
+      void readCodexDeviceCredentials(options.codexHome)
+        .then((credentials) => settle(() => resolve(credentials)))
+        .catch((error) => settle(() => reject(error)));
+    });
+  });
 }
 
 function createDefaultDependencies(): PiHarnessDependencies {
@@ -222,6 +397,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
       });
     },
     loginOpenAICodex,
+    loginOpenAICodexDevice,
     now: () => Date.now(),
     setTimeout: globalThis.setTimeout.bind(globalThis),
     clearTimeout: globalThis.clearTimeout.bind(globalThis),
@@ -259,11 +435,11 @@ export class PiHarness {
       modelId: this.selectModel().id,
       busy: this.busy,
       pendingAttempt: pendingAttempt?.status === "pending" ? toPendingAttempt(pendingAttempt) : undefined,
-      error: authFailure ? this.lastError : undefined,
+      error: this.lastError,
     };
   }
 
-  async startAuth(): Promise<PiPendingAttempt> {
+  async startAuth(method: PiAuthMethod = "device"): Promise<PiPendingAttempt> {
     const currentAttempt = this.pendingAttemptId ? this.attempts.get(this.pendingAttemptId) : undefined;
     if (currentAttempt?.status === "pending") {
       return currentAttempt.authInfo.promise;
@@ -275,10 +451,12 @@ export class PiHarness {
     const manualInput = createDeferred<string>();
     const attempt: LoginAttempt = {
       attemptId,
+      method,
       status: "pending",
       expiresAt,
       authInfo,
       manualInput,
+      abortController: new AbortController(),
       timer: null,
     };
 
@@ -295,6 +473,7 @@ export class PiHarness {
       attempt.error = "El intento de login expiro.";
       this.lastError = attempt.error;
       this.pendingAttemptId = this.pendingAttemptId === attempt.attemptId ? undefined : this.pendingAttemptId;
+      attempt.abortController.abort();
       authInfo.reject(new Error(attempt.error));
       manualInput.reject(new Error("Login attempt expired"));
     }, PI_AUTH_TTL_MS);
@@ -345,6 +524,7 @@ export class PiHarness {
     if (pendingAttempt?.status === "pending") {
       pendingAttempt.status = "error";
       pendingAttempt.error = "Login cancelado.";
+      pendingAttempt.abortController.abort();
       pendingAttempt.authInfo.reject(new Error(pendingAttempt.error));
       pendingAttempt.manualInput.reject(new Error(pendingAttempt.error));
       this.clearAttemptTimer(pendingAttempt);
@@ -420,18 +600,36 @@ export class PiHarness {
 
   private async runAuthAttempt(attempt: LoginAttempt): Promise<void> {
     try {
-      const credentials = await this.deps.loginOpenAICodex({
-        originator: "pi",
-        onAuth: (info) => {
-          attempt.url = info.url;
-          attempt.instructions = info.instructions ?? PI_AUTH_INSTRUCTIONS;
-          attempt.authInfo.resolve(toPendingAttempt(attempt));
-        },
-        onPrompt: async () => attempt.manualInput.promise,
-        onManualCodeInput: async () => attempt.manualInput.promise,
-      });
+      const credentials = attempt.method === "device"
+        ? await this.deps.loginOpenAICodexDevice({
+          codexHome: PI_CODEX_DEVICE_DIR,
+          signal: attempt.abortController.signal,
+          onAuth: (info) => {
+            attempt.url = info.url ?? attempt.url;
+            attempt.userCode = info.userCode ?? attempt.userCode;
+            attempt.instructions = PI_DEVICE_AUTH_INSTRUCTIONS;
+            if (attempt.url && attempt.userCode && !attempt.authInfo.settled) {
+              attempt.authInfo.resolve(toPendingAttempt(attempt));
+            }
+          },
+        })
+        : await this.deps.loginOpenAICodex({
+          originator: "pi",
+          onAuth: (info) => {
+            attempt.url = info.url;
+            attempt.instructions = info.instructions ?? PI_AUTH_INSTRUCTIONS;
+            if (!attempt.authInfo.settled) {
+              attempt.authInfo.resolve(toPendingAttempt(attempt));
+            }
+          },
+          onPrompt: async () => attempt.manualInput.promise,
+          onManualCodeInput: async () => attempt.manualInput.promise,
+        });
 
       attempt.status = "success";
+      if (!attempt.authInfo.settled) {
+        attempt.authInfo.resolve(toPendingAttempt(attempt));
+      }
       this.deps.authStorage.set(PI_PROVIDER_ID, {
         type: "oauth",
         ...credentials,
@@ -527,7 +725,15 @@ export class PiHarness {
     return normalized.includes("authentication failed")
       || normalized.includes("no api key found")
       || normalized.includes("run '/login")
-      || normalized.includes("conecta chatgpt");
+      || normalized.includes("conecta chatgpt")
+      || normalized.includes("unauthorized")
+      || normalized.includes("invalid_token")
+      || normalized.includes("token_invalidated")
+      || normalized.includes("refresh_token")
+      || normalized.includes("not_chatgpt_auth")
+      || normalized.includes("missing_codex_entitlement")
+      || normalized.includes("chatgpt token not available")
+      || normalized.includes("chatgpt account id not available");
   }
 }
 

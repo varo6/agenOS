@@ -190,7 +190,14 @@ function registerIpcHandlers(): void {
   }));
 
   ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => piHarness.getStatus()));
-  ipcMain.handle(PI_IPC_CHANNELS.startAuth, () => wrapPi(() => piHarness.startAuth()));
+  ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(() => {
+    const method = String(payload?.method ?? "device");
+    if (method !== "device" && method !== "browser") {
+      throw new PiHarnessError(400, "El metodo de login debe ser device o browser.");
+    }
+
+    return piHarness.startAuth(method);
+  }));
   ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(() => (
     piHarness.getAuthAttempt(String(payload.attemptId ?? ""))
   )));

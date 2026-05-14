@@ -7,6 +7,7 @@ STATIC_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local
 PACKAGE_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/system"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
+CODEX_BIN_PATH=""
 STAMP_FILE="${PACKAGE_OUTPUT_DIR}/.build-stamp"
 
 source_hash() {
@@ -61,16 +62,26 @@ if [[ ! -x "${ELECTRON_DIST_DIR}/electron" ]]; then
   exit 1
 fi
 
+CODEX_BIN_PATH="$(
+  find "${UI_DIR}/node_modules/@openai" -path '*/vendor/*/codex/codex' -type f -perm -111 -print -quit 2>/dev/null || true
+)"
+if [[ -z "${CODEX_BIN_PATH}" ]]; then
+  echo "No se encontró el binario empaquetado de Codex." >&2
+  exit 1
+fi
+
 mkdir -p \
   "${STATIC_OUTPUT_DIR}" \
   "${PACKAGE_OUTPUT_DIR}/dist" \
   "${PACKAGE_OUTPUT_DIR}/electron-app" \
-  "${PACKAGE_OUTPUT_DIR}/electron-dist"
+  "${PACKAGE_OUTPUT_DIR}/electron-dist" \
+  "${PACKAGE_OUTPUT_DIR}/codex-bin"
 
 rsync -a --delete "${UI_DIR}/dist/" "${STATIC_OUTPUT_DIR}/"
 rsync -a --delete "${UI_DIR}/dist/" "${PACKAGE_OUTPUT_DIR}/dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${PACKAGE_OUTPUT_DIR}/electron-app/"
 rsync -a --delete "${ELECTRON_DIST_DIR}/" "${PACKAGE_OUTPUT_DIR}/electron-dist/"
+install -m 0755 "${CODEX_BIN_PATH}" "${PACKAGE_OUTPUT_DIR}/codex-bin/codex"
 
 if [[ -f "${PACKAGE_OUTPUT_DIR}/electron-dist/chrome-sandbox" ]]; then
   chmod 0755 "${PACKAGE_OUTPUT_DIR}/electron-dist/chrome-sandbox"
@@ -95,6 +106,7 @@ printf '%s\n' \
   'export AGENOS_UI_DIST_DIR="${SCRIPT_DIR}/dist"' \
   'export AGENOS_SYSTEM_BRIDGE_MODE="${AGENOS_SYSTEM_BRIDGE_MODE:-ipc}"' \
   'export AGENOS_ELECTRON_GPU_MODE="${AGENOS_ELECTRON_GPU_MODE:-auto}"' \
+  'export AGENOS_CODEX_BIN="${SCRIPT_DIR}/codex-bin/codex"' \
   'export ELECTRON_IS_DEV=0' \
   'export ELECTRON_OZONE_PLATFORM_HINT=auto' \
   'export TMPDIR="${RUNTIME_DIR}"' \

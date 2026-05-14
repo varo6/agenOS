@@ -32,6 +32,7 @@ function createHarnessFixture() {
   const listeners = new Set<(event: unknown) => void>();
   const pendingTimers: Array<() => void> = [];
   let loginCalls = 0;
+  let deviceLoginCalls = 0;
   let loginOptions:
     | {
         onAuth: (info: { url: string; instructions?: string }) => void;
@@ -122,6 +123,14 @@ function createHarnessFixture() {
       });
       return loginDeferred.promise;
     },
+    loginOpenAICodexDevice: async (options) => {
+      deviceLoginCalls += 1;
+      options.onAuth({
+        url: "https://auth.openai.com/codex/device",
+        userCode: "ABCD-EFGH",
+      });
+      return loginDeferred.promise;
+    },
     now: () => now,
     setTimeout: (callback) => {
       pendingTimers.push(callback);
@@ -136,6 +145,7 @@ function createHarnessFixture() {
     loginDeferred,
     emitAssistantReply,
     getLoginCalls: () => loginCalls,
+    getDeviceLoginCalls: () => deviceLoginCalls,
     getLoginOptions: () => loginOptions,
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
@@ -168,19 +178,24 @@ describe("PiHarness", () => {
   });
 
   test("keeps a single pending login attempt", async () => {
-    const { harness, getLoginCalls } = createHarnessFixture();
+    const { harness, getDeviceLoginCalls } = createHarnessFixture();
 
     const first = await harness.startAuth();
     const second = await harness.startAuth();
 
     expect(first.attemptId).toBe(second.attemptId);
-    expect(getLoginCalls()).toBe(1);
+    expect(first).toMatchObject({
+      method: "device",
+      url: "https://auth.openai.com/codex/device",
+      userCode: "ABCD-EFGH",
+    });
+    expect(getDeviceLoginCalls()).toBe(1);
   });
 
   test("accepts manual code and transitions to connected", async () => {
     const { harness, getLoginOptions, loginDeferred } = createHarnessFixture();
 
-    const attempt = await harness.startAuth();
+    const attempt = await harness.startAuth("browser");
     const loginOptions = getLoginOptions();
     expect(loginOptions).toBeDefined();
 
@@ -202,6 +217,36 @@ describe("PiHarness", () => {
       pendingAttempt: undefined,
     });
     expect(harness.getAuthAttempt(attempt.attemptId)).toMatchObject({
+      method: "browser",
+      status: "success",
+    });
+  });
+
+  test("device auth credentials transition to connected", async () => {
+    const { harness, loginDeferred } = createHarnessFixture();
+
+    const attempt = await harness.startAuth("device");
+    expect(attempt).toMatchObject({
+      method: "device",
+      url: "https://auth.openai.com/codex/device",
+      userCode: "ABCD-EFGH",
+    });
+
+    loginDeferred.resolve({
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await flushTasks();
+
+    expect(harness.getStatus()).toMatchObject({
+      authState: "connected",
+      pendingAttempt: undefined,
+    });
+    expect(harness.getAuthAttempt(attempt.attemptId)).toMatchObject({
+      method: "device",
       status: "success",
     });
   });
@@ -241,6 +286,33 @@ describe("PiHarness", () => {
       ok: true,
       modelId: "gpt-5.4-mini",
       provider: "openai-codex",
+    });
+  });
+
+  test("surfaces backend auth failures in status", async () => {
+    const { harness, authData, setPromptImpl } = createHarnessFixture();
+
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+    setPromptImpl(async () => {
+      throw new Error("missing_codex_entitlement");
+    });
+
+    await expect(harness.chat({
+      message: "hola",
+      source: "text",
+    })).rejects.toMatchObject({
+      status: 401,
+      message: "missing_codex_entitlement",
+    });
+    expect(harness.getStatus()).toMatchObject({
+      authState: "error",
+      error: "missing_codex_entitlement",
     });
   });
 });

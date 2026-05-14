@@ -166,6 +166,7 @@ function extractTextContent(content: unknown): string {
 function toPendingAttempt(attempt: LoginAttempt): PiPendingAttempt {
   return {
     attemptId: attempt.attemptId,
+    method: "browser",
     url: attempt.url ?? "",
     instructions: attempt.instructions ?? PI_AUTH_INSTRUCTIONS,
     expiresAt: attempt.expiresAt,
@@ -175,6 +176,7 @@ function toPendingAttempt(attempt: LoginAttempt): PiPendingAttempt {
 function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
   return {
     attemptId: attempt.attemptId,
+    method: "browser",
     status: attempt.status,
     url: attempt.url,
     instructions: attempt.instructions,

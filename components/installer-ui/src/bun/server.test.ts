@@ -40,17 +40,20 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
     }),
     startAuth: async () => ({
       attemptId: "att_123",
+      method: "browser" as const,
       url: "https://auth.example",
       instructions: "Completa el login",
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),
     getAuthAttempt: (attemptId: string) => ({
       attemptId,
+      method: "browser" as const,
       status: "pending" as const,
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),
     submitManualCode: (attemptId: string) => ({
       attemptId,
+      method: "browser" as const,
       status: "pending" as const,
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),

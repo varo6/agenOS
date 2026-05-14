@@ -12,6 +12,7 @@ import type {
   PiAuthAttemptResponse,
   PiChatResponse,
   PiPendingAttempt,
+  PiStartAuthRequest,
   PiStatusResponse,
 } from "../lib/pi-types";
 
@@ -97,8 +98,8 @@ contextBridge.exposeInMainWorld("agenosPi", {
   getStatus(): Promise<PiStatusResponse> {
     return invokePi<PiStatusResponse>(PI_IPC_CHANNELS.getStatus);
   },
-  startAuth(): Promise<PiPendingAttempt> {
-    return invokePi<PiPendingAttempt>(PI_IPC_CHANNELS.startAuth);
+  startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {
+    return invokePi<PiPendingAttempt>(PI_IPC_CHANNELS.startAuth, { method });
   },
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse> {
     return invokePi<PiAuthAttemptResponse>(PI_IPC_CHANNELS.getAuthAttempt, { attemptId });

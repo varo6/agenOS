@@ -130,7 +130,18 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
 
   if (url.pathname === "/api/pi/auth/start" && method === "POST") {
     try {
-      sendJson(response, 200, await piHarness.startAuth());
+      const payload = await readJsonBody(request);
+      const method =
+        payload && typeof payload === "object" && "method" in payload ? String(payload.method ?? "device") : "device";
+      if (method !== "device" && method !== "browser") {
+        sendJson(response, 400, {
+          ok: false,
+          message: "El metodo de login debe ser device o browser.",
+        });
+        return true;
+      }
+
+      sendJson(response, 200, await piHarness.startAuth(method));
     } catch (error) {
       sendPiError(response, error);
     }
