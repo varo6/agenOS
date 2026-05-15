@@ -420,4 +420,64 @@ describe("createInstallerApiHandler", () => {
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe("http://localhost/installer/");
   });
+
+  test("agent memory routes read and append contacts", async () => {
+    const memory = {
+      read: () => ({ namespace: "contacts", content: "Pablo Lopez: pablo@example.com\n" }),
+      append: () => ({ ok: true, message: "Memoria guardada." }),
+    };
+    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+
+    const readResponse = await handler.fetch(new Request("http://localhost/api/agent/memory/contacts"));
+    expect(readResponse.status).toBe(200);
+    expect(await jsonPayload(readResponse)).toEqual({
+      namespace: "contacts",
+      content: "Pablo Lopez: pablo@example.com\n",
+    });
+
+    const writeResponse = await handler.fetch(new Request("http://localhost/api/agent/memory/contacts", {
+      method: "POST",
+      body: JSON.stringify({ content: "Pablo Lopez es mi profesor", source: "ui", explicitUserIntent: true }),
+    }));
+    expect(writeResponse.status).toBe(202);
+  });
+
+  test("agent task route enqueues background work", async () => {
+    const taskQueue = {
+      enqueue: () => ({ ok: true, taskId: "task_test", message: "Tarea enviada al worker de fondo." }),
+      health: () => ({ ok: true, mode: "local-simulated" }),
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/tasks", {
+      method: "POST",
+      body: JSON.stringify({ message: "prepara un email a Pablo", source: "ui" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      taskId: "task_test",
+      message: "Tarea enviada al worker de fondo.",
+    });
+  });
+
+  test("agent browser route opens normalized urls", async () => {
+    const opened: string[] = [];
+    const browserTool = {
+      openUrl: async (url: string) => {
+        opened.push(url);
+        return { ok: true, message: "Abriendo https://netflix.com/." };
+      },
+    };
+    const handler = createInstallerApiHandler({ browserTool: browserTool as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/browser/open-url", {
+      method: "POST",
+      body: JSON.stringify({ url: "netflix.com" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(opened).toEqual(["netflix.com"]);
+  });
 });

@@ -17,6 +17,10 @@ import {
   INSTALLER_API_PORT,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
+import { createBrowserTool } from "./agent/browser";
+import { createMemoryStore } from "./agent/memory";
+import { decidePolicy } from "./agent/policy";
+import { createTaskQueue } from "./agent/tasks";
 import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
@@ -54,6 +58,9 @@ export type InstallerApiDependencies = {
   switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
   runMaintenance: (action: MaintenanceAction) => Promise<ApiMessageResponse>;
   piHarness: PiHarnessApi;
+  memoryStore: ReturnType<typeof createMemoryStore>;
+  taskQueue: ReturnType<typeof createTaskQueue>;
+  browserTool: ReturnType<typeof createBrowserTool>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -209,6 +216,9 @@ export function createInstallerApiHandler(
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
     piHarness: dependencies.piHarness ?? createPiHarness(),
+    memoryStore: dependencies.memoryStore ?? createMemoryStore(),
+    taskQueue: dependencies.taskQueue ?? createTaskQueue(),
+    browserTool: dependencies.browserTool ?? createBrowserTool(),
   };
 
   return {
@@ -447,6 +457,84 @@ export function createInstallerApiHandler(
           } catch (error) {
             return piErrorResponse(error);
           }
+        }
+
+        const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
+        if (memoryMatch) {
+          const namespace = decodeURIComponent(memoryMatch[1] ?? "");
+          if (namespace !== "contacts" && namespace !== "preferences" && namespace !== "facts") {
+            return json({ ok: false, message: "Namespace de memoria invalido." }, { status: 400 });
+          }
+
+          if (request.method === "GET") {
+            return json(deps.memoryStore.read(namespace));
+          }
+
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as {
+              content?: unknown;
+              source?: unknown;
+              explicitUserIntent?: unknown;
+            };
+            const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
+            const policy = decidePolicy({
+              tool: "memory.write",
+              source,
+              explicitUserIntent: payload.explicitUserIntent === true,
+            });
+            if (policy.decision === "deny") {
+              return json({ ok: false, message: policy.reason }, { status: 403 });
+            }
+            if (policy.decision === "confirm") {
+              return json({ ok: false, message: policy.reason }, { status: 409 });
+            }
+
+            const response = deps.memoryStore.append(
+              namespace,
+              typeof payload.content === "string" ? payload.content : "",
+              source,
+            );
+            return json(response, { status: response.ok ? 202 : 400 });
+          }
+
+          return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+        }
+
+        if (url.pathname === "/api/agent/worker/health") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.taskQueue.health());
+        }
+
+        if (url.pathname === "/api/agent/tasks") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
+          const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: 403 });
+          }
+          const response = deps.taskQueue.enqueue({
+            message: typeof payload.message === "string" ? payload.message : "",
+            source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
+          });
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/agent/browser/open-url") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { url?: unknown };
+          const policy = decidePolicy({ tool: "browser.open_url", source: "ui" });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: 403 });
+          }
+
+          const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
+          return json(response, { status: response.ok ? 202 : 400 });
         }
 
         const frontend = frontendResponse(request, url, {
