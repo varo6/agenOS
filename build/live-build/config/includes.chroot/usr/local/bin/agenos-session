@@ -14,6 +14,7 @@ export MOZ_ENABLE_WAYLAND=1
 export _JAVA_AWT_WM_NONREPARENTING=1
 
 mkdir -p "${XDG_RUNTIME_DIR}"
+SESSION_LOG="${XDG_RUNTIME_DIR}/agenos-session.log"
 
 # Force sway to create the primary DRM/libinput backend instead of nesting.
 unset WAYLAND_DISPLAY
@@ -26,23 +27,15 @@ run_sway() {
 }
 
 if [ -z "${WLR_RENDERER:-}" ]; then
-  sway_log="$(mktemp)"
-  trap 'rm -f "${sway_log}"' EXIT HUP INT TERM
-
-  if run_sway 2>"${sway_log}"; then
+  if run_sway 2>"${SESSION_LOG}"; then
     exit 0
   else
-    status=$?
-    cat "${sway_log}" >&2
-
-    if grep -Eq 'EGL_NOT_INITIALIZED|failed to create dri2 screen|wl_display_roundtrip failed|NEEDS EXTENSION' "${sway_log}"; then
-      echo "agenos-session: sway fallo con EGL/GBM, reintentando con WLR_RENDERER=pixman" >&2
-      export WLR_RENDERER=pixman
-      exec dbus-run-session sway --config "${SWAY_CONFIG}"
-    fi
-
-    exit "${status}"
+    cat "${SESSION_LOG}" >&2
+    echo "agenos-session: sway fallo, reintentando con WLR_RENDERER=pixman" >&2
+    echo "agenos-session: log guardado en ${SESSION_LOG}" >&2
+    export WLR_RENDERER=pixman
+    exec dbus-run-session sway --config "${SWAY_CONFIG}" 2>>"${SESSION_LOG}"
   fi
 fi
 
-exec dbus-run-session sway --config "${SWAY_CONFIG}"
+exec dbus-run-session sway --config "${SWAY_CONFIG}" 2>>"${SESSION_LOG}"

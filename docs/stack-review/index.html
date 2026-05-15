@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgenOS Stack and Program Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f7f4;
+        --paper: #ffffff;
+        --ink: #171717;
+        --muted: #616161;
+        --line: #d9d9d3;
+        --soft: #efefea;
+        --accent: #2457d6;
+        --good: #176b3a;
+        --warn: #9a5b00;
+        --bad: #a12626;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.65;
+      }
+
+      main {
+        width: min(100%, 1080px);
+        margin: 0 auto;
+        padding: 48px 20px 72px;
+      }
+
+      article {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: clamp(24px, 5vw, 56px);
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.16;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        margin: 0 0 16px;
+        font-size: clamp(2.25rem, 6vw, 4.5rem);
+      }
+
+      h2 {
+        margin: 48px 0 16px;
+        padding-top: 24px;
+        border-top: 1px solid var(--line);
+        font-size: clamp(1.55rem, 3vw, 2.25rem);
+      }
+
+      h3 {
+        margin: 28px 0 8px;
+        font-size: 1.15rem;
+      }
+
+      p {
+        margin: 0 0 16px;
+      }
+
+      ul,
+      ol {
+        margin: 0 0 22px;
+        padding-left: 1.35rem;
+      }
+
+      li {
+        margin: 0 0 10px;
+      }
+
+      code {
+        padding: 0.1rem 0.28rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: var(--soft);
+        font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      table {
+        width: 100%;
+        margin: 20px 0 28px;
+        border-collapse: collapse;
+        font-size: 0.96rem;
+      }
+
+      th,
+      td {
+        vertical-align: top;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        text-align: left;
+      }
+
+      th {
+        background: var(--soft);
+      }
+
+      .lede {
+        max-width: 780px;
+        color: var(--muted);
+        font-size: 1.15rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 24px 0 32px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 10px;
+        background: var(--soft);
+      }
+
+      .callout {
+        margin: 24px 0;
+        padding: 18px 20px;
+        border-left: 4px solid var(--accent);
+        background: #f0f4ff;
+      }
+
+      .verdict {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin: 28px 0;
+      }
+
+      .score {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+        background: #fbfbf8;
+      }
+
+      .score strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 1.45rem;
+      }
+
+      .good {
+        color: var(--good);
+      }
+
+      .warn {
+        color: var(--warn);
+      }
+
+      .bad {
+        color: var(--bad);
+      }
+
+      .small {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 760px) {
+        article {
+          border-radius: 0;
+          border-left: 0;
+          border-right: 0;
+        }
+
+        main {
+          padding-left: 0;
+          padding-right: 0;
+        }
+
+        .verdict {
+          grid-template-columns: 1fr;
+        }
+
+        table {
+          display: block;
+          overflow-x: auto;
+          white-space: nowrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article>
+        <h1>AgenOS Stack and Program Review</h1>
+        <p class="lede">
+          This is an objective technical review of the current AgenOS repository as of
+          2026-05-14. The project is best described today as a Debian Bookworm live/installable
+          image with a custom Wayland kiosk session, a guided Calamares wrapper, and an early
+          Electron/React shell connected to a ChatGPT/Codex development harness. It is not yet a
+          complete agentic Linux distribution.
+        </p>
+
+        <div class="meta">
+          <span class="pill">Base: Debian 12 Bookworm</span>
+          <span class="pill">Image system: live-build</span>
+          <span class="pill">Session: greetd + Sway + Electron</span>
+          <span class="pill">Installer: Calamares + Bun API</span>
+          <span class="pill">UI: React 19 + Vite + Electron</span>
+        </div>
+
+        <div class="verdict">
+          <div class="score">
+            <strong class="good">Strong</strong>
+            Buildable vertical slice, clear repo layout, typed UI services, useful tests.
+          </div>
+          <div class="score">
+            <strong class="warn">Prototype</strong>
+            The OS layer is mostly live-build includes, not a packaged distro product.
+          </div>
+          <div class="score">
+            <strong class="bad">Critical Gap</strong>
+            No real local agent, STT/TTS pipeline, policy engine, memory, or audited tools.
+          </div>
+          <div class="score">
+            <strong class="bad">Hardening Needed</strong>
+            Electron sandboxing, local API trust, privileged helpers, and supply chain are not production-grade.
+          </div>
+        </div>
+
+        <h2>Executive Summary</h2>
+        <p>
+          AgenOS has a coherent first slice. The repository can assemble a Debian live ISO,
+          launch a Wayland session through <code>greetd</code> and <code>sway</code>, run a fullscreen
+          Electron UI, expose installer/system APIs through Bun, and hand off selected installation
+          data to Calamares. This is a meaningful prototype because it crosses the boundary from
+          web UI into real OS actions.
+        </p>
+        <p>
+          The problem is the gap between the stated ambition and the current implementation.
+          A state-of-the-art distro needs reproducible packaging, update channels, secure privilege
+          separation, robust boot/session recovery, real accessibility primitives, local-first AI
+          services, observability, test automation on real images, and a maintainable release process.
+          AgenOS currently has several of those ideas represented, but mostly as scripts, wrappers,
+          or placeholders.
+        </p>
+        <div class="callout">
+          <strong>Objective verdict:</strong> keep the direction, but stop treating this as a distro
+          architecture until the project has first-class packages, signed releases, a real agent daemon,
+          local speech, hardened IPC, and automated ISO/VM validation.
+        </div>
+
+        <h2>How The Stack Fits Together</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Current implementation</th>
+              <th>Important files</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Base OS</td>
+              <td>Debian Bookworm live/install image generated with <code>live-build</code>, amd64 only.</td>
+              <td><code>build/live-build/auto/config</code>, <code>tools/live-build/Dockerfile</code></td>
+            </tr>
+            <tr>
+              <td>Build automation</td>
+              <td>Dockerized live-build plus Bun/Electron packaging copied into <code>includes.chroot</code>.</td>
+              <td><code>scripts/build-iso.sh</code>, <code>scripts/build-ui.sh</code>, <code>scripts/build-installer-ui.sh</code></td>
+            </tr>
+            <tr>
+              <td>Live session</td>
+              <td><code>greetd</code> autologin for user <code>agenos</code>, then <code>sway</code> via <code>agenos-session</code>.</td>
+              <td><code>etc/greetd/config.toml</code>, <code>usr/local/bin/agenos-session</code>, <code>etc/agenos/sway/config</code></td>
+            </tr>
+            <tr>
+              <td>System shell</td>
+              <td>React/Vite UI packaged with Electron. It runs fullscreen and talks to native services through IPC or HTTP fallback.</td>
+              <td><code>components/ui/src/App.tsx</code>, <code>components/ui/src/electron/main.ts</code>, <code>components/ui/src/lib/system-client.ts</code></td>
+            </tr>
+            <tr>
+              <td>Installer shell</td>
+              <td>Guided React installer served by a local Bun server, with classic Calamares fallback.</td>
+              <td><code>components/installer-ui/src/views/mainview/App.tsx</code>, <code>components/installer-ui/src/bun/server.ts</code></td>
+            </tr>
+            <tr>
+              <td>Privilege boundary</td>
+              <td>Local API spawns <code>pkexec</code> helpers. Helpers launch Calamares, maintenance terminal, reload, reboot, and poweroff.</td>
+              <td><code>agenos-shell-helper</code>, <code>components/installer-ui/src/bun/installer/launch.ts</code>, <code>etc/polkit-1/rules.d</code></td>
+            </tr>
+            <tr>
+              <td>Installer engine</td>
+              <td>Calamares with custom branding and two custom Python modules for seeded install data and desktop setup.</td>
+              <td><code>etc/calamares/settings.conf</code>, <code>usr/lib/calamares/modules/agenosseed</code>, <code>agenosdesktop</code></td>
+            </tr>
+            <tr>
+              <td>AI/agent</td>
+              <td>No OS daemon yet. Current behavior is a UI-side ChatGPT/Codex harness using external auth and model sessions.</td>
+              <td><code>components/ui/dev/pi-harness.ts</code>, <code>components/installer-ui/src/bun/pi-harness.ts</code>, <code>components/agent/README.md</code></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Runtime Flow</h3>
+        <ol>
+          <li><code>make build</code> builds the live-build Docker image and runs UI build scripts.</li>
+          <li>The UI scripts run Bun builds, copy Electron, static assets, and wrapper scripts into <code>build/live-build/config/includes.chroot</code>.</li>
+          <li><code>lb build</code> creates the ISO from Debian package lists plus the custom include tree.</li>
+          <li>At boot, live-config prepares the live user and <code>greetd</code> launches <code>agenos-session</code>.</li>
+          <li><code>sway</code> starts <code>agenos-shell-runner</code>, which chooses system or installer mode and launches Electron.</li>
+          <li>Electron loads either the system shell by file or the installer shell via the local Bun API at <code>127.0.0.1:4173</code>.</li>
+          <li>Privileged operations cross into <code>pkexec</code> helpers, then into Calamares or system commands.</li>
+        </ol>
+
+        <h2>What Is Good</h2>
+        <h3>1. The project has a real vertical slice</h3>
+        <p>
+          The repo does more than render a mock UI. It discovers disks with <code>lsblk</code>, validates
+          installer profiles, creates Calamares configuration, writes secure runtime files, starts
+          privileged helpers, and configures the installed target for <code>greetd</code> and the AgenOS
+          session. That makes it a useful platform for further OS work.
+        </p>
+
+        <h3>2. The installer wrapper is reasonably disciplined</h3>
+        <p>
+          The guided installer validates user, locale, keyboard, timezone, disk, install mode, and root mode
+          before handoff. The profile is written with restrictive permissions, its path is constrained to the
+          runtime directory, and the Calamares seeded module is explicit. This is the right shape for a safer
+          custom installer path.
+        </p>
+
+        <h3>3. The UI/service separation is moving in the right direction</h3>
+        <p>
+          <code>components/installer-ui/src/shared/system-services</code> is a good architectural move.
+          The same service concepts can be reused from Bun and Electron IPC, which reduces duplication at
+          the boundary where OS actions live.
+        </p>
+
+        <h3>4. There is meaningful unit coverage</h3>
+        <p>
+          The repo has focused tests for disk discovery, preflight, profile validation, launch behavior,
+          runtime state, switch-mode behavior, installer client behavior, UI behavior, speech recognition
+          wrappers, and the ChatGPT/Codex harness. This is good for a prototype and much better than a pure
+          shell-script distro experiment.
+        </p>
+
+        <h3>5. The session architecture is simple enough to debug</h3>
+        <p>
+          <code>greetd + sway + fullscreen Electron</code> is understandable, lightweight, and easier to
+          reason about than a full desktop shell fork. The fallback/retry logic and GPU fallback notes show
+          that the project has already encountered real VM/hardware instability and started to handle it.
+        </p>
+
+        <h2>What Is Wrong</h2>
+        <h3>1. This is not yet a maintainable distro</h3>
+        <p>
+          The current image is assembled by copying files into <code>live-build/config/includes.chroot</code>.
+          That is acceptable for early prototypes, but it is not a production distribution model. There are
+          no Debian packages for AgenOS components, no apt repository, no package upgrade path, no signed
+          metadata, no split between source packages and generated runtime artifacts, and no rollback/update
+          story.
+        </p>
+
+        <h3>2. The agent is essentially absent</h3>
+        <p>
+          <code>components/agent</code> is documentation only. The current "agentic" behavior is a UI harness
+          around ChatGPT/Codex. There is no local daemon, no policy engine, no audited tool registry, no memory
+          subsystem, no event stream, no local STT/TTS, and no system-level accessibility layer. For a
+          voice-first distro, this is the largest missing subsystem.
+        </p>
+
+        <h3>3. The security model is too permissive for the ambition</h3>
+        <ul>
+          <li>Electron is launched with <code>--no-sandbox</code>, and the BrowserWindow disables Electron sandboxing.</li>
+          <li>The Bun API is bound to localhost, but it has no session token or origin-level authorization.</li>
+          <li>Local processes can call maintenance, installer, PI auth, PI chat, and shell mode routes if they can reach <code>127.0.0.1:4173</code>.</li>
+          <li>Polkit rules approve active local users for helper actions without a finer permission split.</li>
+          <li>The installer Electron handler calls <code>shell.openExternal(url)</code> for any window-open URL, unlike the stricter system shell path.</li>
+        </ul>
+        <p>
+          The helper command surfaces are mostly whitelisted, which is good, but the overall trust boundary is
+          still "anything in the active local user session is trusted." That is not enough for an agentic OS
+          that may run untrusted documents, browsers, extensions, or model-generated actions.
+        </p>
+
+        <h3>4. Reproducibility and supply chain are weak</h3>
+        <p>
+          The Dockerfile installs Node from NodeSource, Bun from a remote install script, and Rust via
+          <code>rustup</code>. The UI builds then copy Electron and Codex binaries from <code>node_modules</code>
+          into the image. There is no SBOM, no artifact attestation, no ISO signing, no deterministic build
+          claim, and no vulnerability scanning path. Release publishing uses SHA256 sums and Google Drive
+          upload, which is useful for a class project but not a serious distro release channel.
+        </p>
+
+        <h3>5. There is drift and duplicated architecture</h3>
+        <p>
+          The docs say some parts are future placeholders while the code now packages a system shell. The
+          live-system-slice document references files such as <code>LiveSystemView.tsx</code> and
+          <code>system-command.ts</code> that are not present. There is also an old Python shell server under
+          <code>usr/local/lib/agenos-shell/server.py</code> that appears no longer wired through the current
+          launcher path. The PI harness exists in both <code>components/ui/dev</code> and
+          <code>components/installer-ui/src/bun</code>, with different capabilities and TTL behavior.
+        </p>
+
+        <h3>6. Some code paths are inconsistent</h3>
+        <p>
+          The system UI can request <code>startAuth("device")</code> or <code>startAuth("browser")</code>.
+          The dedicated system Electron harness supports that split, but the Bun API path in
+          <code>components/installer-ui/src/bun/server.ts</code> ignores the posted auth method and calls an
+          older <code>startAuth()</code> implementation. That kind of drift will produce environment-specific
+          behavior and difficult debugging.
+        </p>
+
+        <h3>7. The product currently contradicts the accessibility goal</h3>
+        <p>
+          A voice-first accessible OS needs dependable speech input, speech output, keyboard-only operation,
+          screen reader compatibility, large target modes, offline fallback, and clear recovery paths. Current
+          speech is Web Speech API based in the UI and the docs still describe demo transcription in places.
+          That is not enough for an accessibility-oriented operating system.
+        </p>
+
+        <h2>Technology Assessment</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Technology</th>
+              <th>Fit today</th>
+              <th>Objective assessment</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Debian Bookworm</td>
+              <td class="good">Good</td>
+              <td>Stable and defensible base for a prototype. For state-of-the-art UX/hardware, consider a newer Debian base or a controlled backports policy.</td>
+            </tr>
+            <tr>
+              <td>live-build</td>
+              <td class="warn">Good for prototype, weak for product</td>
+              <td>Fine for ISO assembly. Not enough for distribution lifecycle, updates, package ownership, or reproducibility.</td>
+            </tr>
+            <tr>
+              <td>Calamares</td>
+              <td class="good">Good</td>
+              <td>Pragmatic installer engine. The custom wrapper is sensible, but destructive disk actions need stronger review and test automation.</td>
+            </tr>
+            <tr>
+              <td>greetd + Sway</td>
+              <td class="good">Good</td>
+              <td>Simple, modern Wayland session stack. Good choice for kiosk/fullscreen shell experiments.</td>
+            </tr>
+            <tr>
+              <td>Electron</td>
+              <td class="warn">Mixed</td>
+              <td>Fast to build and package, but heavy and currently unsandboxed. A state-of-the-art distro should either harden Electron seriously or move shell-critical UI to a smaller native/WebKit/GTK layer.</td>
+            </tr>
+            <tr>
+              <td>Bun</td>
+              <td class="warn">Mixed</td>
+              <td>Good developer speed, but less conservative for an OS control plane. For production, a long-lived privileged-adjacent daemon in Rust, Go, or Python with narrow IPC would be easier to audit.</td>
+            </tr>
+            <tr>
+              <td>React/Vite/Tailwind</td>
+              <td class="good">Good for UI</td>
+              <td>Reasonable for fast iteration. The issue is not the frontend stack; it is the OS boundary, accessibility, and packaging around it.</td>
+            </tr>
+            <tr>
+              <td>Python helpers</td>
+              <td class="warn">Acceptable but should shrink</td>
+              <td>Useful for Calamares integration and simple helpers. Privileged helper logic should become smaller, typed, logged, and tested as a stable command API.</td>
+            </tr>
+            <tr>
+              <td>ChatGPT/Codex harness</td>
+              <td class="bad">Not suitable as core agent</td>
+              <td>Good experiment for UI conversation. It is cloud/account dependent, provider-specific, and not a local OS agent.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>What I Would Implement Next</h2>
+        <h3>Milestone 1: Turn the prototype into a real distribution artifact</h3>
+        <ul>
+          <li>Create Debian packages for <code>agenos-shell</code>, <code>agenos-installer-ui</code>, <code>agenos-agent</code>, themes, policy files, and session config.</li>
+          <li>Stop copying built application directories into <code>includes.chroot/opt</code> as the primary architecture.</li>
+          <li>Add an apt repository, package signing, ISO signing, checksums, SBOM generation, and release provenance.</li>
+          <li>Separate source, generated build output, and image assembly so build state does not dirty the repo.</li>
+        </ul>
+
+        <h3>Milestone 2: Define and build the local agent daemon</h3>
+        <ul>
+          <li>Implement <code>agenos-agent</code> as a real service with a narrow local IPC API.</li>
+          <li>Use a typed event protocol for STT partials, final transcripts, intent proposals, confirmations, execution, and audit logs.</li>
+          <li>Make tools declarative: schema, risk level, required confirmation, allowed user/session, timeout, rollback note, and audit output.</li>
+          <li>Keep model/provider adapters behind the daemon. The UI should not own core agent state.</li>
+        </ul>
+
+        <h3>Milestone 3: Replace demo voice with local-first speech</h3>
+        <ul>
+          <li>Add local STT using <code>whisper.cpp</code>, Vosk, or another explicitly selected engine.</li>
+          <li>Add local TTS using Piper or an equivalent offline engine.</li>
+          <li>Route audio through PipeWire with explicit device selection, push-to-talk, wake mode, and privacy indicators.</li>
+          <li>Test microphone and speaker failure modes in the live image.</li>
+        </ul>
+
+        <h3>Milestone 4: Harden the shell and privilege boundary</h3>
+        <ul>
+          <li>Remove <code>--no-sandbox</code> where possible, enable Electron sandboxing, and enforce a strict Content Security Policy.</li>
+          <li>Add a session-bound token or Unix socket credential check to every local API route that can affect system state.</li>
+          <li>Split polkit actions by capability: installer launch, terminal, reload, poweroff, reboot, disk operations.</li>
+          <li>Log every privileged action with subject, command, arguments, result, and correlation ID.</li>
+          <li>Do not allow generic external URL opens from installer windows.</li>
+        </ul>
+
+        <h3>Milestone 5: Build real validation infrastructure</h3>
+        <ul>
+          <li>Add CI jobs for typecheck, unit tests, linting, package build, and ISO build smoke tests.</li>
+          <li>Add QEMU boot tests that verify login, shell startup, API health, installer launch, and installed-disk boot.</li>
+          <li>Add destructive install tests only against disposable virtual disks.</li>
+          <li>Record boot logs and screenshots as CI artifacts.</li>
+        </ul>
+
+        <h2>State-Of-The-Art Readiness</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Capability</th>
+              <th>Current state</th>
+              <th>Required for state-of-the-art</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Image build</td>
+              <td>Works through Docker/live-build scripts.</td>
+              <td>Reproducible, signed, CI-built images with provenance and SBOM.</td>
+            </tr>
+            <tr>
+              <td>Installer</td>
+              <td>Promising guided Calamares wrapper.</td>
+              <td>VM-tested install matrix, clearer destructive action confirmation, recovery flows.</td>
+            </tr>
+            <tr>
+              <td>Shell</td>
+              <td>Fullscreen Electron shell and fallback paths.</td>
+              <td>Hardened sandbox, accessibility support, crash recovery, native settings, update lifecycle.</td>
+            </tr>
+            <tr>
+              <td>Agent</td>
+              <td>Documented skeleton plus ChatGPT/Codex harness.</td>
+              <td>Local daemon, audited tools, policy engine, memory, local speech, provider abstraction.</td>
+            </tr>
+            <tr>
+              <td>Security</td>
+              <td>Whitelisted helpers but broad local trust.</td>
+              <td>Capability-based privilege model, authenticated IPC, sandboxed UI, full audit trail.</td>
+            </tr>
+            <tr>
+              <td>Maintenance</td>
+              <td>Manual scripts and Google Drive release upload.</td>
+              <td>Package updates, signed repos, rollback strategy, release automation, vulnerability management.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Recommended Direction</h2>
+        <p>
+          The best path is to keep Debian, live-build, Calamares, greetd, Sway, and the React UI for now,
+          but move the OS-critical pieces out of ad hoc image includes and into packages. Treat Electron as
+          a renderer, not as the authority. The authority should be a local agent/control daemon with a
+          minimal, authenticated IPC surface and auditable tool execution.
+        </p>
+        <p>
+          Do not invest heavily in more visual polish until the architecture can safely answer these
+          questions: who is allowed to trigger an action, how is the action confirmed, where is it logged,
+          how does the system recover if it fails, how does it update, and how can the same image be rebuilt
+          byte-for-byte or at least with verifiable provenance?
+        </p>
+
+        <h2>Final Verdict</h2>
+        <p>
+          AgenOS is a solid technical prototype and a good base for a thesis-scale proof of concept. It is
+          not yet a state-of-the-art distro. The strong parts are the working ISO path, the guided installer
+          slice, the Wayland kiosk direction, and the typed/tested service modules. The weak parts are the
+          absence of a real agent, weak distro packaging, weak supply-chain guarantees, broad local trust,
+          Electron hardening gaps, documentation drift, and duplicated runtime code.
+        </p>
+        <p>
+          The next serious step is not another UI screen. It is a production-shaped core: packages, signed
+          images, authenticated IPC, a local agent daemon, offline speech, audited tools, and VM-backed
+          verification.
+        </p>
+
+        <p class="small">
+          Reviewed paths include <code>README.md</code>, <code>docs/architecture</code>,
+          <code>docs/installer</code>, <code>scripts</code>, <code>build/live-build</code>,
+          <code>components/ui</code>, <code>components/installer-ui</code>, <code>components/agent</code>,
+          and <code>systemd</code>.
+        </p>
+      </article>
+    </main>
+  </body>
+</html>
