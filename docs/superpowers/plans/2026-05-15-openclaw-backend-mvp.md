@@ -26,6 +26,19 @@
 
 ---
 
+## Verification Policy
+
+Do not rebuild the full ISO after every task. Most tasks must be confirmed locally with the narrowest useful checks:
+
+- Backend-only tasks: run the exact `bun test ...` command listed in the task, then the relevant `bun run typecheck:bun` check if server types changed.
+- UI-only tasks: run the exact `bun test ...` command listed in the task, then `bun run build` only when React, Electron, or exported UI types changed.
+- Broker/API tasks: run `cd components/installer-ui && bun test src/bun/server.test.ts`, then `bun run typecheck:bun`.
+- Live-build/systemd tasks: inspect the file paths and run local tests first; defer `make build` until Task 9 unless the task cannot be validated any other way.
+
+Run `make build` only when it is strictly necessary: after live-build packaging changes that cannot be reasoned about locally, before VM/Live USB validation, or at the final full-verification gate. Every task still needs some local confirmation before commit; never commit a task with no test, typecheck, build, or explicit file-level validation.
+
+---
+
 ### Task 1: Memory Store
 
 **Files:**
@@ -1145,6 +1158,8 @@ git commit -m "feat: add simulated openclaw live worker"
 
 **Files:**
 - No source changes expected.
+
+This is the first required full rebuild gate for the MVP. Earlier tasks should have used targeted local checks. Run this task when Tasks 1-8 are complete, or earlier only if a live-build/systemd change cannot be validated locally.
 
 - [ ] **Step 1: Run UI verification**
 

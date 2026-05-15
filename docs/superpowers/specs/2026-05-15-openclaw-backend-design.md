@@ -207,6 +207,8 @@ First slice tests:
   - write/read contact memory
   - enqueue background task
 
+Full ISO rebuilds are not required after every implementation task. Local confirmation is required for every task through focused tests, typechecks, UI builds, API checks, or file-level validation. The full `make build` plus VM/Live USB smoke test is the final integration gate, and should also be used earlier only when a live-build/systemd packaging change cannot be validated locally.
+
 ## References
 
 - OpenClaw CLI and daemon/gateway behavior: https://openclaw.cc/en/cli/
