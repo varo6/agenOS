@@ -29,4 +29,6 @@ EOF
 ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/display-manager.service
 ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/graphical.target.wants/greetd.service
 ln -sf /lib/systemd/system/seatd.service /etc/systemd/system/multi-user.target.wants/seatd.service
+ln -sf /etc/systemd/system/agenos-agent-api.service /etc/systemd/system/graphical.target.wants/agenos-agent-api.service
+ln -sf /etc/systemd/system/agenos-openclaw.service /etc/systemd/system/graphical.target.wants/agenos-openclaw.service
 rm -f /etc/systemd/system/graphical.target.wants/lightdm.service

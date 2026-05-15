@@ -1,0 +1,17 @@
+[Unit]
+Description=AgenOS Background Worker (simulated)
+After=agenos-agent-api.service
+Wants=agenos-agent-api.service
+
+[Service]
+Type=simple
+User=agenos
+Group=agenos
+Environment=HOME=/home/agenos
+WorkingDirectory=/home/agenos
+ExecStart=/bin/sh -lc 'mkdir -p "$HOME/.agenos/openclaw" && touch "$HOME/.agenos/openclaw/outbox.ndjson" && tail -n +1 -F "$HOME/.agenos/openclaw/outbox.ndjson"'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target
