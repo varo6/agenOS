@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 
 import { VideoBackground } from "./components/VideoBackground";
+import { createAgentClient } from "./lib/agent-client";
+import { classifyAgentCommand } from "./lib/agent-command";
 import { createPiClient, PiClientError } from "./lib/pi-client";
 import {
   createSpeechRecognitionController,
@@ -27,6 +29,7 @@ type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
 
 const piClient = createPiClient();
+const agentClient = createAgentClient();
 
 function describeClientError(error: unknown): string {
   if (error instanceof PiClientError || error instanceof Error) {
@@ -106,11 +109,7 @@ export default function App() {
       return;
     }
 
-    if (authState !== "connected") {
-      setAuthState("error");
-      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
-      return;
-    }
+    const command = classifyAgentCommand(trimmed);
 
     setChatState("processing");
     setGlobalError(null);
@@ -118,6 +117,37 @@ export default function App() {
     setLastReply("");
     if (source === "text") {
       setDraft("");
+    }
+
+    if (command.kind === "memory") {
+      try {
+        const response = await agentClient.appendMemory(command.namespace, command.content);
+        setLastReply(response.message ?? "Memoria guardada.");
+        setChatState("idle");
+      } catch (error) {
+        setChatState("error");
+        setGlobalError(describeClientError(error));
+      }
+      return;
+    }
+
+    if (command.kind === "background") {
+      try {
+        const response = await agentClient.delegateBackgroundTask(command.message);
+        setLastReply(response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
+        setChatState("idle");
+      } catch (error) {
+        setChatState("error");
+        setGlobalError(describeClientError(error));
+      }
+      return;
+    }
+
+    if (authState !== "connected") {
+      setChatState("idle");
+      setAuthState("error");
+      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
+      return;
     }
 
     try {
@@ -332,7 +362,6 @@ export default function App() {
     || isProcessing;
   const textDisabled =
     !harnessAvailable
-    || authState !== "connected"
     || isProcessing;
   const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
   const voiceHint =
