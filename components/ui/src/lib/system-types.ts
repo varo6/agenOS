@@ -31,3 +31,19 @@ export type SystemRuntimeInfo = {
   gpu: GpuState;
   version: string;
 };
+
+export type AgentMemoryNamespace = "contacts" | "preferences" | "facts";
+
+export type AgentMemoryResponse = {
+  namespace: AgentMemoryNamespace;
+  content: string;
+};
+
+export type AgentActionResponse = {
+  ok: boolean;
+  message?: string;
+};
+
+export type AgentTaskResponse = AgentActionResponse & {
+  taskId?: string;
+};
