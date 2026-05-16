@@ -461,6 +461,42 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("agent memory events route returns redacted audit entries", async () => {
+    const memory = {
+      read: () => ({ namespace: "facts", content: "" }),
+      append: () => ({ ok: true, message: "Memoria guardada." }),
+      events: () => [
+        {
+          schemaVersion: 1,
+          timestamp: "2026-05-16T14:00:00.000Z",
+          action: "memory.append",
+          namespace: "facts",
+          source: "openclaw",
+          correlationId: "corr_memory_test",
+          byteLength: 27,
+        },
+      ],
+    };
+    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/memory/events"));
+
+    expect(response.status).toBe(200);
+    const payload = await jsonPayload(response);
+    expect(payload).toEqual([
+      {
+        schemaVersion: 1,
+        timestamp: "2026-05-16T14:00:00.000Z",
+        action: "memory.append",
+        namespace: "facts",
+        source: "openclaw",
+        correlationId: "corr_memory_test",
+        byteLength: 27,
+      },
+    ]);
+    expect(JSON.stringify(payload)).not.toContain("Pablo Lopez es mi profesor");
+  });
+
   test("agent task route enqueues background work", async () => {
     const taskQueue = {
       enqueue: () => ({ ok: true, taskId: "task_test", message: "Tarea enviada al worker de fondo." }),

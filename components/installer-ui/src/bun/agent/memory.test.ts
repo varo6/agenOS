@@ -31,4 +31,28 @@ describe("agent memory store", () => {
       action: "memory.append",
     });
   });
+
+  test("records worker task metadata in memory audit events", () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-memory-"));
+    const store = createMemoryStore({ rootDir: root, now: () => new Date("2026-05-16T14:00:00.000Z") });
+
+    const result = store.append("facts", "Pablo Lopez es mi profesor", {
+      source: "openclaw",
+      taskId: "task_test",
+      correlationId: "corr_memory_test",
+      confirmationId: "conf_test",
+    });
+
+    expect(result.ok).toBe(true);
+    const event = JSON.parse(readFileSync(join(root, "events.ndjson"), "utf8").trim());
+    expect(event).toMatchObject({
+      schemaVersion: 1,
+      action: "memory.append",
+      namespace: "facts",
+      source: "openclaw",
+      taskId: "task_test",
+      correlationId: "corr_memory_test",
+      confirmationId: "conf_test",
+    });
+  });
 });

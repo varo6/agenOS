@@ -1,4 +1,5 @@
 import { decidePolicy, type AgentSource, type PolicyDecision } from "./policy";
+import { isMemoryNamespace, type createMemoryStore } from "./memory";
 
 export type ConfirmationRequestInput = {
   source: AgentSource;
@@ -31,6 +32,7 @@ export type ToolRunResult = {
 
 export type ToolRunnerOptions = {
   confirmations?: ConfirmationStoreLike;
+  memoryStore?: ReturnType<typeof createMemoryStore>;
   correlationIdFactory?: () => string;
 };
 
@@ -74,6 +76,27 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
           confirmationId: confirmation?.confirmationId,
           message: policy.reason,
         };
+      }
+
+      if (input.tool === "memory.write" && input.input && typeof input.input === "object") {
+        const record = input.input as { namespace?: unknown; content?: unknown };
+        if (options.memoryStore && isMemoryNamespace(record.namespace)) {
+          const response = options.memoryStore.append(
+            record.namespace,
+            typeof record.content === "string" ? record.content : "",
+            {
+              source: input.source,
+              taskId: input.taskId,
+              correlationId,
+            },
+          );
+          return {
+            ok: response.ok,
+            decision: "allow",
+            ...(includeCorrelationId ? { correlationId } : {}),
+            message: response.message,
+          };
+        }
       }
 
       return {

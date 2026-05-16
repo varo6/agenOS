@@ -213,6 +213,7 @@ export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
+  const memoryStore = dependencies.memoryStore ?? createMemoryStore();
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -224,11 +225,11 @@ export function createInstallerApiHandler(
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
     piHarness: dependencies.piHarness ?? createPiHarness(),
-    memoryStore: dependencies.memoryStore ?? createMemoryStore(),
+    memoryStore,
     taskQueue: dependencies.taskQueue ?? createTaskQueue(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     confirmations,
-    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations }),
+    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
@@ -472,6 +473,14 @@ export function createInstallerApiHandler(
           }
         }
 
+        if (url.pathname === "/api/agent/memory/events") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const limit = Number(url.searchParams.get("limit") ?? "50");
+          return json(deps.memoryStore.events(Number.isFinite(limit) ? limit : 50));
+        }
+
         const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
         if (memoryMatch) {
           const namespace = decodeURIComponent(memoryMatch[1] ?? "");
@@ -560,7 +569,12 @@ export function createInstallerApiHandler(
             const input = record.input as { namespace?: unknown; content?: unknown };
             const namespace = input.namespace;
             if (namespace === "contacts" || namespace === "preferences" || namespace === "facts") {
-              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", record.source);
+              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", {
+                source: record.source,
+                taskId: record.taskId,
+                correlationId: record.correlationId,
+                confirmationId: record.confirmationId,
+              });
             }
           }
 
