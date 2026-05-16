@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { extname, join, resolve } from "node:path";
 
 import type {
   ApiMessageResponse,
@@ -21,6 +22,8 @@ import { createBrowserTool } from "./agent/browser";
 import { createMemoryStore } from "./agent/memory";
 import { decidePolicy } from "./agent/policy";
 import { createTaskQueue } from "./agent/tasks";
+import { createToolRunner } from "./agent/tool-runner";
+import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
@@ -61,6 +64,8 @@ export type InstallerApiDependencies = {
   memoryStore: ReturnType<typeof createMemoryStore>;
   taskQueue: ReturnType<typeof createTaskQueue>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  toolRunner: ReturnType<typeof createToolRunner>;
+  workerAuth: ReturnType<typeof createLocalWorkerAuth>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -219,6 +224,10 @@ export function createInstallerApiHandler(
     memoryStore: dependencies.memoryStore ?? createMemoryStore(),
     taskQueue: dependencies.taskQueue ?? createTaskQueue(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
+    toolRunner: dependencies.toolRunner ?? createToolRunner(),
+    workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
+      tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
+    }),
   };
 
   return {
@@ -508,8 +517,13 @@ export function createInstallerApiHandler(
         }
 
         if (url.pathname === "/api/agent/tasks") {
+          if (request.method === "GET") {
+            const limit = Number(url.searchParams.get("limit") ?? "50");
+            return json(await deps.taskQueue.list(Number.isFinite(limit) ? limit : 50));
+          }
+
           if (request.method !== "POST") {
-            return methodNotAllowed(["POST", "OPTIONS"]);
+            return methodNotAllowed(["GET", "POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
           const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
@@ -521,6 +535,57 @@ export function createInstallerApiHandler(
             source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
           });
           return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        const taskEventsMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)\/events$/);
+        if (taskEventsMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(await deps.taskQueue.events(decodeURIComponent(taskEventsMatch[1] ?? "")));
+        }
+
+        const taskStatusMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)$/);
+        if (taskStatusMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const task = await deps.taskQueue.status(decodeURIComponent(taskStatusMatch[1] ?? ""));
+          if (!task) {
+            return json({ ok: false, message: "Tarea no encontrada." }, { status: 404 });
+          }
+          return json(task);
+        }
+
+        if (url.pathname === "/api/agent/worker/tool-call") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const auth = deps.workerAuth.authorizeWorkerRequest(request);
+          if (auth.ok === false) {
+            return json({ ok: false, message: auth.message }, { status: auth.status });
+          }
+
+          const payload = await readJsonBody(request) as {
+            source?: unknown;
+            taskId?: unknown;
+            correlationId?: unknown;
+            tool?: unknown;
+            input?: unknown;
+          };
+          const result = await deps.toolRunner.run({
+            source: payload.source === "system" ? "system" : "openclaw",
+            taskId: typeof payload.taskId === "string" ? payload.taskId : undefined,
+            correlationId: typeof payload.correlationId === "string" ? payload.correlationId : undefined,
+            tool: typeof payload.tool === "string" ? payload.tool : "",
+            input: payload.input,
+          });
+
+          const status = result.decision === "deny" ? 403 : result.decision === "confirm" ? 409 : 202;
+          return json(result, { status });
         }
 
         if (url.pathname === "/api/agent/browser/open-url") {

@@ -462,6 +462,55 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("agent worker health reports real backend details", async () => {
+    const taskQueue = {
+      health: async () => ({
+        ok: true,
+        mode: "agenos-bun-worker",
+        serviceActive: true,
+        version: "0.1.0",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        queueDepth: 1,
+        lastError: null,
+      }),
+      enqueue: async () => ({ ok: true, taskId: "task_test", message: "queued" }),
+      status: async () => null,
+      events: async () => [],
+      list: async () => [],
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/worker/health"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      mode: "agenos-bun-worker",
+      serviceActive: true,
+    });
+  });
+
+  test("agent task status and events are available by task id", async () => {
+    const taskQueue = {
+      health: async () => ({ ok: true, mode: "local-simulated" }),
+      enqueue: async () => ({ ok: true, taskId: "task_test" }),
+      status: async () => ({ taskId: "task_test", status: "running", progress: 50, message: "work", lastError: null }),
+      events: async () => [{ taskId: "task_test", timestamp: "2026-05-16T12:00:00.000Z", type: "progress", message: "Half done", progress: 50 }],
+      list: async () => [],
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const status = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test"));
+    const events = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test/events"));
+
+    expect(status.status).toBe(200);
+    expect(await jsonPayload(status)).toMatchObject({ taskId: "task_test", status: "running" });
+    expect(events.status).toBe(200);
+    expect(await jsonPayload(events)).toEqual([
+      { taskId: "task_test", timestamp: "2026-05-16T12:00:00.000Z", type: "progress", message: "Half done", progress: 50 },
+    ]);
+  });
+
   test("agent browser route opens normalized urls", async () => {
     const opened: string[] = [];
     const browserTool = {
