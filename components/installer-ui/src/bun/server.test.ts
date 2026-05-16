@@ -442,6 +442,25 @@ describe("createInstallerApiHandler", () => {
     expect(writeResponse.status).toBe(202);
   });
 
+  test("background memory writes create confirmation instead of writing immediately", async () => {
+    const handler = createInstallerApiHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/memory/facts", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Pablo Lopez es mi profesor",
+        source: "openclaw",
+        explicitUserIntent: false,
+      }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: false,
+      decision: "confirm",
+    });
+  });
+
   test("agent task route enqueues background work", async () => {
     const taskQueue = {
       enqueue: () => ({ ok: true, taskId: "task_test", message: "Tarea enviada al worker de fondo." }),

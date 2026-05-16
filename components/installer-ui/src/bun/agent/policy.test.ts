@@ -8,15 +8,39 @@ describe("agent policy", () => {
   });
 
   test("allows explicit UI memory writes but asks OpenClaw to confirm memory writes", () => {
-    expect(decidePolicy({ tool: "memory.write", source: "ui", explicitUserIntent: true }).decision).toBe("allow");
-    expect(decidePolicy({ tool: "memory.write", source: "openclaw", explicitUserIntent: false }).decision).toBe("confirm");
+    expect(decidePolicy({ tool: "memory.write", source: "ui", explicitUserIntent: true })).toMatchObject({
+      decision: "allow",
+      ruleId: "agent.memory.ui.allow",
+    });
+    expect(decidePolicy({ tool: "memory.write", source: "openclaw", explicitUserIntent: false })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.memory.background.confirm",
+    });
   });
 
   test("requires confirmation for outbound sends and denies shell", () => {
-    expect(decidePolicy({ tool: "mail.send", source: "openclaw" }).decision).toBe("confirm");
-    expect(decidePolicy({ tool: "shell.exec", source: "openclaw" })).toEqual({
+    expect(decidePolicy({ tool: "outbound.send", source: "openclaw" })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.outbound.background.confirm",
+    });
+    expect(decidePolicy({ tool: "shell.exec", source: "openclaw" })).toMatchObject({
       decision: "deny",
-      reason: "La ejecucion shell arbitraria no esta permitida en este MVP.",
+      ruleId: "agent.shell.deny",
+    });
+  });
+
+  test("requires confirmation for admin mutations", () => {
+    expect(decidePolicy({ tool: "admin.config.write", source: "ui" })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.admin.config.confirm",
+    });
+    expect(decidePolicy({ tool: "admin.service.restart", source: "ui" })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.admin.restart.confirm",
+    });
+    expect(decidePolicy({ tool: "admin.queue.clear", source: "ui" })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.admin.queue.clear.confirm",
     });
   });
 });

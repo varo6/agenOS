@@ -1,3 +1,5 @@
+import { POLICY_RULES } from "./policy-rules";
+
 export type AgentSource = "ui" | "openclaw" | "system";
 export type PolicyDecision = "allow" | "confirm" | "deny";
 
@@ -5,52 +7,39 @@ export type PolicyRequest = {
   tool: string;
   source: AgentSource;
   explicitUserIntent?: boolean;
+  correlationId?: string;
 };
 
 export type PolicyResult = {
   decision: PolicyDecision;
-  reason?: string;
+  ruleId: string;
+  reason: string;
 };
 
-const ALLOW_TOOLS = new Set([
-  "apps.list",
-  "apps.open",
-  "browser.open_url",
-  "memory.read",
-  "contacts.lookup",
-  "tasks.enqueue",
-]);
-
-const CONFIRM_TOOLS = new Set([
-  "mail.send",
-  "telegram.send",
-  "whatsapp.send",
-]);
-
 export function decidePolicy(request: PolicyRequest): PolicyResult {
-  if (request.tool === "shell.exec") {
+  const matched = POLICY_RULES.find((rule) => rule.matches(request));
+  if (matched) {
     return {
-      decision: "deny",
-      reason: "La ejecucion shell arbitraria no esta permitida en este MVP.",
+      decision: matched.decision,
+      ruleId: matched.ruleId,
+      reason: matched.reason,
     };
-  }
-
-  if (request.tool === "memory.write") {
-    return request.source === "ui" && request.explicitUserIntent
-      ? { decision: "allow" }
-      : { decision: "confirm", reason: "Guardar memoria requiere confirmacion." };
-  }
-
-  if (CONFIRM_TOOLS.has(request.tool)) {
-    return { decision: "confirm", reason: "Enviar mensajes externos requiere confirmacion." };
-  }
-
-  if (ALLOW_TOOLS.has(request.tool)) {
-    return { decision: "allow" };
   }
 
   return {
     decision: "deny",
+    ruleId: "agent.default.deny",
     reason: `Tool no permitida: ${request.tool}`,
+  };
+}
+
+export function createPolicyAuditRecord(request: PolicyRequest, result: PolicyResult) {
+  return {
+    ruleId: result.ruleId,
+    tool: request.tool,
+    source: request.source,
+    decision: result.decision,
+    reason: result.reason,
+    correlationId: request.correlationId ?? null,
   };
 }

@@ -19,6 +19,7 @@ import {
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
 import { createBrowserTool } from "./agent/browser";
+import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { decidePolicy } from "./agent/policy";
 import { createTaskQueue } from "./agent/tasks";
@@ -66,6 +67,7 @@ export type InstallerApiDependencies = {
   browserTool: ReturnType<typeof createBrowserTool>;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
+  confirmations: ReturnType<typeof createConfirmationStore>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -210,6 +212,7 @@ function piErrorResponse(error: unknown): Response {
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
+  const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -224,7 +227,8 @@ export function createInstallerApiHandler(
     memoryStore: dependencies.memoryStore ?? createMemoryStore(),
     taskQueue: dependencies.taskQueue ?? createTaskQueue(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
-    toolRunner: dependencies.toolRunner ?? createToolRunner(),
+    confirmations,
+    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
@@ -492,10 +496,24 @@ export function createInstallerApiHandler(
               explicitUserIntent: payload.explicitUserIntent === true,
             });
             if (policy.decision === "deny") {
-              return json({ ok: false, message: policy.reason }, { status: 403 });
+              return json({ ok: false, decision: "deny", ruleId: policy.ruleId, message: policy.reason }, { status: 403 });
             }
             if (policy.decision === "confirm") {
-              return json({ ok: false, message: policy.reason }, { status: 409 });
+              const result = await deps.toolRunner.run({
+                source,
+                tool: "memory.write",
+                input: {
+                  namespace,
+                  content: typeof payload.content === "string" ? payload.content : "",
+                },
+              });
+              return json({
+                ok: false,
+                decision: "confirm",
+                ruleId: policy.ruleId,
+                confirmationId: result.confirmationId,
+                message: policy.reason,
+              }, { status: 409 });
             }
 
             const response = deps.memoryStore.append(
@@ -514,6 +532,52 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
           return json(await deps.taskQueue.health());
+        }
+
+        if (url.pathname === "/api/agent/confirmations") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.confirmations.list());
+        }
+
+        const confirmationActionMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)\/(confirm|deny)$/);
+        if (confirmationActionMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const confirmationId = decodeURIComponent(confirmationActionMatch[1] ?? "");
+          const action = confirmationActionMatch[2];
+          const record = action === "confirm"
+            ? deps.confirmations.confirm(confirmationId, "ui")
+            : deps.confirmations.deny(confirmationId, "ui");
+          if (!record) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+
+          if (record.status === "confirmed" && record.tool === "memory.write") {
+            const input = record.input as { namespace?: unknown; content?: unknown };
+            const namespace = input.namespace;
+            if (namespace === "contacts" || namespace === "preferences" || namespace === "facts") {
+              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", record.source);
+            }
+          }
+
+          return json({ ok: true, confirmation: record }, { status: 202 });
+        }
+
+        const confirmationMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)$/);
+        if (confirmationMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const record = deps.confirmations.get(decodeURIComponent(confirmationMatch[1] ?? ""));
+          if (!record) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+          return json(record);
         }
 
         if (url.pathname === "/api/agent/tasks") {
