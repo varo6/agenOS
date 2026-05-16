@@ -1,0 +1,44 @@
+# Real Agent Backend Integration
+
+## Worker Mode Decision
+
+The preferred mode is `openclaw-process` when all gates pass:
+
+- Runs as non-root user `agenos`.
+- Starts and stops under `agenos-openclaw.service`.
+- Reads config from `/etc/agenos/openclaw.json` and `~/.agenos/openclaw/config.json`.
+- Stores mutable state under `~/.agenos/openclaw`.
+- Exposes task enqueue/status/progress without requiring shell access.
+- Routes memory writes, outbound sends, browser actions, diagnostics, and service changes through the AgenOS broker.
+- Fails closed to `local-simulated` when the real process is missing or unhealthy.
+
+Use `agenos-bun-worker` for this phase if any gate fails. The fallback is not a separate product direction; it is a minimal worker behind the same `WorkerAdapter` contract.
+
+The local gate checks on 2026-05-16 found no `openclaw` binary on `PATH` and no OpenClaw package, binary, or source tree under `components`. Repository search only found OpenClaw references in Superpowers specs and plans. Because there is no real process artifact to evaluate for non-root execution, bounded task APIs, broker-mediated tools, or service control, the `openclaw-process` gate fails for this phase.
+
+## Selected Mode
+
+`agenos-bun-worker`
+
+## Broker Boundary
+
+The broker on `127.0.0.1:4173` is the authority for policy, memory, outbound-send preparation, admin actions, and diagnostics. The worker receives tasks and reports progress; it does not execute arbitrary shell commands. Worker-only broker calls require a bearer token stored at `~/.agenos/broker/worker-token` with mode `0600`.
+
+## Protocol and State
+
+Every persisted record and broker/worker envelope uses `schemaVersion: 1`, a `correlationId`, and an ISO timestamp. Reads go through migration helpers so future state changes can degrade cleanly instead of breaking boot.
+
+## Degraded Mode
+
+AgenOS remains usable when provider auth, network, or the real worker is unavailable. The local-simulated worker, memory, app/browser tools, admin status, and diagnostics must still work.
+
+## Admin UI Decision
+
+The admin interface is a tab in `components/ui`. A separate Electron app is rejected for this phase because it duplicates packaging and service lifecycle while the foreground UI already has access to the local broker.
+
+## Out of Scope
+
+- Real STT.
+- Real WhatsApp, Telegram, or email sends.
+- Final sandboxing.
+- Rust rewrite.
