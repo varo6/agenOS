@@ -4,7 +4,9 @@ import { homedir } from "node:os";
 import { createObservabilityState } from "./observability";
 import { AGENT_PROTOCOL_SCHEMA_VERSION } from "./protocol";
 import { readWorkerConfig, type WorkerConfig, type WorkerConfiguredMode } from "./config";
+import { createAgenosWorkerDaemonAdapter } from "./agenos-worker-daemon";
 import { createLocalSimulatedWorkerAdapter, type LocalSimulatedWorkerAdapterOptions } from "./local-simulated";
+import { createOpenClawProcessAdapter } from "./openclaw-process";
 import type { WorkerAdapter, WorkerMode } from "./types";
 
 export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOptions> & {
@@ -23,12 +25,32 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
     return createLocalSimulatedWorkerAdapter({ ...options, rootDir });
   }
 
+  if (configuredMode === "openclaw-process") {
+    return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
+  }
+
+  if (configuredMode === "agenos-bun-worker") {
+    return createAgenosWorkerDaemonAdapter({
+      stateDir: rootDir,
+      now: options.now,
+      idFactory: options.idFactory,
+      correlationIdFactory: options.correlationIdFactory,
+      config,
+    });
+  }
+
   if (configuredMode === "auto") {
     if (openClawAvailable(options.openClawBinaryPath)) {
-      return createUnavailableAdapter("openclaw-process", rootDir, null);
+      return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
     }
     if (bundledWorkerAvailable(options.bundledWorkerPath)) {
-      return createUnavailableAdapter("agenos-bun-worker", rootDir, null);
+      return createAgenosWorkerDaemonAdapter({
+        stateDir: rootDir,
+        now: options.now,
+        idFactory: options.idFactory,
+        correlationIdFactory: options.correlationIdFactory,
+        config,
+      });
     }
     return createLocalSimulatedWorkerAdapter({ ...options, rootDir });
   }

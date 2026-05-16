@@ -18,7 +18,7 @@ The local gate checks on 2026-05-16 found no `openclaw` binary on `PATH` and no 
 
 ## Selected Mode
 
-`agenos-bun-worker`
+`agenos-bun-worker` is selected for this phase because no packageable OpenClaw binary with a bounded broker-mediated tool API is present in the repo.
 
 ## Broker Boundary
 
