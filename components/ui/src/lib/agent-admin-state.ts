@@ -1,5 +1,7 @@
 import type { AgentAdminConfig, AgentAdminStatus } from "./system-types";
 
+export type BackendReadiness = Pick<AgentAdminStatus, "readiness" | "setupItems">;
+
 export type AgentAdminState = {
   loading: boolean;
   status: AgentAdminStatus | null;
@@ -82,4 +84,55 @@ export function agentAdminReducer(state: AgentAdminState, action: AgentAdminActi
         loading: action.loading,
       };
   }
+}
+
+export function deriveBackendReadiness(status: Pick<AgentAdminStatus, "worker" | "config">): BackendReadiness {
+  if (status.worker.mode === "local-simulated" || status.config.mode === "local-simulated") {
+    return {
+      readiness: "degraded",
+      setupItems: [{
+        id: "local-simulated",
+        label: "Modo simulado activo",
+        severity: "info",
+        action: "switch_mode",
+      }],
+    };
+  }
+
+  const setupItems: AgentAdminStatus["setupItems"] = [];
+  if (status.config.apiAuth.type === "env" && !status.config.apiAuth.configured) {
+    setupItems.push({
+      id: "provider-auth",
+      label: "Configura API auth",
+      severity: "warning",
+      action: "configure_provider",
+    });
+  }
+
+  if (!status.worker.serviceActive) {
+    setupItems.push({
+      id: "worker-service",
+      label: "Servicio de worker inactivo",
+      severity: "error",
+      action: "view_logs",
+    });
+  }
+
+  if (setupItems.length > 0) {
+    return { readiness: "needs_setup", setupItems };
+  }
+
+  if (status.worker.degradedReason) {
+    return {
+      readiness: "degraded",
+      setupItems: [{
+        id: "degraded-reason",
+        label: status.worker.degradedReason,
+        severity: "warning",
+        action: "view_logs",
+      }],
+    };
+  }
+
+  return { readiness: "ready", setupItems: [] };
 }

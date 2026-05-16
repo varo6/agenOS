@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentAdminReducer, createAgentAdminInitialState } from "./agent-admin-state";
+import { agentAdminReducer, createAgentAdminInitialState, deriveBackendReadiness } from "./agent-admin-state";
 
 const status = {
   ok: true,
@@ -76,5 +76,61 @@ describe("agent admin state", () => {
     });
 
     expect(state.diagnostics).toBe(diagnostics);
+  });
+});
+
+describe("agent backend readiness", () => {
+  test("requires setup when provider auth is missing in real mode", () => {
+    expect(deriveBackendReadiness({
+      worker: {
+        mode: "agenos-bun-worker",
+        serviceActive: true,
+        version: "0.1.0",
+        queueDepth: 0,
+        degradedReason: "provider auth missing",
+        lastHeartbeatAt: "2026-05-16T12:00:00.000Z",
+        lastError: null,
+        lastErrorCorrelationId: null,
+      },
+      config: {
+        mode: "auto",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        apiAuth: { type: "env", envVar: "OPENCLAW_API_KEY", configured: false },
+        channels: { email: false, telegram: false, whatsapp: false },
+        policyDefaults: { memoryWrite: "confirm", outboundSend: "confirm" },
+      },
+    })).toMatchObject({
+      readiness: "needs_setup",
+      setupItems: [{ id: "provider-auth" }],
+    });
+  });
+
+  test("treats local-simulated as usable degraded mode", () => {
+    expect(deriveBackendReadiness({
+      worker: {
+        mode: "local-simulated",
+        serviceActive: false,
+        version: "local-simulated",
+        queueDepth: 0,
+        degradedReason: null,
+        lastHeartbeatAt: null,
+        lastError: null,
+        lastErrorCorrelationId: null,
+      },
+      config: {
+        mode: "local-simulated",
+        provider: "none",
+        model: "none",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        apiAuth: { type: "none" },
+        channels: { email: false, telegram: false, whatsapp: false },
+        policyDefaults: { memoryWrite: "confirm", outboundSend: "confirm" },
+      },
+    })).toMatchObject({
+      readiness: "degraded",
+      setupItems: [{ id: "local-simulated" }],
+    });
   });
 });
