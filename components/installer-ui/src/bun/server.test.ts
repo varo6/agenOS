@@ -584,4 +584,66 @@ describe("createInstallerApiHandler", () => {
     expect(response.status).toBe(202);
     expect(opened).toEqual(["netflix.com"]);
   });
+
+  test("agent admin endpoints expose status config and policy", async () => {
+    const agentAdmin = {
+      status: async () => ({
+        ok: true,
+        readiness: "ready",
+        setupItems: [],
+        worker: {
+          mode: "agenos-bun-worker",
+          serviceActive: true,
+          version: "0.1.0",
+          queueDepth: 0,
+          lastError: null,
+        },
+        config: {
+          mode: "auto",
+          provider: "none",
+          model: "none",
+          stateDir: "/home/agenos/.agenos/openclaw",
+          apiAuth: { type: "env", envVar: "AGENOS_OPENCLAW_API_KEY", configured: false },
+        },
+      }),
+      readConfig: async () => ({
+        mode: "auto",
+        provider: "none",
+        model: "none",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        apiAuth: { type: "env", envVar: "AGENOS_OPENCLAW_API_KEY", configured: false },
+      }),
+      readPolicy: () => ({ rules: [{ ruleId: "agent.shell.deny", decision: "deny" }] }),
+      writeConfig: async () => ({ ok: false, decision: "confirm", confirmationId: "conf_config" }),
+      restart: async () => ({ ok: false, decision: "confirm", confirmationId: "conf_restart" }),
+      testConnection: async () => ({ ok: false, status: 503, readiness: "needs_setup", message: "Provider/auth is not configured." }),
+    };
+    const handler = createInstallerApiHandler({ agentAdmin: agentAdmin as never });
+
+    const status = await handler.fetch(new Request("http://localhost/api/agent/admin/status"));
+    const config = await handler.fetch(new Request("http://localhost/api/agent/admin/config"));
+    const policy = await handler.fetch(new Request("http://localhost/api/agent/admin/policy"));
+    const writeConfig = await handler.fetch(new Request("http://localhost/api/agent/admin/config", {
+      method: "POST",
+      body: JSON.stringify({ mode: "local-simulated", explicitUserIntent: true }),
+    }));
+    const restart = await handler.fetch(new Request("http://localhost/api/agent/admin/restart", {
+      method: "POST",
+      body: JSON.stringify({ explicitUserIntent: true }),
+    }));
+    const testConnection = await handler.fetch(new Request("http://localhost/api/agent/admin/test-connection", {
+      method: "POST",
+      body: JSON.stringify({ explicitUserIntent: true }),
+    }));
+
+    expect(status.status).toBe(200);
+    expect(await jsonPayload(status)).toMatchObject({ worker: { serviceActive: true, mode: "agenos-bun-worker" } });
+    expect(config.status).toBe(200);
+    expect(await jsonPayload(config)).toMatchObject({ apiAuth: { configured: false } });
+    expect(policy.status).toBe(200);
+    expect(await jsonPayload(policy)).toMatchObject({ rules: [{ ruleId: "agent.shell.deny" }] });
+    expect(writeConfig.status).toBe(409);
+    expect(restart.status).toBe(409);
+    expect(testConnection.status).toBe(503);
+  });
 });

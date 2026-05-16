@@ -19,6 +19,7 @@ import {
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
 import { createBrowserTool } from "./agent/browser";
+import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { decidePolicy } from "./agent/policy";
@@ -68,6 +69,7 @@ export type InstallerApiDependencies = {
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
+  agentAdmin: ReturnType<typeof createAgentAdminService>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -214,6 +216,13 @@ export function createInstallerApiHandler(
 ): { fetch: (request: Request) => Promise<Response> } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
+  const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
+    worker: taskQueue,
+    taskQueue,
+    memoryStore,
+    confirmations,
+  });
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -226,9 +235,10 @@ export function createInstallerApiHandler(
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
     piHarness: dependencies.piHarness ?? createPiHarness(),
     memoryStore,
-    taskQueue: dependencies.taskQueue ?? createTaskQueue(),
+    taskQueue,
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     confirmations,
+    agentAdmin,
     toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
@@ -479,6 +489,68 @@ export function createInstallerApiHandler(
           }
           const limit = Number(url.searchParams.get("limit") ?? "50");
           return json(deps.memoryStore.events(Number.isFinite(limit) ? limit : 50));
+        }
+
+        if (url.pathname === "/api/agent/admin/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.agentAdmin.status());
+        }
+
+        if (url.pathname === "/api/agent/admin/config") {
+          if (request.method === "GET") {
+            return json(await deps.agentAdmin.readConfig());
+          }
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as Record<string, unknown>;
+            const response = await deps.agentAdmin.writeConfig(payload, "ui");
+            return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+          }
+          return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+        }
+
+        if (url.pathname === "/api/agent/admin/policy") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.agentAdmin.readPolicy());
+        }
+
+        if (url.pathname === "/api/agent/admin/restart") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.agentAdmin.restart("ui");
+          return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+        }
+
+        if (url.pathname === "/api/agent/admin/test-connection") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.agentAdmin.testConnection("ui");
+          return json(response, { status: response.status });
+        }
+
+        if (url.pathname === "/api/agent/admin/export-diagnostics") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.agentAdmin.exportDiagnostics("ui"));
+        }
+
+        const adminTaskActionMatch = url.pathname.match(/^\/api\/agent\/admin\/tasks\/([^/]+)\/(retry|clear)$/);
+        if (adminTaskActionMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const taskId = decodeURIComponent(adminTaskActionMatch[1] ?? "");
+          const action = adminTaskActionMatch[2];
+          const response = action === "retry"
+            ? await deps.agentAdmin.retryTask(taskId, "ui")
+            : await deps.agentAdmin.clearTask(taskId, "ui");
+          return json(response, { status: "decision" in response && response.decision === "confirm" ? 409 : 202 });
         }
 
         const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
