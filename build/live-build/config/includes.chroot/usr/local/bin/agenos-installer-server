@@ -1,4 +1,8 @@
 #!/bin/sh
 set -eu
 
-exec /opt/agenos/installer/agenos-installer server "$@"
+if [ "$#" -eq 0 ]; then
+  exec /opt/agenos/installer/agenos-installer server
+fi
+
+exec /opt/agenos/installer/agenos-installer "$@"

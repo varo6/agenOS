@@ -2,6 +2,7 @@ import type { LaunchResponse } from "../shared/installer-types";
 import { runInstallerApiServer } from "./server";
 import { runHelperCommand } from "./installer/commands";
 import { launchClassic, launchGuided, loadLaunchProfile } from "./installer/launch";
+import { createWorkerAdapter } from "./agent/worker";
 
 function profileArg(args: string[]): string {
   const index = args.indexOf("--profile");
@@ -80,7 +81,47 @@ export async function runCli(args: string[]): Promise<{ handled: boolean; exitCo
     };
   }
 
+  if (command === "api") {
+    await runInstallerApiServer();
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
+  if (command === "worker") {
+    await runAgentWorkerLoop();
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
   throw new Error(`Comando no soportado: ${command}`);
+}
+
+async function runAgentWorkerLoop(): Promise<void> {
+  const adapter = createWorkerAdapter();
+  const health = await adapter.health();
+  console.log(`[agenos-openclaw-worker] mode=${health.mode} active=${health.serviceActive} stateDir=${health.stateDir}`);
+
+  const interval = setInterval(async () => {
+    try {
+      await adapter.health();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+  }, 30_000);
+
+  await new Promise<void>((resolve) => {
+    const stop = () => {
+      clearInterval(interval);
+      resolve();
+    };
+
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
 }
 
 async function main(): Promise<void> {

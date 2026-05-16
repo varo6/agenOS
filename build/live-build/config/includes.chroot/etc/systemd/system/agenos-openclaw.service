@@ -1,5 +1,5 @@
 [Unit]
-Description=AgenOS Background Worker (simulated)
+Description=AgenOS Background Agent Worker
 After=agenos-agent-api.service
 Wants=agenos-agent-api.service
 
@@ -8,10 +8,18 @@ Type=simple
 User=agenos
 Group=agenos
 Environment=HOME=/home/agenos
+Environment=AGENOS_OPENCLAW_SYSTEM_CONFIG=/etc/agenos/openclaw.json
+Environment=AGENOS_OPENCLAW_USER_CONFIG=/home/agenos/.agenos/openclaw/config.json
+Environment=AGENOS_OPENCLAW_STATE_DIR=/home/agenos/.agenos/openclaw
+Environment=AGENOS_WORKER_TOKEN_PATH=/home/agenos/.agenos/broker/worker-token
 WorkingDirectory=/home/agenos
-ExecStart=/bin/sh -lc 'mkdir -p "$HOME/.agenos/openclaw" && touch "$HOME/.agenos/openclaw/outbox.ndjson" && tail -n +1 -F "$HOME/.agenos/openclaw/outbox.ndjson"'
+ExecStart=/usr/local/bin/agenos-openclaw-worker
 Restart=on-failure
 RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/agenos/.agenos/openclaw /home/agenos/.agenos/memory /home/agenos/.agenos/broker
 
 [Install]
 WantedBy=graphical.target
