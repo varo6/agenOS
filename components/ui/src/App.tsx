@@ -13,7 +13,9 @@ import {
   ShieldX,
 } from "lucide-react";
 
+import { AgentAdminPanel } from "./components/AgentAdminPanel";
 import { VideoBackground } from "./components/VideoBackground";
+import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
 import { classifyAgentCommand } from "./lib/agent-command";
 import { createPiClient, PiClientError } from "./lib/pi-client";
@@ -30,6 +32,7 @@ type ChatState = "idle" | "processing" | "error";
 
 const piClient = createPiClient();
 const agentClient = createAgentClient();
+const agentAdminClient = createAgentAdminClient();
 
 function describeClientError(error: unknown): string {
   if (error instanceof PiClientError || error instanceof Error) {
@@ -68,6 +71,7 @@ export default function App() {
   const [lastInput, setLastInput] = useState("");
   const [lastReply, setLastReply] = useState("");
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
 
   const applyStatus = useEffectEvent((status: PiStatusResponse) => {
@@ -414,7 +418,32 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-5xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+          <div className="mb-8 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">
+            <button
+              className={[
+                "rounded-md px-4 py-2 text-sm transition-colors",
+                activeTab === "chat" ? "bg-white text-black" : "text-white/65 hover:text-white",
+              ].join(" ")}
+              onClick={() => setActiveTab("chat")}
+              type="button"
+            >
+              Chat
+            </button>
+            <button
+              className={[
+                "rounded-md px-4 py-2 text-sm transition-colors",
+                activeTab === "backend" ? "bg-white text-black" : "text-white/65 hover:text-white",
+              ].join(" ")}
+              onClick={() => setActiveTab("backend")}
+              type="button"
+            >
+              Backend
+            </button>
+          </div>
+          {activeTab === "backend" ? (
+            <AgentAdminPanel client={agentAdminClient} />
+          ) : (
           <div className="flex w-full flex-col items-center gap-12 text-center">
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-white/60 backdrop-blur-md">
@@ -707,6 +736,7 @@ export default function App() {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
     </div>
