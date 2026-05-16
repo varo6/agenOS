@@ -504,7 +504,7 @@ export function createInstallerApiHandler(
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
-          return json(deps.taskQueue.health());
+          return json(await deps.taskQueue.health());
         }
 
         if (url.pathname === "/api/agent/tasks") {
@@ -516,7 +516,7 @@ export function createInstallerApiHandler(
           if (policy.decision !== "allow") {
             return json({ ok: false, message: policy.reason }, { status: 403 });
           }
-          const response = deps.taskQueue.enqueue({
+          const response = await deps.taskQueue.enqueue({
             message: typeof payload.message === "string" ? payload.message : "",
             source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
           });

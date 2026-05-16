@@ -1,15 +1,19 @@
-import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createWorkerAdapter } from "./worker";
+import type { WorkerAdapter, WorkerTaskSource } from "./worker";
 
 export type TaskQueueOptions = {
   rootDir?: string;
   now?: () => Date;
+  idFactory?: () => string;
+  correlationIdFactory?: () => string;
+  adapter?: WorkerAdapter;
 };
 
 export type EnqueueTaskInput = {
   message: string;
-  source: "ui" | "openclaw" | "system";
+  source: WorkerTaskSource;
 };
 
 function defaultRootDir(): string {
@@ -18,33 +22,17 @@ function defaultRootDir(): string {
 
 export function createTaskQueue(options: TaskQueueOptions = {}) {
   const rootDir = options.rootDir ?? defaultRootDir();
-  const now = options.now ?? (() => new Date());
-  mkdirSync(rootDir, { recursive: true });
+  const adapter = options.adapter ?? createWorkerAdapter({ ...options, rootDir, configMode: "local-simulated" });
 
   return {
-    health() {
-      return { ok: true, mode: "local-simulated" as const };
+    async health() {
+      return adapter.health();
     },
-    enqueue(input: EnqueueTaskInput) {
-      const message = input.message.trim();
-      if (!message) {
-        return { ok: false, message: "La tarea no puede estar vacia." };
-      }
-
-      const taskId = `task_${now().getTime().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      appendFileSync(
-        join(rootDir, "outbox.ndjson"),
-        `${JSON.stringify({
-          taskId,
-          timestamp: now().toISOString(),
-          source: input.source,
-          message,
-          status: "queued",
-        })}\n`,
-        { encoding: "utf8" },
-      );
-
-      return { ok: true, taskId, message: "Tarea enviada al worker de fondo." };
+    async enqueue(input: EnqueueTaskInput) {
+      return adapter.enqueue(input);
     },
+    status: adapter.status,
+    events: adapter.events,
+    list: adapter.list,
   };
 }

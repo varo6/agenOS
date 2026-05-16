@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { createTaskQueue } from "./tasks";
 
 describe("agent task queue", () => {
-  test("enqueues a simulated OpenClaw task", () => {
+  test("enqueues a simulated OpenClaw task", async () => {
     const root = mkdtempSync(join(tmpdir(), "agenos-tasks-"));
     const queue = createTaskQueue({ rootDir: root, now: () => new Date("2026-05-15T12:00:00.000Z") });
 
-    const result = queue.enqueue({ message: "prepara un email a Pablo", source: "ui" });
+    const result = await queue.enqueue({ message: "prepara un email a Pablo", source: "ui" });
 
     expect(result.ok).toBe(true);
     expect(result.taskId).toMatch(/^task_/);
