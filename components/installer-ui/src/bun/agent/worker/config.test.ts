@@ -57,4 +57,42 @@ describe("worker config", () => {
       configured: true,
     });
   });
+
+  test("uses packaged service config paths from the environment", () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-openclaw-env-config-"));
+    const systemConfigPath = join(root, "openclaw.json");
+    const userConfigPath = join(root, "worker.json");
+
+    writeFileSync(
+      systemConfigPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        mode: "agenos-bun-worker",
+        provider: "openai",
+        model: "gpt-5.4-mini",
+        apiAuth: { type: "env", envVar: "OPENAI_API_KEY" },
+      }),
+    );
+    writeFileSync(
+      userConfigPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        mode: "local-simulated",
+      }),
+    );
+
+    expect(readWorkerConfig({
+      env: {
+        AGENOS_OPENCLAW_SYSTEM_CONFIG: systemConfigPath,
+        AGENOS_OPENCLAW_USER_CONFIG: userConfigPath,
+        AGENOS_OPENCLAW_STATE_DIR: "/home/agenos/.agenos/openclaw",
+      },
+    })).toMatchObject({
+      mode: "local-simulated",
+      provider: "openai",
+      model: "gpt-5.4-mini",
+      stateDir: "/home/agenos/.agenos/openclaw",
+      apiAuth: { type: "env", envVar: "OPENAI_API_KEY" },
+    });
+  });
 });

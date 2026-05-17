@@ -25,8 +25,31 @@ export const PI_PROVIDER_ID = "openai-codex" as const;
 export const PI_PROVIDER_NAME = "ChatGPT Plus/Pro (Codex Subscription)";
 export const PI_AUTH_TTL_MS = 10 * 60 * 1000;
 
-const PI_AGENT_DIR = join(homedir(), ".agenos", "ui-dev", "pi");
-const PI_AUTH_PATH = join(PI_AGENT_DIR, "auth.json");
+export type PiHarnessPathEnv = {
+  readonly [key: string]: string | undefined;
+  AGENOS_PI_AGENT_DIR?: string;
+};
+
+export type PiHarnessPaths = {
+  agentDir: string;
+  authPath: string;
+};
+
+export function resolvePiHarnessPaths(
+  env: PiHarnessPathEnv = process.env,
+  home = homedir(),
+): PiHarnessPaths {
+  const agentDir = env.AGENOS_PI_AGENT_DIR?.trim() || join(home, ".agenos", "ui-dev", "pi");
+
+  return {
+    agentDir,
+    authPath: join(agentDir, "auth.json"),
+  };
+}
+
+const PI_PATHS = resolvePiHarnessPaths();
+const PI_AGENT_DIR = PI_PATHS.agentDir;
+const PI_AUTH_PATH = PI_PATHS.authPath;
 const PI_SYSTEM_PROMPT = [
   "Responde siempre en espanol.",
   "Se breve y util.",
@@ -448,7 +471,6 @@ export class PiHarness {
       const message = normalizeErrorMessage(error);
       attempt.status = "error";
       attempt.error = message;
-      this.lastError = message;
       attempt.authInfo.reject(error);
       this.pendingAttemptId = this.pendingAttemptId === attempt.attemptId ? undefined : this.pendingAttemptId;
     } finally {

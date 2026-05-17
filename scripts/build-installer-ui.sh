@@ -10,6 +10,7 @@ VIEW_DIST_DIR="${UI_DIR}/dist"
 SYSTEM_DIST_DIR="${SYSTEM_UI_DIR}/dist"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
+PI_AGENT_PACKAGE_DIR="${UI_DIR}/node_modules/@mariozechner/pi-coding-agent"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 
@@ -35,7 +36,7 @@ cd "${UI_DIR}"
 CURRENT_HASH="$(
   {
     source_hash "${UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json
-    source_hash "${SYSTEM_UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
+    source_hash "${SYSTEM_UI_DIR}" src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
     sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -45,7 +46,7 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" ]]; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" && -f "${OUTPUT_DIR}/pi-coding-agent/package.json" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi
@@ -79,7 +80,12 @@ if [[ ! -x "${PACKAGED_BUN}" ]]; then
   exit 1
 fi
 
-mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/system-dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist"
+if [[ ! -f "${PI_AGENT_PACKAGE_DIR}/package.json" ]]; then
+  echo "No se encontró el runtime de pi-coding-agent en ${PI_AGENT_PACKAGE_DIR}" >&2
+  exit 1
+fi
+
+mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/system-dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist" "${OUTPUT_DIR}/pi-coding-agent"
 
 install -m 0755 "${PACKAGED_BUN}" "${OUTPUT_DIR}/bin/bun"
 install -m 0755 "${API_BUILD_DIR}/server.js" "${OUTPUT_DIR}/api/server.js"
@@ -88,6 +94,15 @@ rsync -a --delete "${VIEW_DIST_DIR}/" "${OUTPUT_DIR}/dist/"
 rsync -a --delete "${SYSTEM_DIST_DIR}/" "${OUTPUT_DIR}/system-dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${OUTPUT_DIR}/electron-app/"
 rsync -a --delete "${ELECTRON_DIST_DIR}/" "${OUTPUT_DIR}/electron-dist/"
+rsync -a --delete "${PI_AGENT_PACKAGE_DIR}/" "${OUTPUT_DIR}/pi-coding-agent/"
+
+BUILD_GENERATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+BUILD_GIT_COMMIT="$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')"
+printf '{\n  "schemaVersion": 1,\n  "generatedAt": "%s",\n  "sourceHash": "%s",\n  "gitCommit": "%s"\n}\n' \
+  "${BUILD_GENERATED_AT}" \
+  "${CURRENT_HASH}" \
+  "${BUILD_GIT_COMMIT}" \
+  > "${OUTPUT_DIR}/build-info.json"
 
 if [[ -f "${OUTPUT_DIR}/electron-dist/chrome-sandbox" ]]; then
   chmod 0755 "${OUTPUT_DIR}/electron-dist/chrome-sandbox"
@@ -147,13 +162,20 @@ printf '%s\n' \
   'CLI_ENTRY="${SCRIPT_DIR}/api/cli.js"' \
   'SERVER_ENTRY="${SCRIPT_DIR}/api/server.js"' \
   'UI_BINARY="${SCRIPT_DIR}/agenos-installer-ui"' \
-  'RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"' \
+  'API_URL="http://127.0.0.1:4173/health"' \
+  '' \
+  'if [ -n "${XDG_RUNTIME_DIR:-}" ]; then' \
+  '  RUNTIME_DIR="${XDG_RUNTIME_DIR}/agenos-installer"' \
+  'else' \
+  '  RUNTIME_DIR="${HOME:-/tmp}/.cache/agenos-installer/runtime"' \
+  'fi' \
   'API_PID_FILE="${RUNTIME_DIR}/api.pid"' \
   'API_LOG="${RUNTIME_DIR}/api.log"' \
   'LOCK_FILE="${RUNTIME_DIR}/gui.lock"' \
-  'API_URL="http://127.0.0.1:4173/health"' \
   '' \
   'mkdir -p "${RUNTIME_DIR}"' \
+  'export PI_PACKAGE_DIR="${PI_PACKAGE_DIR:-${SCRIPT_DIR}/pi-coding-agent}"' \
+  'export AGENOS_PI_AGENT_DIR="${AGENOS_PI_AGENT_DIR:-${HOME:-/tmp}/.agenos/ui-dev/pi}"' \
   '' \
   'ensure_api() {' \
   '  if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \

@@ -361,6 +361,29 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("keeps health available when the default pi harness cannot initialize", async () => {
+    const handler = createInstallerApiHandler({
+      createPiHarness: () => {
+        throw new Error("EACCES: permission denied, mkdir '/home/agenos/.agenos/ui-dev'");
+      },
+    } as never);
+
+    const health = await handler.fetch(new Request("http://localhost/health"));
+    const piStatus = await handler.fetch(new Request("http://localhost/api/pi/status"));
+    const startAuth = await handler.fetch(new Request("http://localhost/api/pi/auth/start", {
+      method: "POST",
+    }));
+
+    expect(health.status).toBe(200);
+    expect(piStatus.status).toBe(200);
+    expect(await jsonPayload(piStatus)).toMatchObject({
+      authState: "error",
+      busy: false,
+      error: "EACCES: permission denied, mkdir '/home/agenos/.agenos/ui-dev'",
+    });
+    expect(startAuth.status).toBe(503);
+  });
+
   test("returns 400 when switching shell mode receives an invalid payload", async () => {
     const handler = createHandler();
 
@@ -645,5 +668,26 @@ describe("createInstallerApiHandler", () => {
     expect(writeConfig.status).toBe(409);
     expect(restart.status).toBe(409);
     expect(testConnection.status).toBe(503);
+  });
+
+  test("serves a production support bundle for diagnostics", async () => {
+    const handler = createInstallerApiHandler({
+      supportBundle: async () => ({
+        schemaVersion: 1,
+        generatedAt: "2026-05-16T12:00:00.000Z",
+        runtime: { paths: { apiLog: "/home/agenos/.cache/agenos-installer/runtime/api.log" } },
+        commands: [
+          { command: "journalctl", args: ["-u", "agenos-agent-api.service"], ok: true, stdout: "[redacted]" },
+        ],
+      }),
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/diagnostics/support-bundle"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      schemaVersion: 1,
+      commands: [{ command: "journalctl", stdout: "[redacted]" }],
+    });
   });
 });

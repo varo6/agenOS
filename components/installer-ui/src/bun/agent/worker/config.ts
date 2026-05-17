@@ -43,13 +43,17 @@ const DEFAULT_WORKER_CONFIG: WorkerConfig = {
 const configEnv = new WeakMap<WorkerConfig, Record<string, string | undefined>>();
 
 export function readWorkerConfig(options: ReadWorkerConfigOptions = {}): WorkerConfig {
-  const systemConfigPath = options.systemConfigPath ?? "/etc/agenos/openclaw-worker.json";
-  const userConfigPath = options.userConfigPath ?? join(homedir(), ".agenos", "openclaw", "worker.json");
+  const env = options.env ?? process.env;
+  const systemConfigPath = options.systemConfigPath ?? env.AGENOS_OPENCLAW_SYSTEM_CONFIG ?? "/etc/agenos/openclaw.json";
+  const userConfigPath = options.userConfigPath ?? env.AGENOS_OPENCLAW_USER_CONFIG ?? join(homedir(), ".agenos", "openclaw", "config.json");
   const systemConfig = readConfigFile(systemConfigPath);
   const userConfig = readConfigFile(userConfigPath);
 
   const config = mergeWorkerConfig(mergeWorkerConfig(DEFAULT_WORKER_CONFIG, systemConfig), userConfig);
-  configEnv.set(config, options.env ?? process.env);
+  if (env.AGENOS_OPENCLAW_STATE_DIR?.trim()) {
+    config.stateDir = env.AGENOS_OPENCLAW_STATE_DIR.trim();
+  }
+  configEnv.set(config, env);
   return config;
 }
 

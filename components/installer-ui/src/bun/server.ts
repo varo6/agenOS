@@ -26,6 +26,7 @@ import { decidePolicy } from "./agent/policy";
 import { createTaskQueue } from "./agent/tasks";
 import { createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
+import { createSupportBundle } from "./diagnostics/support-bundle";
 import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
@@ -34,7 +35,7 @@ import { readPreflightPayload } from "./installer/preflight";
 import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
-import { createPiHarness, PiHarnessError } from "./pi-harness";
+import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "./pi-harness";
 import type {
   PiAuthAttemptResponse,
   PiChatRequest,
@@ -63,6 +64,7 @@ export type InstallerApiDependencies = {
   switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
   runMaintenance: (action: MaintenanceAction) => Promise<ApiMessageResponse>;
   piHarness: PiHarnessApi;
+  createPiHarness?: () => PiHarnessApi;
   memoryStore: ReturnType<typeof createMemoryStore>;
   taskQueue: ReturnType<typeof createTaskQueue>;
   browserTool: ReturnType<typeof createBrowserTool>;
@@ -70,6 +72,7 @@ export type InstallerApiDependencies = {
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
+  supportBundle: () => Promise<unknown>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -211,6 +214,60 @@ function piErrorResponse(error: unknown): Response {
   );
 }
 
+function piHarnessUnavailable(error: unknown): PiHarnessError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new PiHarnessError(503, message);
+}
+
+function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
+  let harness: PiHarnessApi | undefined;
+
+  const getHarness = () => {
+    if (harness) {
+      return harness;
+    }
+
+    try {
+      harness = factory();
+      return harness;
+    } catch (error) {
+      throw piHarnessUnavailable(error);
+    }
+  };
+
+  return {
+    getStatus() {
+      try {
+        return getHarness().getStatus();
+      } catch (error) {
+        const unavailable = piHarnessUnavailable(error);
+        return {
+          authState: "error",
+          providerName: PI_PROVIDER_NAME,
+          modelId: "unavailable",
+          busy: false,
+          error: unavailable.message,
+        };
+      }
+    },
+    startAuth() {
+      return getHarness().startAuth();
+    },
+    getAuthAttempt(attemptId: string) {
+      return getHarness().getAuthAttempt(attemptId);
+    },
+    submitManualCode(attemptId: string, input: string) {
+      return getHarness().submitManualCode(attemptId, input);
+    },
+    logout() {
+      return getHarness().logout();
+    },
+    chat(request: PiChatRequest) {
+      return getHarness().chat(request);
+    },
+  };
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
@@ -223,6 +280,7 @@ export function createInstallerApiHandler(
     memoryStore,
     confirmations,
   });
+  const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -233,12 +291,13 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createPiHarness(),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(dependencies.createPiHarness ?? createPiHarness),
     memoryStore,
     taskQueue,
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     confirmations,
     agentAdmin,
+    supportBundle,
     toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
@@ -260,6 +319,14 @@ export function createInstallerApiHandler(
           }
 
           return json({ ok: true });
+        }
+
+        if (url.pathname === "/api/diagnostics/support-bundle") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(await deps.supportBundle());
         }
 
         if (url.pathname === INSTALLER_ROUTES.preflight) {
