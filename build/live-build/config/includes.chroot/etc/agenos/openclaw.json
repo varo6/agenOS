@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "mode": "auto",
+  "provider": "none",
+  "model": "none",
+  "apiAuth": { "type": "env", "envVar": "AGENOS_OPENCLAW_API_KEY" },
+  "stateDir": "/home/agenos/.agenos/openclaw",
+  "channels": { "email": false, "telegram": false, "whatsapp": false },
+  "policyDefaults": { "memoryWrite": "confirm", "outboundSend": "confirm" }
+}

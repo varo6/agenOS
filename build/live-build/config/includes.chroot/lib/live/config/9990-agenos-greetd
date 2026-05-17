@@ -26,7 +26,18 @@ cat >/etc/agenos/shell.json <<'EOF'
 }
 EOF
 
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/ui-dev
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/ui-dev/pi
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/openclaw
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/memory
+install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/broker
+chown -R agenos:agenos /home/agenos/.agenos
+chmod 0700 /home/agenos/.agenos
+
 ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/display-manager.service
 ln -sf /lib/systemd/system/greetd.service /etc/systemd/system/graphical.target.wants/greetd.service
 ln -sf /lib/systemd/system/seatd.service /etc/systemd/system/multi-user.target.wants/seatd.service
+ln -sf /etc/systemd/system/agenos-agent-api.service /etc/systemd/system/graphical.target.wants/agenos-agent-api.service
+ln -sf /etc/systemd/system/agenos-openclaw.service /etc/systemd/system/graphical.target.wants/agenos-openclaw.service
 rm -f /etc/systemd/system/graphical.target.wants/lightdm.service

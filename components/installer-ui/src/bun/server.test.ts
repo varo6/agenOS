@@ -361,6 +361,29 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("keeps health available when the default pi harness cannot initialize", async () => {
+    const handler = createInstallerApiHandler({
+      createPiHarness: () => {
+        throw new Error("EACCES: permission denied, mkdir '/home/agenos/.agenos/ui-dev'");
+      },
+    } as never);
+
+    const health = await handler.fetch(new Request("http://localhost/health"));
+    const piStatus = await handler.fetch(new Request("http://localhost/api/pi/status"));
+    const startAuth = await handler.fetch(new Request("http://localhost/api/pi/auth/start", {
+      method: "POST",
+    }));
+
+    expect(health.status).toBe(200);
+    expect(piStatus.status).toBe(200);
+    expect(await jsonPayload(piStatus)).toMatchObject({
+      authState: "error",
+      busy: false,
+      error: "EACCES: permission denied, mkdir '/home/agenos/.agenos/ui-dev'",
+    });
+    expect(startAuth.status).toBe(503);
+  });
+
   test("returns 400 when switching shell mode receives an invalid payload", async () => {
     const handler = createHandler();
 
@@ -419,5 +442,252 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe("http://localhost/installer/");
+  });
+
+  test("agent memory routes read and append contacts", async () => {
+    const memory = {
+      read: () => ({ namespace: "contacts", content: "Pablo Lopez: pablo@example.com\n" }),
+      append: () => ({ ok: true, message: "Memoria guardada." }),
+    };
+    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+
+    const readResponse = await handler.fetch(new Request("http://localhost/api/agent/memory/contacts"));
+    expect(readResponse.status).toBe(200);
+    expect(await jsonPayload(readResponse)).toEqual({
+      namespace: "contacts",
+      content: "Pablo Lopez: pablo@example.com\n",
+    });
+
+    const writeResponse = await handler.fetch(new Request("http://localhost/api/agent/memory/contacts", {
+      method: "POST",
+      body: JSON.stringify({ content: "Pablo Lopez es mi profesor", source: "ui", explicitUserIntent: true }),
+    }));
+    expect(writeResponse.status).toBe(202);
+  });
+
+  test("background memory writes create confirmation instead of writing immediately", async () => {
+    const handler = createInstallerApiHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/memory/facts", {
+      method: "POST",
+      body: JSON.stringify({
+        content: "Pablo Lopez es mi profesor",
+        source: "openclaw",
+        explicitUserIntent: false,
+      }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: false,
+      decision: "confirm",
+    });
+  });
+
+  test("agent memory events route returns redacted audit entries", async () => {
+    const memory = {
+      read: () => ({ namespace: "facts", content: "" }),
+      append: () => ({ ok: true, message: "Memoria guardada." }),
+      events: () => [
+        {
+          schemaVersion: 1,
+          timestamp: "2026-05-16T14:00:00.000Z",
+          action: "memory.append",
+          namespace: "facts",
+          source: "openclaw",
+          correlationId: "corr_memory_test",
+          byteLength: 27,
+        },
+      ],
+    };
+    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/memory/events"));
+
+    expect(response.status).toBe(200);
+    const payload = await jsonPayload(response);
+    expect(payload).toEqual([
+      {
+        schemaVersion: 1,
+        timestamp: "2026-05-16T14:00:00.000Z",
+        action: "memory.append",
+        namespace: "facts",
+        source: "openclaw",
+        correlationId: "corr_memory_test",
+        byteLength: 27,
+      },
+    ]);
+    expect(JSON.stringify(payload)).not.toContain("Pablo Lopez es mi profesor");
+  });
+
+  test("agent task route enqueues background work", async () => {
+    const taskQueue = {
+      enqueue: () => ({ ok: true, taskId: "task_test", message: "Tarea enviada al worker de fondo." }),
+      health: () => ({ ok: true, mode: "local-simulated" }),
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/tasks", {
+      method: "POST",
+      body: JSON.stringify({ message: "prepara un email a Pablo", source: "ui" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      taskId: "task_test",
+      message: "Tarea enviada al worker de fondo.",
+    });
+  });
+
+  test("agent worker health reports real backend details", async () => {
+    const taskQueue = {
+      health: async () => ({
+        ok: true,
+        mode: "agenos-bun-worker",
+        serviceActive: true,
+        version: "0.1.0",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        queueDepth: 1,
+        lastError: null,
+      }),
+      enqueue: async () => ({ ok: true, taskId: "task_test", message: "queued" }),
+      status: async () => null,
+      events: async () => [],
+      list: async () => [],
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/worker/health"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      mode: "agenos-bun-worker",
+      serviceActive: true,
+    });
+  });
+
+  test("agent task status and events are available by task id", async () => {
+    const taskQueue = {
+      health: async () => ({ ok: true, mode: "local-simulated" }),
+      enqueue: async () => ({ ok: true, taskId: "task_test" }),
+      status: async () => ({ taskId: "task_test", status: "running", progress: 50, message: "work", lastError: null }),
+      events: async () => [{ taskId: "task_test", timestamp: "2026-05-16T12:00:00.000Z", type: "progress", message: "Half done", progress: 50 }],
+      list: async () => [],
+    };
+    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+
+    const status = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test"));
+    const events = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test/events"));
+
+    expect(status.status).toBe(200);
+    expect(await jsonPayload(status)).toMatchObject({ taskId: "task_test", status: "running" });
+    expect(events.status).toBe(200);
+    expect(await jsonPayload(events)).toEqual([
+      { taskId: "task_test", timestamp: "2026-05-16T12:00:00.000Z", type: "progress", message: "Half done", progress: 50 },
+    ]);
+  });
+
+  test("agent browser route opens normalized urls", async () => {
+    const opened: string[] = [];
+    const browserTool = {
+      openUrl: async (url: string) => {
+        opened.push(url);
+        return { ok: true, message: "Abriendo https://netflix.com/." };
+      },
+    };
+    const handler = createInstallerApiHandler({ browserTool: browserTool as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/browser/open-url", {
+      method: "POST",
+      body: JSON.stringify({ url: "netflix.com" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(opened).toEqual(["netflix.com"]);
+  });
+
+  test("agent admin endpoints expose status config and policy", async () => {
+    const agentAdmin = {
+      status: async () => ({
+        ok: true,
+        readiness: "ready",
+        setupItems: [],
+        worker: {
+          mode: "agenos-bun-worker",
+          serviceActive: true,
+          version: "0.1.0",
+          queueDepth: 0,
+          lastError: null,
+        },
+        config: {
+          mode: "auto",
+          provider: "none",
+          model: "none",
+          stateDir: "/home/agenos/.agenos/openclaw",
+          apiAuth: { type: "env", envVar: "AGENOS_OPENCLAW_API_KEY", configured: false },
+        },
+      }),
+      readConfig: async () => ({
+        mode: "auto",
+        provider: "none",
+        model: "none",
+        stateDir: "/home/agenos/.agenos/openclaw",
+        apiAuth: { type: "env", envVar: "AGENOS_OPENCLAW_API_KEY", configured: false },
+      }),
+      readPolicy: () => ({ rules: [{ ruleId: "agent.shell.deny", decision: "deny" }] }),
+      writeConfig: async () => ({ ok: false, decision: "confirm", confirmationId: "conf_config" }),
+      restart: async () => ({ ok: false, decision: "confirm", confirmationId: "conf_restart" }),
+      testConnection: async () => ({ ok: false, status: 503, readiness: "needs_setup", message: "Provider/auth is not configured." }),
+    };
+    const handler = createInstallerApiHandler({ agentAdmin: agentAdmin as never });
+
+    const status = await handler.fetch(new Request("http://localhost/api/agent/admin/status"));
+    const config = await handler.fetch(new Request("http://localhost/api/agent/admin/config"));
+    const policy = await handler.fetch(new Request("http://localhost/api/agent/admin/policy"));
+    const writeConfig = await handler.fetch(new Request("http://localhost/api/agent/admin/config", {
+      method: "POST",
+      body: JSON.stringify({ mode: "local-simulated", explicitUserIntent: true }),
+    }));
+    const restart = await handler.fetch(new Request("http://localhost/api/agent/admin/restart", {
+      method: "POST",
+      body: JSON.stringify({ explicitUserIntent: true }),
+    }));
+    const testConnection = await handler.fetch(new Request("http://localhost/api/agent/admin/test-connection", {
+      method: "POST",
+      body: JSON.stringify({ explicitUserIntent: true }),
+    }));
+
+    expect(status.status).toBe(200);
+    expect(await jsonPayload(status)).toMatchObject({ worker: { serviceActive: true, mode: "agenos-bun-worker" } });
+    expect(config.status).toBe(200);
+    expect(await jsonPayload(config)).toMatchObject({ apiAuth: { configured: false } });
+    expect(policy.status).toBe(200);
+    expect(await jsonPayload(policy)).toMatchObject({ rules: [{ ruleId: "agent.shell.deny" }] });
+    expect(writeConfig.status).toBe(409);
+    expect(restart.status).toBe(409);
+    expect(testConnection.status).toBe(503);
+  });
+
+  test("serves a production support bundle for diagnostics", async () => {
+    const handler = createInstallerApiHandler({
+      supportBundle: async () => ({
+        schemaVersion: 1,
+        generatedAt: "2026-05-16T12:00:00.000Z",
+        runtime: { paths: { apiLog: "/home/agenos/.cache/agenos-installer/runtime/api.log" } },
+        commands: [
+          { command: "journalctl", args: ["-u", "agenos-agent-api.service"], ok: true, stdout: "[redacted]" },
+        ],
+      }),
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/diagnostics/support-bundle"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      schemaVersion: 1,
+      commands: [{ command: "journalctl", stdout: "[redacted]" }],
+    });
   });
 });

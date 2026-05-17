@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+export HOME="${HOME:-/home/agenos}"
+export AGENOS_OPENCLAW_SYSTEM_CONFIG="${AGENOS_OPENCLAW_SYSTEM_CONFIG:-/etc/agenos/openclaw.json}"
+export AGENOS_OPENCLAW_USER_CONFIG="${AGENOS_OPENCLAW_USER_CONFIG:-$HOME/.agenos/openclaw/config.json}"
+export AGENOS_OPENCLAW_STATE_DIR="${AGENOS_OPENCLAW_STATE_DIR:-$HOME/.agenos/openclaw}"
+export AGENOS_WORKER_TOKEN_PATH="${AGENOS_WORKER_TOKEN_PATH:-$HOME/.agenos/broker/worker-token}"
+mkdir -p "$AGENOS_OPENCLAW_STATE_DIR"
+mkdir -p "$(dirname "$AGENOS_WORKER_TOKEN_PATH")"
+exec /usr/local/bin/agenos-installer-server worker

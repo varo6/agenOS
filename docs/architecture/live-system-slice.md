@@ -58,3 +58,17 @@ Demo/preparado:
 - Sustituir `interpretSystemCommand()` por un transporte al agente manteniendo el mismo contrato de resultado.
 - Ampliar `MaintenanceAction` o añadir nuevas intenciones sin romper la slice actual.
 - No mover esta slice a `components/ui` mientras la ISO siga arrancando por `components/installer-ui`.
+
+## Agentic Backend MVP
+
+The next slice keeps Pi as the foreground chat harness and adds an AgenOS-owned broker API under `/api/agent/*`.
+
+Runtime behavior for the MVP:
+
+- `agenos-agent-api.service` starts the real Bun broker API on `127.0.0.1:4173`
+- local memory is stored for the `agenos` live user under `/home/agenos/.agenos/memory`
+- policy decisions cover memory, apps, browser, tasks, and outbound sends
+- the simulated worker follows `/home/agenos/.agenos/openclaw/outbox.ndjson`
+- `agenos-openclaw.service` is a visible background worker boundary until the real worker package exists
+
+This validates the always-on worker boundary before real WhatsApp, Telegram, or email credentials are required.

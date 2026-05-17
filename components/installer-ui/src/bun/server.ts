@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { extname, join, resolve } from "node:path";
 
 import type {
   ApiMessageResponse,
@@ -17,6 +18,15 @@ import {
   INSTALLER_API_PORT,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
+import { createBrowserTool } from "./agent/browser";
+import { createAgentAdminService } from "./agent/admin";
+import { createConfirmationStore } from "./agent/confirmations";
+import { createMemoryStore } from "./agent/memory";
+import { decidePolicy } from "./agent/policy";
+import { createTaskQueue } from "./agent/tasks";
+import { createToolRunner } from "./agent/tool-runner";
+import { createLocalWorkerAuth } from "./agent/worker/local-auth";
+import { createSupportBundle } from "./diagnostics/support-bundle";
 import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
@@ -25,7 +35,7 @@ import { readPreflightPayload } from "./installer/preflight";
 import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
-import { createPiHarness, PiHarnessError } from "./pi-harness";
+import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "./pi-harness";
 import type {
   PiAuthAttemptResponse,
   PiChatRequest,
@@ -54,6 +64,15 @@ export type InstallerApiDependencies = {
   switchMode: (mode: ShellMode) => Promise<ApiMessageResponse>;
   runMaintenance: (action: MaintenanceAction) => Promise<ApiMessageResponse>;
   piHarness: PiHarnessApi;
+  createPiHarness?: () => PiHarnessApi;
+  memoryStore: ReturnType<typeof createMemoryStore>;
+  taskQueue: ReturnType<typeof createTaskQueue>;
+  browserTool: ReturnType<typeof createBrowserTool>;
+  toolRunner: ReturnType<typeof createToolRunner>;
+  workerAuth: ReturnType<typeof createLocalWorkerAuth>;
+  confirmations: ReturnType<typeof createConfirmationStore>;
+  agentAdmin: ReturnType<typeof createAgentAdminService>;
+  supportBundle: () => Promise<unknown>;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -195,9 +214,73 @@ function piErrorResponse(error: unknown): Response {
   );
 }
 
+function piHarnessUnavailable(error: unknown): PiHarnessError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new PiHarnessError(503, message);
+}
+
+function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
+  let harness: PiHarnessApi | undefined;
+
+  const getHarness = () => {
+    if (harness) {
+      return harness;
+    }
+
+    try {
+      harness = factory();
+      return harness;
+    } catch (error) {
+      throw piHarnessUnavailable(error);
+    }
+  };
+
+  return {
+    getStatus() {
+      try {
+        return getHarness().getStatus();
+      } catch (error) {
+        const unavailable = piHarnessUnavailable(error);
+        return {
+          authState: "error",
+          providerName: PI_PROVIDER_NAME,
+          modelId: "unavailable",
+          busy: false,
+          error: unavailable.message,
+        };
+      }
+    },
+    startAuth() {
+      return getHarness().startAuth();
+    },
+    getAuthAttempt(attemptId: string) {
+      return getHarness().getAuthAttempt(attemptId);
+    },
+    submitManualCode(attemptId: string, input: string) {
+      return getHarness().submitManualCode(attemptId, input);
+    },
+    logout() {
+      return getHarness().logout();
+    },
+    chat(request: PiChatRequest) {
+      return getHarness().chat(request);
+    },
+  };
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
+  const confirmations = dependencies.confirmations ?? createConfirmationStore();
+  const memoryStore = dependencies.memoryStore ?? createMemoryStore();
+  const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
+    worker: taskQueue,
+    taskQueue,
+    memoryStore,
+    confirmations,
+  });
+  const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -208,7 +291,17 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createPiHarness(),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(dependencies.createPiHarness ?? createPiHarness),
+    memoryStore,
+    taskQueue,
+    browserTool: dependencies.browserTool ?? createBrowserTool(),
+    confirmations,
+    agentAdmin,
+    supportBundle,
+    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
+    workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
+      tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
+    }),
   };
 
   return {
@@ -226,6 +319,14 @@ export function createInstallerApiHandler(
           }
 
           return json({ ok: true });
+        }
+
+        if (url.pathname === "/api/diagnostics/support-bundle") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(await deps.supportBundle());
         }
 
         if (url.pathname === INSTALLER_ROUTES.preflight) {
@@ -447,6 +548,275 @@ export function createInstallerApiHandler(
           } catch (error) {
             return piErrorResponse(error);
           }
+        }
+
+        if (url.pathname === "/api/agent/memory/events") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const limit = Number(url.searchParams.get("limit") ?? "50");
+          return json(deps.memoryStore.events(Number.isFinite(limit) ? limit : 50));
+        }
+
+        if (url.pathname === "/api/agent/admin/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.agentAdmin.status());
+        }
+
+        if (url.pathname === "/api/agent/admin/config") {
+          if (request.method === "GET") {
+            return json(await deps.agentAdmin.readConfig());
+          }
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as Record<string, unknown>;
+            const response = await deps.agentAdmin.writeConfig(payload, "ui");
+            return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+          }
+          return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+        }
+
+        if (url.pathname === "/api/agent/admin/policy") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.agentAdmin.readPolicy());
+        }
+
+        if (url.pathname === "/api/agent/admin/restart") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.agentAdmin.restart("ui");
+          return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+        }
+
+        if (url.pathname === "/api/agent/admin/test-connection") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.agentAdmin.testConnection("ui");
+          return json(response, { status: response.status });
+        }
+
+        if (url.pathname === "/api/agent/admin/export-diagnostics") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.agentAdmin.exportDiagnostics("ui"));
+        }
+
+        const adminTaskActionMatch = url.pathname.match(/^\/api\/agent\/admin\/tasks\/([^/]+)\/(retry|clear)$/);
+        if (adminTaskActionMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const taskId = decodeURIComponent(adminTaskActionMatch[1] ?? "");
+          const action = adminTaskActionMatch[2];
+          const response = action === "retry"
+            ? await deps.agentAdmin.retryTask(taskId, "ui")
+            : await deps.agentAdmin.clearTask(taskId, "ui");
+          return json(response, { status: "decision" in response && response.decision === "confirm" ? 409 : 202 });
+        }
+
+        const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
+        if (memoryMatch) {
+          const namespace = decodeURIComponent(memoryMatch[1] ?? "");
+          if (namespace !== "contacts" && namespace !== "preferences" && namespace !== "facts") {
+            return json({ ok: false, message: "Namespace de memoria invalido." }, { status: 400 });
+          }
+
+          if (request.method === "GET") {
+            return json(deps.memoryStore.read(namespace));
+          }
+
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as {
+              content?: unknown;
+              source?: unknown;
+              explicitUserIntent?: unknown;
+            };
+            const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
+            const policy = decidePolicy({
+              tool: "memory.write",
+              source,
+              explicitUserIntent: payload.explicitUserIntent === true,
+            });
+            if (policy.decision === "deny") {
+              return json({ ok: false, decision: "deny", ruleId: policy.ruleId, message: policy.reason }, { status: 403 });
+            }
+            if (policy.decision === "confirm") {
+              const result = await deps.toolRunner.run({
+                source,
+                tool: "memory.write",
+                input: {
+                  namespace,
+                  content: typeof payload.content === "string" ? payload.content : "",
+                },
+              });
+              return json({
+                ok: false,
+                decision: "confirm",
+                ruleId: policy.ruleId,
+                confirmationId: result.confirmationId,
+                message: policy.reason,
+              }, { status: 409 });
+            }
+
+            const response = deps.memoryStore.append(
+              namespace,
+              typeof payload.content === "string" ? payload.content : "",
+              source,
+            );
+            return json(response, { status: response.ok ? 202 : 400 });
+          }
+
+          return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+        }
+
+        if (url.pathname === "/api/agent/worker/health") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.taskQueue.health());
+        }
+
+        if (url.pathname === "/api/agent/confirmations") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.confirmations.list());
+        }
+
+        const confirmationActionMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)\/(confirm|deny)$/);
+        if (confirmationActionMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const confirmationId = decodeURIComponent(confirmationActionMatch[1] ?? "");
+          const action = confirmationActionMatch[2];
+          const record = action === "confirm"
+            ? deps.confirmations.confirm(confirmationId, "ui")
+            : deps.confirmations.deny(confirmationId, "ui");
+          if (!record) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+
+          if (record.status === "confirmed" && record.tool === "memory.write") {
+            const input = record.input as { namespace?: unknown; content?: unknown };
+            const namespace = input.namespace;
+            if (namespace === "contacts" || namespace === "preferences" || namespace === "facts") {
+              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", {
+                source: record.source,
+                taskId: record.taskId,
+                correlationId: record.correlationId,
+                confirmationId: record.confirmationId,
+              });
+            }
+          }
+
+          return json({ ok: true, confirmation: record }, { status: 202 });
+        }
+
+        const confirmationMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)$/);
+        if (confirmationMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const record = deps.confirmations.get(decodeURIComponent(confirmationMatch[1] ?? ""));
+          if (!record) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+          return json(record);
+        }
+
+        if (url.pathname === "/api/agent/tasks") {
+          if (request.method === "GET") {
+            const limit = Number(url.searchParams.get("limit") ?? "50");
+            return json(await deps.taskQueue.list(Number.isFinite(limit) ? limit : 50));
+          }
+
+          if (request.method !== "POST") {
+            return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
+          const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: 403 });
+          }
+          const response = await deps.taskQueue.enqueue({
+            message: typeof payload.message === "string" ? payload.message : "",
+            source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
+          });
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        const taskEventsMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)\/events$/);
+        if (taskEventsMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(await deps.taskQueue.events(decodeURIComponent(taskEventsMatch[1] ?? "")));
+        }
+
+        const taskStatusMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)$/);
+        if (taskStatusMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const task = await deps.taskQueue.status(decodeURIComponent(taskStatusMatch[1] ?? ""));
+          if (!task) {
+            return json({ ok: false, message: "Tarea no encontrada." }, { status: 404 });
+          }
+          return json(task);
+        }
+
+        if (url.pathname === "/api/agent/worker/tool-call") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const auth = deps.workerAuth.authorizeWorkerRequest(request);
+          if (auth.ok === false) {
+            return json({ ok: false, message: auth.message }, { status: auth.status });
+          }
+
+          const payload = await readJsonBody(request) as {
+            source?: unknown;
+            taskId?: unknown;
+            correlationId?: unknown;
+            tool?: unknown;
+            input?: unknown;
+          };
+          const result = await deps.toolRunner.run({
+            source: payload.source === "system" ? "system" : "openclaw",
+            taskId: typeof payload.taskId === "string" ? payload.taskId : undefined,
+            correlationId: typeof payload.correlationId === "string" ? payload.correlationId : undefined,
+            tool: typeof payload.tool === "string" ? payload.tool : "",
+            input: payload.input,
+          });
+
+          const status = result.decision === "deny" ? 403 : result.decision === "confirm" ? 409 : 202;
+          return json(result, { status });
+        }
+
+        if (url.pathname === "/api/agent/browser/open-url") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { url?: unknown };
+          const policy = decidePolicy({ tool: "browser.open_url", source: "ui" });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: 403 });
+          }
+
+          const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
+          return json(response, { status: response.ok ? 202 : 400 });
         }
 
         const frontend = frontendResponse(request, url, {

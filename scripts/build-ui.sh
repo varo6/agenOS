@@ -15,7 +15,7 @@ source_hash() {
     cd "${UI_DIR}"
     local inputs=()
 
-    for path in src public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json; do
+    for path in src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json; do
       [[ -e "${path}" ]] && inputs+=("${path}")
     done
 
@@ -91,11 +91,19 @@ printf '%s\n' \
   '#!/bin/sh' \
   'set -eu' \
   'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"' \
-  'RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-system"' \
+  'if [ -n "${XDG_RUNTIME_DIR:-}" ]; then' \
+  '  RUNTIME_DIR="${XDG_RUNTIME_DIR}/agenos-system"' \
+  'else' \
+  '  RUNTIME_DIR="${HOME:-/tmp}/.cache/agenos-system/runtime"' \
+  'fi' \
   'PROFILE_DIR="${RUNTIME_DIR}/electron-profile"' \
   'LOCK_FILE="${RUNTIME_DIR}/electron.lock"' \
-  'ELECTRON_BIN="${SCRIPT_DIR}/electron-dist/electron"' \
-  'ELECTRON_APP="${SCRIPT_DIR}/electron-app"' \
+  'API_URL="http://127.0.0.1:4173/health"' \
+  'API_PID_FILE="${RUNTIME_DIR}/api.pid"' \
+  'API_LOG="${RUNTIME_DIR}/api.log"' \
+  'ELECTRON_BIN="${AGENOS_SYSTEM_ELECTRON_BIN:-${SCRIPT_DIR}/electron-dist/electron}"' \
+  'ELECTRON_APP="${AGENOS_SYSTEM_ELECTRON_APP:-${SCRIPT_DIR}/electron-app}"' \
+  'INSTALLER_BIN="${AGENOS_INSTALLER_BIN:-/opt/agenos/installer/agenos-installer}"' \
   '' \
   'mkdir -p "${RUNTIME_DIR}" "${PROFILE_DIR}"' \
   'if [ ! -x "${ELECTRON_BIN}" ]; then' \
@@ -107,9 +115,58 @@ printf '%s\n' \
   'export AGENOS_SYSTEM_BRIDGE_MODE="${AGENOS_SYSTEM_BRIDGE_MODE:-ipc}"' \
   'export AGENOS_ELECTRON_GPU_MODE="${AGENOS_ELECTRON_GPU_MODE:-auto}"' \
   'export AGENOS_CODEX_BIN="${SCRIPT_DIR}/codex-bin/codex"' \
+  'export AGENOS_PI_AGENT_DIR="${AGENOS_PI_AGENT_DIR:-${HOME:-/tmp}/.agenos/ui-dev/pi}"' \
+  'export AGENOS_OPENCLAW_SYSTEM_CONFIG="${AGENOS_OPENCLAW_SYSTEM_CONFIG:-/etc/agenos/openclaw.json}"' \
+  'export AGENOS_OPENCLAW_USER_CONFIG="${AGENOS_OPENCLAW_USER_CONFIG:-${HOME:-/tmp}/.agenos/openclaw/config.json}"' \
+  'export AGENOS_OPENCLAW_STATE_DIR="${AGENOS_OPENCLAW_STATE_DIR:-${HOME:-/tmp}/.agenos/openclaw}"' \
+  'export AGENOS_WORKER_TOKEN_PATH="${AGENOS_WORKER_TOKEN_PATH:-${HOME:-/tmp}/.agenos/broker/worker-token}"' \
   'export ELECTRON_IS_DEV=0' \
   'export ELECTRON_OZONE_PLATFORM_HINT=auto' \
   'export TMPDIR="${RUNTIME_DIR}"' \
+  '' \
+  'ensure_api() {' \
+  '  attempts=0' \
+  '  while [ "${attempts}" -lt 20 ]; do' \
+  '    if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
+  '      return 0' \
+  '    fi' \
+  '    attempts=$((attempts + 1))' \
+  '    sleep 0.25' \
+  '  done' \
+  '' \
+  '  if [ ! -x "${INSTALLER_BIN}" ]; then' \
+  '    echo "No se encontró el broker empaquetado en ${INSTALLER_BIN}." >&2' \
+  '    return 1' \
+  '  fi' \
+  '' \
+  '  if [ -f "${API_PID_FILE}" ]; then' \
+  '    pid="$(cat "${API_PID_FILE}" 2>/dev/null || true)"' \
+  '    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then' \
+  '      :' \
+  '    else' \
+  '      rm -f "${API_PID_FILE}"' \
+  '    fi' \
+  '  fi' \
+  '' \
+  '  if [ ! -f "${API_PID_FILE}" ]; then' \
+  '    "${INSTALLER_BIN}" server >>"${API_LOG}" 2>&1 &' \
+  '    echo "$!" > "${API_PID_FILE}"' \
+  '  fi' \
+  '' \
+  '  attempts=0' \
+  '  while [ "${attempts}" -lt 40 ]; do' \
+  '    if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
+  '      return 0' \
+  '    fi' \
+  '    attempts=$((attempts + 1))' \
+  '    sleep 0.25' \
+  '  done' \
+  '' \
+  '  echo "El API local no respondió en ${API_URL}. Revisa ${API_LOG}." >&2' \
+  '  return 1' \
+  '}' \
+  '' \
+  'ensure_api || true' \
   'exec flock -n "${LOCK_FILE}" "${ELECTRON_BIN}" "${ELECTRON_APP}" \' \
   '  --no-sandbox \' \
   '  --disable-dev-shm-usage \' \

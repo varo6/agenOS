@@ -13,7 +13,14 @@ import {
   ShieldX,
 } from "lucide-react";
 
+import { AgentDiagnosticsButton } from "./components/AgentDiagnosticsButton";
+import { AgentAdminPanel } from "./components/AgentAdminPanel";
+import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
+import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
+import { createAgentAdminClient } from "./lib/agent-admin-client";
+import { createAgentClient } from "./lib/agent-client";
+import { classifyAgentCommand } from "./lib/agent-command";
 import { createPiClient, PiClientError } from "./lib/pi-client";
 import {
   createSpeechRecognitionController,
@@ -22,11 +29,14 @@ import {
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
 import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
+import type { AgentAdminStatus } from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
 
 const piClient = createPiClient();
+const agentClient = createAgentClient();
+const agentAdminClient = createAgentAdminClient();
 
 function describeClientError(error: unknown): string {
   if (error instanceof PiClientError || error instanceof Error) {
@@ -60,11 +70,14 @@ export default function App() {
   const [modelId, setModelId] = useState("gpt-5.4-mini");
   const [serverBusy, setServerBusy] = useState(false);
   const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
+  const [agentStatus, setAgentStatus] = useState<AgentAdminStatus | null>(null);
+  const [agentBackendError, setAgentBackendError] = useState<string | null>(null);
   const [manualCodeInput, setManualCodeInput] = useState("");
   const [draft, setDraft] = useState("");
   const [lastInput, setLastInput] = useState("");
   const [lastReply, setLastReply] = useState("");
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
 
   const applyStatus = useEffectEvent((status: PiStatusResponse) => {
@@ -79,11 +92,16 @@ export default function App() {
     }
   });
 
-  const refreshStatus = useEffectEvent(async () => {
+  const refreshStatus = useEffectEvent(async (options: { clearErrors?: boolean } = {}) => {
     try {
       const status = await piClient.getStatus();
       applyStatus(status);
-      if (!status.error) {
+      if (status.error) {
+        setGlobalError(status.error);
+      } else if (options.clearErrors) {
+        setGlobalError(null);
+        setChatState((current) => (current === "error" ? "idle" : current));
+      } else {
         setGlobalError((current) =>
           current === "Harness de desarrollo no disponible." ? null : current,
         );
@@ -100,17 +118,27 @@ export default function App() {
     }
   });
 
+  const refreshAgentStatus = useEffectEvent(async () => {
+    try {
+      const status = await agentAdminClient.getStatus();
+      setAgentStatus(status);
+      setAgentBackendError(null);
+      return status;
+    } catch (error) {
+      const message = describeClientError(error);
+      setAgentStatus(null);
+      setAgentBackendError(message);
+      return null;
+    }
+  });
+
   const sendPrompt = useEffectEvent(async (message: string, source: PiChatSource) => {
     const trimmed = message.trim();
     if (!trimmed) {
       return;
     }
 
-    if (authState !== "connected") {
-      setAuthState("error");
-      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
-      return;
-    }
+    const command = classifyAgentCommand(trimmed);
 
     setChatState("processing");
     setGlobalError(null);
@@ -118,6 +146,37 @@ export default function App() {
     setLastReply("");
     if (source === "text") {
       setDraft("");
+    }
+
+    if (command.kind === "memory") {
+      try {
+        const response = await agentClient.appendMemory(command.namespace, command.content);
+        setLastReply(response.message ?? "Memoria guardada.");
+        setChatState("idle");
+      } catch (error) {
+        setChatState("error");
+        setGlobalError(describeClientError(error));
+      }
+      return;
+    }
+
+    if (command.kind === "background") {
+      try {
+        const response = await agentClient.delegateBackgroundTask(command.message);
+        setLastReply(response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
+        setChatState("idle");
+      } catch (error) {
+        setChatState("error");
+        setGlobalError(describeClientError(error));
+      }
+      return;
+    }
+
+    if (authState !== "connected") {
+      setChatState("idle");
+      setAuthState("error");
+      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
+      return;
     }
 
     try {
@@ -170,7 +229,7 @@ export default function App() {
       setVoiceIssue("Este navegador no expone Web Speech API. Usa texto.");
     }
 
-    void refreshStatus()
+    void Promise.allSettled([refreshStatus(), refreshAgentStatus()])
       .finally(() => {
         setIsLoading(false);
       });
@@ -179,7 +238,7 @@ export default function App() {
       controller.dispose();
       speechControllerRef.current = null;
     };
-  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshStatus]);
+  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus]);
 
   useEffect(() => {
     if (!pendingAttempt) {
@@ -304,6 +363,13 @@ export default function App() {
     void sendPrompt(draft, "text");
   }
 
+  function refreshAgentExperience() {
+    void Promise.allSettled([
+      refreshStatus({ clearErrors: true }),
+      refreshAgentStatus(),
+    ]);
+  }
+
   function handleVoiceStart() {
     if (
       !speechControllerRef.current?.supported
@@ -332,7 +398,6 @@ export default function App() {
     || isProcessing;
   const textDisabled =
     !harnessAvailable
-    || authState !== "connected"
     || isProcessing;
   const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
   const voiceHint =
@@ -354,6 +419,7 @@ export default function App() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[#07090f] text-white selection:bg-white/20">
       <VideoBackground />
+      <AgentDiagnosticsButton />
 
       {globalError ? (
         <div className="fixed left-1/2 top-6 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
@@ -385,7 +451,32 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-5xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+          <div className="mb-8 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">
+            <button
+              className={[
+                "rounded-md px-4 py-2 text-sm transition-colors",
+                activeTab === "chat" ? "bg-white text-black" : "text-white/65 hover:text-white",
+              ].join(" ")}
+              onClick={() => setActiveTab("chat")}
+              type="button"
+            >
+              Chat
+            </button>
+            <button
+              className={[
+                "rounded-md px-4 py-2 text-sm transition-colors",
+                activeTab === "backend" ? "bg-white text-black" : "text-white/65 hover:text-white",
+              ].join(" ")}
+              onClick={() => setActiveTab("backend")}
+              type="button"
+            >
+              Backend
+            </button>
+          </div>
+          {activeTab === "backend" ? (
+            <AgentAdminPanel client={agentAdminClient} />
+          ) : (
           <div className="flex w-full flex-col items-center gap-12 text-center">
             <div className="space-y-6">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-white/60 backdrop-blur-md">
@@ -454,6 +545,26 @@ export default function App() {
             </div>
 
             <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="grid gap-4 lg:col-span-2">
+                <AgentHealthChecklist
+                  adminStatus={agentStatus}
+                  authState={authState}
+                  backendError={agentBackendError}
+                  harnessAvailable={harnessAvailable}
+                />
+                <AgentOnboardingPanel
+                  adminStatus={agentStatus}
+                  authState={authState}
+                  backendError={agentBackendError}
+                  harnessAvailable={harnessAvailable}
+                  onConnectCodex={() => {
+                    void handleStartAuth("device");
+                  }}
+                  onOpenBackend={() => setActiveTab("backend")}
+                  onRefresh={refreshAgentExperience}
+                />
+              </div>
+
               <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
                 <div className="flex items-center justify-between gap-4">
                   <div>
@@ -625,7 +736,7 @@ export default function App() {
                       className="btn-secondary inline-flex items-center gap-2"
                       disabled={!harnessAvailable}
                       onClick={() => {
-                        void refreshStatus();
+                        void refreshStatus({ clearErrors: true });
                       }}
                       type="button"
                     >
@@ -678,6 +789,7 @@ export default function App() {
               </div>
             </div>
           </div>
+          )}
         </div>
       )}
     </div>

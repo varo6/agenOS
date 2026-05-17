@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 from pathlib import Path
 
 import libcalamares
@@ -24,13 +25,51 @@ def _target_root() -> Path:
     return Path(root)
 
 
-def _ensure_service_link(target_root: Path, relative_dir: str, service_name: str) -> None:
+def _ensure_service_link(
+    target_root: Path,
+    relative_dir: str,
+    service_name: str,
+    service_dir: str = "/lib/systemd/system",
+) -> None:
     wants_dir = target_root / relative_dir
     wants_dir.mkdir(parents=True, exist_ok=True)
     link = wants_dir / service_name
     if link.exists() or link.is_symlink():
         link.unlink()
-    link.symlink_to(Path("/lib/systemd/system") / service_name)
+    link.symlink_to(Path(service_dir) / service_name)
+
+
+def _target_user_ids(target_root: Path, username: str) -> tuple[int, int] | None:
+    passwd_path = target_root / "etc/passwd"
+    if not passwd_path.exists():
+        return None
+
+    for line in passwd_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(":")
+        if len(parts) >= 4 and parts[0] == username:
+            return (int(parts[2]), int(parts[3]))
+
+    return None
+
+
+def _ensure_user_state_dirs(target_root: Path, username: str) -> None:
+    home_dir = target_root / "home" / username
+    state_root = home_dir / ".agenos"
+    user_ids = _target_user_ids(target_root, username)
+    state_dirs = [
+        state_root,
+        state_root / "ui-dev",
+        state_root / "ui-dev" / "pi",
+        state_root / "openclaw",
+        state_root / "memory",
+        state_root / "broker",
+    ]
+
+    for directory in state_dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+        if user_ids is not None:
+            os.chown(directory, user_ids[0], user_ids[1])
 
 
 def _write_shell_config(target_root: Path) -> None:
@@ -85,6 +124,18 @@ def _configure_services(target_root: Path) -> None:
 
     _ensure_service_link(target_root, "etc/systemd/system/graphical.target.wants", "greetd.service")
     _ensure_service_link(target_root, "etc/systemd/system/multi-user.target.wants", "seatd.service")
+    _ensure_service_link(
+        target_root,
+        "etc/systemd/system/graphical.target.wants",
+        "agenos-agent-api.service",
+        "/etc/systemd/system",
+    )
+    _ensure_service_link(
+        target_root,
+        "etc/systemd/system/graphical.target.wants",
+        "agenos-openclaw.service",
+        "/etc/systemd/system",
+    )
 
     x11_dm = target_root / "etc/X11/default-display-manager"
     if x11_dm.exists():
@@ -97,6 +148,7 @@ def run():
     if not username:
         return (_("Configuración inválida"), _("No se ha encontrado el usuario final del sistema."))
 
+    _ensure_user_state_dirs(target_root, str(username))
     _write_shell_config(target_root)
     _write_greetd_config(target_root, str(username))
     _configure_services(target_root)

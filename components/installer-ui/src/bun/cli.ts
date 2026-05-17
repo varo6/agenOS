@@ -2,6 +2,13 @@ import type { LaunchResponse } from "../shared/installer-types";
 import { runInstallerApiServer } from "./server";
 import { runHelperCommand } from "./installer/commands";
 import { launchClassic, launchGuided, loadLaunchProfile } from "./installer/launch";
+import { createWorkerAdapter } from "./agent/worker";
+import { createSupportBundle } from "./diagnostics/support-bundle";
+
+export type CliDependencies = {
+  createSupportBundle?: typeof createSupportBundle;
+  console?: Pick<Console, "log" | "error">;
+};
 
 function profileArg(args: string[]): string {
   const index = args.indexOf("--profile");
@@ -25,7 +32,7 @@ function printLaunchResponse(response: LaunchResponse): number {
   return response.ok && response.launched ? 0 : 1;
 }
 
-export async function runCli(args: string[]): Promise<{ handled: boolean; exitCode: number }> {
+export async function runCli(args: string[], dependencies: CliDependencies = {}): Promise<{ handled: boolean; exitCode: number }> {
   if (args.length === 0) {
     return {
       handled: false,
@@ -34,6 +41,7 @@ export async function runCli(args: string[]): Promise<{ handled: boolean; exitCo
   }
 
   const [command, ...rest] = args;
+  const output = dependencies.console ?? console;
 
   if (command === "launch-classic") {
     return {
@@ -80,7 +88,56 @@ export async function runCli(args: string[]): Promise<{ handled: boolean; exitCo
     };
   }
 
+  if (command === "api") {
+    await runInstallerApiServer();
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
+  if (command === "worker") {
+    await runAgentWorkerLoop();
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
+  if (command === "doctor") {
+    const bundle = await (dependencies.createSupportBundle ?? createSupportBundle)();
+    output.log(JSON.stringify(bundle, null, 2));
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
   throw new Error(`Comando no soportado: ${command}`);
+}
+
+async function runAgentWorkerLoop(): Promise<void> {
+  const adapter = createWorkerAdapter();
+  const health = await adapter.health();
+  console.log(`[agenos-openclaw-worker] mode=${health.mode} active=${health.serviceActive} stateDir=${health.stateDir}`);
+
+  const interval = setInterval(async () => {
+    try {
+      await adapter.health();
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+  }, 30_000);
+
+  await new Promise<void>((resolve) => {
+    const stop = () => {
+      clearInterval(interval);
+      resolve();
+    };
+
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
 }
 
 async function main(): Promise<void> {

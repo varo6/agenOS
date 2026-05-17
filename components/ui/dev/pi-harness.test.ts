@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createPiHarness } from "./pi-harness";
+import { createPiHarness, resolvePiHarnessPaths } from "./pi-harness";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -165,6 +165,24 @@ async function flushTasks() {
 }
 
 describe("PiHarness", () => {
+  test("resolves packaged Codex state paths from AGENOS_PI_AGENT_DIR", () => {
+    expect(resolvePiHarnessPaths({
+      AGENOS_PI_AGENT_DIR: "/home/agenos/.agenos/ui-dev/pi",
+    }, "/unused")).toEqual({
+      agentDir: "/home/agenos/.agenos/ui-dev/pi",
+      authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
+      codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
+    });
+  });
+
+  test("defaults Codex state paths under the current home directory", () => {
+    expect(resolvePiHarnessPaths({}, "/home/agenos")).toEqual({
+      agentDir: "/home/agenos/.agenos/ui-dev/pi",
+      authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
+      codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
+    });
+  });
+
   test("rejects chat when there is no auth", async () => {
     const { harness } = createHarnessFixture();
 
@@ -249,6 +267,26 @@ describe("PiHarness", () => {
       method: "device",
       status: "success",
     });
+  });
+
+  test("failed auth attempts do not poison later status refreshes", async () => {
+    const { harness, loginDeferred } = createHarnessFixture();
+
+    const attempt = await harness.startAuth("browser");
+    loginDeferred.reject(new Error("codigo manual invalido"));
+
+    await flushTasks();
+
+    expect(harness.getAuthAttempt(attempt.attemptId)).toMatchObject({
+      method: "browser",
+      status: "error",
+      error: "codigo manual invalido",
+    });
+    expect(harness.getStatus()).toMatchObject({
+      authState: "disconnected",
+      pendingAttempt: undefined,
+    });
+    expect(harness.getStatus().error).toBeUndefined();
   });
 
   test("rejects concurrent prompts with 409", async () => {
