@@ -13,7 +13,10 @@ import {
   ShieldX,
 } from "lucide-react";
 
+import { AgentDiagnosticsButton } from "./components/AgentDiagnosticsButton";
 import { AgentAdminPanel } from "./components/AgentAdminPanel";
+import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
+import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
 import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
@@ -26,6 +29,7 @@ import {
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
 import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
+import type { AgentAdminStatus } from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
@@ -66,6 +70,8 @@ export default function App() {
   const [modelId, setModelId] = useState("gpt-5.4-mini");
   const [serverBusy, setServerBusy] = useState(false);
   const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
+  const [agentStatus, setAgentStatus] = useState<AgentAdminStatus | null>(null);
+  const [agentBackendError, setAgentBackendError] = useState<string | null>(null);
   const [manualCodeInput, setManualCodeInput] = useState("");
   const [draft, setDraft] = useState("");
   const [lastInput, setLastInput] = useState("");
@@ -86,11 +92,16 @@ export default function App() {
     }
   });
 
-  const refreshStatus = useEffectEvent(async () => {
+  const refreshStatus = useEffectEvent(async (options: { clearErrors?: boolean } = {}) => {
     try {
       const status = await piClient.getStatus();
       applyStatus(status);
-      if (!status.error) {
+      if (status.error) {
+        setGlobalError(status.error);
+      } else if (options.clearErrors) {
+        setGlobalError(null);
+        setChatState((current) => (current === "error" ? "idle" : current));
+      } else {
         setGlobalError((current) =>
           current === "Harness de desarrollo no disponible." ? null : current,
         );
@@ -104,6 +115,20 @@ export default function App() {
       setPendingAttempt(null);
       setGlobalError(message);
       throw error;
+    }
+  });
+
+  const refreshAgentStatus = useEffectEvent(async () => {
+    try {
+      const status = await agentAdminClient.getStatus();
+      setAgentStatus(status);
+      setAgentBackendError(null);
+      return status;
+    } catch (error) {
+      const message = describeClientError(error);
+      setAgentStatus(null);
+      setAgentBackendError(message);
+      return null;
     }
   });
 
@@ -204,7 +229,7 @@ export default function App() {
       setVoiceIssue("Este navegador no expone Web Speech API. Usa texto.");
     }
 
-    void refreshStatus()
+    void Promise.allSettled([refreshStatus(), refreshAgentStatus()])
       .finally(() => {
         setIsLoading(false);
       });
@@ -213,7 +238,7 @@ export default function App() {
       controller.dispose();
       speechControllerRef.current = null;
     };
-  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshStatus]);
+  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus]);
 
   useEffect(() => {
     if (!pendingAttempt) {
@@ -338,6 +363,13 @@ export default function App() {
     void sendPrompt(draft, "text");
   }
 
+  function refreshAgentExperience() {
+    void Promise.allSettled([
+      refreshStatus({ clearErrors: true }),
+      refreshAgentStatus(),
+    ]);
+  }
+
   function handleVoiceStart() {
     if (
       !speechControllerRef.current?.supported
@@ -387,6 +419,7 @@ export default function App() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[#07090f] text-white selection:bg-white/20">
       <VideoBackground />
+      <AgentDiagnosticsButton />
 
       {globalError ? (
         <div className="fixed left-1/2 top-6 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
@@ -512,6 +545,26 @@ export default function App() {
             </div>
 
             <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="grid gap-4 lg:col-span-2">
+                <AgentHealthChecklist
+                  adminStatus={agentStatus}
+                  authState={authState}
+                  backendError={agentBackendError}
+                  harnessAvailable={harnessAvailable}
+                />
+                <AgentOnboardingPanel
+                  adminStatus={agentStatus}
+                  authState={authState}
+                  backendError={agentBackendError}
+                  harnessAvailable={harnessAvailable}
+                  onConnectCodex={() => {
+                    void handleStartAuth("device");
+                  }}
+                  onOpenBackend={() => setActiveTab("backend")}
+                  onRefresh={refreshAgentExperience}
+                />
+              </div>
+
               <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
                 <div className="flex items-center justify-between gap-4">
                   <div>
@@ -683,7 +736,7 @@ export default function App() {
                       className="btn-secondary inline-flex items-center gap-2"
                       disabled={!harnessAvailable}
                       onClick={() => {
-                        void refreshStatus();
+                        void refreshStatus({ clearErrors: true });
                       }}
                       type="button"
                     >
