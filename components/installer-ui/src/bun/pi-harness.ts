@@ -12,6 +12,7 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 
+import { createAppTool, type AppOpenResponse } from "./agent/apps";
 import type {
   PiAuthAttemptResponse,
   PiAuthAttemptStatus,
@@ -53,7 +54,9 @@ const PI_AUTH_PATH = PI_PATHS.authPath;
 const PI_SYSTEM_PROMPT = [
   "Responde siempre en espanol.",
   "Se breve y util.",
-  "No inventes acceso a sistema, archivos o acciones externas.",
+  "Puedes abrir aplicaciones locales permitidas con la herramienta apps_open cuando el usuario lo pida.",
+  "Usa apps_open sin pedir confirmacion para Chrome/navegador, terminal o archivos.",
+  "No inventes otras acciones de sistema, archivos o acciones externas.",
   "Si algo requiere capacidades no disponibles en este MVP, dilo claramente.",
 ].join("\n");
 const PI_AUTH_INSTRUCTIONS =
@@ -72,6 +75,9 @@ type PiMessageLike = {
 type PiAgentEventLike = {
   type: string;
   message?: PiMessageLike;
+  toolName?: string;
+  result?: unknown;
+  isError?: boolean;
   assistantMessageEvent?: {
     type?: string;
     delta?: string;
@@ -108,6 +114,26 @@ type PiLoginOpenAICodexOptions = {
   originator?: string;
 };
 
+type AppToolLike = {
+  openApp(input: string): Promise<AppOpenResponse>;
+};
+
+type PiCustomToolLike = {
+  name: string;
+  label: string;
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: string[];
+  parameters: unknown;
+  execute(
+    toolCallId: string,
+    params: { app?: unknown },
+    signal?: AbortSignal,
+    onUpdate?: unknown,
+    ctx?: unknown,
+  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: AppOpenResponse }>;
+};
+
 type PiHarnessDependencies = {
   authStorage: PiAuthStorageLike;
   modelRegistry: PiModelRegistryLike;
@@ -115,7 +141,10 @@ type PiHarnessDependencies = {
   createAgentSession: (options: {
     model: PiModelLike;
     sessionManager: PiSessionManagerLike;
+    tools?: string[];
+    customTools?: PiCustomToolLike[];
   }) => Promise<{ session: PiAgentSessionLike }>;
+  appTool: AppToolLike;
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   now: () => number;
   setTimeout: typeof globalThis.setTimeout;
@@ -186,6 +215,47 @@ function extractTextContent(content: unknown): string {
     .join("");
 }
 
+function extractToolResultContent(result: unknown): unknown {
+  if (!result || typeof result !== "object" || !("content" in result)) {
+    return undefined;
+  }
+
+  return (result as { content?: unknown }).content;
+}
+
+const OPEN_APP_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    app: {
+      type: "string",
+      description: "Nombre de la aplicacion local permitida que se quiere abrir. Ejemplos: Chrome, navegador, terminal, archivos.",
+    },
+  },
+  required: ["app"],
+  additionalProperties: false,
+};
+
+function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
+  return {
+    name: "apps_open",
+    label: "Abrir app",
+    description: "Abre una aplicacion local permitida en AgenOS cuando el usuario lo pide explicitamente.",
+    promptSnippet: "apps_open: abre aplicaciones locales permitidas como Chrome/navegador, terminal o archivos.",
+    promptGuidelines: [
+      "Si el usuario pide abrir Chrome, el navegador, la terminal o archivos, llama apps_open con el nombre de la aplicacion.",
+      "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
+    ],
+    parameters: OPEN_APP_TOOL_PARAMETERS,
+    async execute(_toolCallId, params) {
+      const response = await appTool.openApp(typeof params.app === "string" ? params.app : "");
+      return {
+        content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
+        details: response,
+      };
+    },
+  };
+}
+
 function toPendingAttempt(attempt: LoginAttempt): PiPendingAttempt {
   return {
     attemptId: attempt.attemptId,
@@ -233,19 +303,23 @@ function createDefaultDependencies(): PiHarnessDependencies {
 
       await resourceLoader.reload();
 
-      return createAgentSession({
+      const created = await createAgentSession({
         cwd: process.cwd(),
         agentDir: PI_AGENT_DIR,
         authStorage,
         modelRegistry,
         model: model as never,
         thinkingLevel: "minimal",
-        tools: [],
+        tools: ["apps_open"],
+        customTools: [createOpenAppModelTool(createAppTool()) as never],
         sessionManager: sessionManager as SessionManager,
         settingsManager,
         resourceLoader,
       });
+
+      return { session: created.session as unknown as PiAgentSessionLike };
     },
+    appTool: createAppTool(),
     loginOpenAICodex,
     now: () => Date.now(),
     setTimeout: globalThis.setTimeout.bind(globalThis),
@@ -403,6 +477,7 @@ export class PiHarness {
       const session = await this.ensureSession(model);
       let streamedReply = "";
       let completedReply = "";
+      let toolReply = "";
       unsubscribe = session.subscribe((event) => {
         if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
           streamedReply += event.assistantMessageEvent.delta ?? "";
@@ -411,11 +486,15 @@ export class PiHarness {
         if (event.type === "message_end" && event.message?.role === "assistant") {
           completedReply = extractTextContent(event.message.content);
         }
+
+        if (event.type === "tool_execution_end" && event.toolName === "apps_open" && !event.isError) {
+          toolReply = extractTextContent(extractToolResultContent(event.result));
+        }
       });
 
       await session.prompt(message);
 
-      const reply = (streamedReply || completedReply || this.getLastAssistantReply(session)).trim();
+      const reply = (streamedReply || completedReply || toolReply || this.getLastAssistantReply(session)).trim();
       if (!reply) {
         throw new Error("No se recibio respuesta del agente.");
       }
@@ -495,8 +574,8 @@ export class PiHarness {
       .sort((left, right) => left.id.localeCompare(right.id));
 
     const preferred =
-      models.find((model) => model.id === "gpt-5.4-mini")
-      ?? models.find((model) => model.id === "gpt-5.4")
+      models.find((model) => model.id === "gpt-5.4")
+      ?? models.find((model) => model.id === "gpt-5.4-mini")
       ?? models[0];
 
     if (!preferred) {
@@ -516,6 +595,8 @@ export class PiHarness {
     const created = await this.deps.createAgentSession({
       model,
       sessionManager: this.sessionManager,
+      tools: ["apps_open"],
+      customTools: [createOpenAppModelTool(this.deps.appTool)],
     });
 
     this.session = created.session;

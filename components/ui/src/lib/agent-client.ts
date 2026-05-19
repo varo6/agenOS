@@ -79,5 +79,12 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         body: JSON.stringify({ url }),
       });
     },
+    openApp(app: string): Promise<AgentActionResponse> {
+      return requestJson<AgentActionResponse>(baseUrl, "/api/agent/apps/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ app }),
+      });
+    },
   };
 }

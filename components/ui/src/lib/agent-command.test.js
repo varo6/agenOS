@@ -17,6 +17,11 @@ describe("agent command classifier", () => {
     });
   });
 
+  test("leaves app launch requests for the foreground agent", () => {
+    expect(classifyAgentCommand("abre Chrome")).toEqual({ kind: "foreground" });
+    expect(classifyAgentCommand("ábreme el navegador")).toEqual({ kind: "foreground" });
+  });
+
   test("falls back to foreground chat", () => {
     expect(classifyAgentCommand("hola")).toEqual({ kind: "foreground" });
   });
@@ -24,6 +29,7 @@ describe("agent command classifier", () => {
   test("distinguishes broker commands from foreground chat", () => {
     expect(isBrokerCommand(classifyAgentCommand("recuerda que Pablo Lopez es mi profesor"))).toBe(true);
     expect(isBrokerCommand(classifyAgentCommand("manda esto al trabajador de fondo: prepara un email"))).toBe(true);
+    expect(isBrokerCommand(classifyAgentCommand("abre Chrome"))).toBe(false);
     expect(isBrokerCommand(classifyAgentCommand("hola"))).toBe(false);
   });
 });

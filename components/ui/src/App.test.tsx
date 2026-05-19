@@ -6,6 +6,11 @@ const mocks = vi.hoisted(() => ({
   agentAdminClient: {
     getStatus: vi.fn(),
   },
+  agentClient: {
+    appendMemory: vi.fn(),
+    delegateBackgroundTask: vi.fn(),
+    openApp: vi.fn(),
+  },
   piClient: {
     getStatus: vi.fn(),
     startAuth: vi.fn(),
@@ -37,10 +42,7 @@ vi.mock("./lib/pi-client", () => {
 });
 
 vi.mock("./lib/agent-client", () => ({
-  createAgentClient: () => ({
-    appendMemory: vi.fn(),
-    delegateBackgroundTask: vi.fn(),
-  }),
+  createAgentClient: () => mocks.agentClient,
 }));
 
 vi.mock("./lib/agent-admin-client", () => ({
@@ -103,6 +105,7 @@ describe("App chat recovery", () => {
     expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
     expect(screen.getByText("Worker listo")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir navegador" })).not.toBeInTheDocument();
   });
 
   test("refreshing status clears a stale auth error and returns to the disconnected state", async () => {
@@ -125,5 +128,31 @@ describe("App chat recovery", () => {
       expect(screen.queryByText("codex login --device-auth termino con codigo 1.")).not.toBeInTheDocument();
     });
     expect(screen.getByText("Conecta ChatGPT para empezar.")).toBeInTheDocument();
+  });
+
+  test("sends app launch requests to the foreground model", async () => {
+    mocks.piClient.getStatus.mockResolvedValue({
+      ...disconnectedStatus,
+      authState: "connected",
+    });
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.piClient.sendMessage.mockResolvedValue({
+      ok: true,
+      reply: "Abriendo Chrome.",
+      provider: "openai-codex",
+      modelId: "gpt-5.4-mini",
+    });
+
+    render(<App />);
+
+    const input = await screen.findByLabelText("Texto");
+    fireEvent.change(input, { target: { value: "abre Chrome" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => {
+      expect(mocks.piClient.sendMessage).toHaveBeenCalledWith("abre Chrome", "text");
+    });
+    expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
+    expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
   });
 });

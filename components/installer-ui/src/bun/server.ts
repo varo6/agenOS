@@ -18,6 +18,7 @@ import {
   INSTALLER_API_PORT,
   INSTALLER_ROUTES,
 } from "../shared/installer-http";
+import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
@@ -67,6 +68,7 @@ export type InstallerApiDependencies = {
   createPiHarness?: () => PiHarnessApi;
   memoryStore: ReturnType<typeof createMemoryStore>;
   taskQueue: ReturnType<typeof createTaskQueue>;
+  appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
@@ -294,6 +296,7 @@ export function createInstallerApiHandler(
     piHarness: dependencies.piHarness ?? createResilientPiHarness(dependencies.createPiHarness ?? createPiHarness),
     memoryStore,
     taskQueue,
+    appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     confirmations,
     agentAdmin,
@@ -816,6 +819,20 @@ export function createInstallerApiHandler(
           }
 
           const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/agent/apps/open") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { app?: unknown };
+          const policy = decidePolicy({ tool: "apps.open", source: "ui" });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: 403 });
+          }
+
+          const response = await deps.appTool.openApp(typeof payload.app === "string" ? payload.app : "");
           return json(response, { status: response.ok ? 202 : 400 });
         }
 

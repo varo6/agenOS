@@ -608,6 +608,25 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual(["netflix.com"]);
   });
 
+  test("agent apps route opens allowlisted apps", async () => {
+    const opened: string[] = [];
+    const appTool = {
+      openApp: async (app: string) => {
+        opened.push(app);
+        return { ok: true, appId: "browser", message: "Abriendo Chrome." };
+      },
+    };
+    const handler = createInstallerApiHandler({ appTool: appTool as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/apps/open", {
+      method: "POST",
+      body: JSON.stringify({ app: "Chrome" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(opened).toEqual(["Chrome"]);
+  });
+
   test("agent admin endpoints expose status config and policy", async () => {
     const agentAdmin = {
       status: async () => ({

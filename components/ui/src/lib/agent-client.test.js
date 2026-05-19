@@ -85,6 +85,27 @@ describe("agent client", () => {
     expect(requestedUrl).toBe("http://agent.test/api/agent/tasks");
   });
 
+  test("opens apps through the broker", async () => {
+    let requestedUrl = "";
+    let payload = "";
+    globalThis.fetch = async (input, init) => {
+      requestedUrl = String(input);
+      payload = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        message: "Abriendo Chrome.",
+      }), { status: 202 });
+    };
+
+    const client = createAgentClient({ baseUrl: "http://agent.test" });
+    expect(await client.openApp("Chrome")).toEqual({
+      ok: true,
+      message: "Abriendo Chrome.",
+    });
+    expect(requestedUrl).toBe("http://agent.test/api/agent/apps/open");
+    expect(JSON.parse(payload)).toEqual({ app: "Chrome" });
+  });
+
   test("uses the real packaged broker from file and Vite dev origins", async () => {
     const requests = [];
     globalThis.fetch = async (input) => {

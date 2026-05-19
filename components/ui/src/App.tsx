@@ -600,18 +600,6 @@ export default function App() {
 
                   <button
                     className="btn-secondary inline-flex items-center gap-2"
-                    disabled={!harnessAvailable || authState === "authorizing" || isProcessing}
-                    onClick={() => {
-                      void handleStartAuth("browser");
-                    }}
-                    type="button"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Abrir navegador
-                  </button>
-
-                  <button
-                    className="btn-secondary inline-flex items-center gap-2"
                     disabled={!harnessAvailable || authState === "authorizing"}
                     onClick={handleLogout}
                     type="button"
