@@ -34,8 +34,29 @@ function resolveHttpBase(): string {
   return INSTALLER_API_BASE_DEFAULT;
 }
 
+function shellSessionHeaders(): Record<string, string> {
+  const bootstrap = (globalThis.window as Window & {
+    __AGENOS_SHELL_BOOTSTRAP__?: { sessionToken?: unknown };
+  } | undefined)?.__AGENOS_SHELL_BOOTSTRAP__;
+  const token = bootstrap?.sessionToken;
+
+  return typeof token === "string" && token.length > 0
+    ? { "X-Session-Token": token }
+    : {};
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), init);
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(shellSessionHeaders())) {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+
+  const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), {
+    ...init,
+    headers,
+  });
   const text = await response.text();
   const payload = text ? JSON.parse(text) as T | ApiMessageResponse : undefined;
 

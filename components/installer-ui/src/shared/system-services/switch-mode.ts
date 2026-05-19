@@ -24,7 +24,7 @@ export type SwitchModeDependencies = {
 function defaultSpawnHelper(_uid: number): SpawnedSwitchHelper {
   const child = spawn(
     "pkexec",
-    ["/usr/bin/python3", "/usr/local/bin/agenos-shell-helper", "reload-shell"],
+    ["/usr/local/bin/agenos-shell-helper", "reload-shell"],
     {
       detached: true,
       stdio: "ignore",

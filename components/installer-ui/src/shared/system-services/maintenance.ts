@@ -31,7 +31,7 @@ function buildHelperEnv(): NodeJS.ProcessEnv {
 }
 
 function defaultSpawnHelper(action: MaintenanceAction, uid: number): SpawnedHelper {
-  const command = ["pkexec", "/usr/bin/python3", "/usr/local/bin/agenos-shell-helper", action];
+  const command = ["pkexec", "/usr/local/bin/agenos-shell-helper", action];
   const logPath = helperLogPathForUid(uid);
   appendHelperLog(`\n[${formatTimestamp()}] launching: ${command.join(" ")}\n`, uid);
 

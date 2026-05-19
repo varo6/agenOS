@@ -15,7 +15,7 @@ for_window [workspace="2:app"] fullscreen enable
 for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
 for_window [title="AgenOS Installer"] move to workspace "1:home"
 
-bindsym Ctrl+Alt+Return exec python3 /usr/local/bin/agenos-shell-helper terminal
-bindsym Ctrl+Alt+r exec python3 /usr/local/bin/agenos-shell-helper reload-shell
+bindsym Ctrl+Alt+Return exec /usr/local/bin/agenos-shell-helper terminal
+bindsym Ctrl+Alt+r exec /usr/local/bin/agenos-shell-helper reload-shell
 
 exec_always --no-startup-id sh /usr/local/bin/agenos-shell-runner

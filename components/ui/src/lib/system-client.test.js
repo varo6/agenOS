@@ -141,4 +141,37 @@ describe("createSystemClient", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0][0]).toBe("http://127.0.0.1:4173/api/installer/switch-mode");
   });
+
+  test("sends shell session token when bootstrap data is injected", async () => {
+    const requests = [];
+    globalThis.fetch = async (url, init) => {
+      requests.push([url, init]);
+      return new Response(JSON.stringify({
+        ok: true,
+        message: "maintenance ok",
+      }), {
+        status: 202,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    };
+
+    globalThis.window = {
+      location: new URL("http://127.0.0.1:4174/"),
+      __AGENOS_SHELL_BOOTSTRAP__: {
+        sessionToken: "session-123",
+      },
+    };
+
+    const client = createSystemClient();
+    await expect(client.runMaintenance("terminal")).resolves.toEqual({
+      ok: true,
+      message: "maintenance ok",
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0][0]).toBe("http://127.0.0.1:4174/api/system/maintenance");
+    expect(requests[0][1].headers.get("X-Session-Token")).toBe("session-123");
+  });
 });
