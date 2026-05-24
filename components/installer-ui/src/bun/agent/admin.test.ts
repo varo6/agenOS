@@ -76,4 +76,52 @@ describe("agent admin service", () => {
       readiness: "needs_setup",
     });
   });
+
+  test("includes setup actions in backend status", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
+    const service = createAgentAdminService({
+      stateDir: rootDir,
+      env: { AGENOS_OPENCLAW_API_KEY: "secret" },
+      config: {
+        schemaVersion: 1,
+        mode: "auto",
+        provider: "openai",
+        model: "openai/gpt-5.5",
+        apiAuth: { type: "env", envVar: "AGENOS_OPENCLAW_API_KEY" },
+        stateDir: rootDir,
+        channels: { email: false, telegram: false, whatsapp: false },
+        policyDefaults: { memoryWrite: "confirm", outboundSend: "confirm" },
+      },
+      worker: { health: async () => ({ ok: true, mode: "agenos-bun-worker", serviceActive: true }) } as never,
+      setup: {
+        status: async () => ({
+          ok: false,
+          phase: "needs_auth",
+          message: "Backend Codex auth is not configured.",
+          actions: ["codex.login", "telegram.configure"],
+          telegram: { enabled: false, tokenConfigured: false },
+          codex: { configured: false, loginAvailable: true },
+        }),
+      } as never,
+    });
+
+    await expect(service.status()).resolves.toMatchObject({
+      ok: false,
+      readiness: "needs_setup",
+      setup: {
+        phase: "needs_auth",
+        actions: ["codex.login", "telegram.configure"],
+      },
+      setupItems: [
+        {
+          id: "backend-codex-auth",
+          action: "connect_backend_codex",
+        },
+        {
+          id: "telegram-channel",
+          action: "configure_telegram",
+        },
+      ],
+    });
+  });
 });

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/ui"
+AGENT_DIR="${ROOT_DIR}/components/agent"
 STATIC_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/share/agenos-ui"
 PACKAGE_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/system"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
@@ -25,11 +26,21 @@ source_hash() {
   )
 }
 
+agent_source_hash() {
+  (
+    cd "${AGENT_DIR}"
+    find . -type f -print 2>/dev/null \
+      | LC_ALL=C sort \
+      | xargs sha256sum
+  )
+}
+
 cd "${UI_DIR}"
 
 CURRENT_HASH="$(
   {
     source_hash
+    agent_source_hash
     sha256sum "${ROOT_DIR}/scripts/build-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -39,7 +50,7 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" ]]; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" && -f "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md" ]]; then
   echo "components/ui sin cambios; se reutiliza el build empaquetado."
   exit 0
 fi
@@ -82,6 +93,7 @@ rsync -a --delete "${UI_DIR}/dist/" "${PACKAGE_OUTPUT_DIR}/dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${PACKAGE_OUTPUT_DIR}/electron-app/"
 rsync -a --delete "${ELECTRON_DIST_DIR}/" "${PACKAGE_OUTPUT_DIR}/electron-dist/"
 install -m 0755 "${CODEX_BIN_PATH}" "${PACKAGE_OUTPUT_DIR}/codex-bin/codex"
+install -m 0644 "${AGENT_DIR}/pi-system-context.md" "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md"
 
 if [[ -f "${PACKAGE_OUTPUT_DIR}/electron-dist/chrome-sandbox" ]]; then
   chmod 0755 "${PACKAGE_OUTPUT_DIR}/electron-dist/chrome-sandbox"

@@ -24,6 +24,7 @@ import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { decidePolicy } from "./agent/policy";
+import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
 import { createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
@@ -74,6 +75,7 @@ export type InstallerApiDependencies = {
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
+  setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
 };
 
@@ -276,11 +278,13 @@ export function createInstallerApiHandler(
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
   const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const setup = dependencies.setup ?? createOpenClawSetupService();
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
     taskQueue,
     memoryStore,
     confirmations,
+    setup,
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
@@ -300,6 +304,7 @@ export function createInstallerApiHandler(
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     confirmations,
     agentAdmin,
+    setup,
     supportBundle,
     toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
@@ -566,6 +571,52 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
           return json(await deps.agentAdmin.status());
+        }
+
+        if (url.pathname === "/api/agent/setup/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.setup.status());
+        }
+
+        if (url.pathname === "/api/agent/setup/run") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.run(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/auth/codex/start") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.startCodexLogin(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/configure") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { token?: unknown };
+          if (typeof payload.token !== "string" || !payload.token.trim()) {
+            return json({ ok: false, message: "Telegram bot token is required." }, { status: 400 });
+          }
+          return json(await deps.setup.configureTelegram(payload.token), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/test") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.testTelegram(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/enable") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.enableTelegram(), { status: 202 });
         }
 
         if (url.pathname === "/api/agent/admin/config") {

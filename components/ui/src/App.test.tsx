@@ -5,6 +5,9 @@ import App from "./App";
 const mocks = vi.hoisted(() => ({
   agentAdminClient: {
     getStatus: vi.fn(),
+    getPolicy: vi.fn(),
+    listConfirmations: vi.fn(),
+    rerunSetup: vi.fn(),
   },
   agentClient: {
     appendMemory: vi.fn(),
@@ -154,5 +157,45 @@ describe("App chat recovery", () => {
     });
     expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
     expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
+  });
+
+  test("opens backend and explains the next OpenClaw setup step from chat", async () => {
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getPolicy.mockResolvedValue({ rules: [] });
+    mocks.agentAdminClient.listConfirmations.mockResolvedValue([]);
+    mocks.agentAdminClient.getStatus.mockResolvedValue({
+      ...readyAgentStatus,
+      ok: false,
+      readiness: "needs_setup",
+      setupItems: [
+        {
+          id: "backend-codex-auth",
+          label: "Connect backend Codex auth for OpenClaw.",
+          severity: "warning",
+          action: "connect_backend_codex",
+        },
+      ],
+      setup: {
+        phase: "needs_auth",
+        message: "Backend Codex auth is not configured.",
+        actions: ["codex.login", "telegram.configure"],
+      },
+    });
+    mocks.agentAdminClient.rerunSetup.mockResolvedValue({
+      ok: false,
+      phase: "needs_auth",
+      message: "Backend Codex auth is not configured.",
+      actions: ["codex.login", "telegram.configure"],
+    });
+
+    render(<App />);
+
+    const input = await screen.findByLabelText("Texto");
+    fireEvent.change(input, { target: { value: "haz un setup de openclaw" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
+
+    await waitFor(() => expect(mocks.agentAdminClient.rerunSetup).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("agenos-bun-worker")).toBeInTheDocument();
+    expect(screen.getByText(/Siguiente paso: conecta Codex backend/i)).toBeInTheDocument();
   });
 });

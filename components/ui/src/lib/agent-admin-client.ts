@@ -4,6 +4,7 @@ import type {
   AgentAdminStatus,
   AgentConfirmation,
   AgentPolicyResponse,
+  AgentSetupStateSummary,
 } from "./system-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
@@ -90,6 +91,31 @@ export function createAgentAdminClient(options: AgentAdminClientOptions = {}) {
         baseUrl,
         "/api/agent/admin/test-connection",
       );
+    },
+    getSetupStatus(): Promise<AgentSetupStateSummary & AgentActionResponse> {
+      return requestJson<AgentSetupStateSummary & AgentActionResponse>(baseUrl, "/api/agent/setup/status");
+    },
+    rerunSetup(): Promise<AgentSetupStateSummary & AgentActionResponse> {
+      return postJson<AgentSetupStateSummary & AgentActionResponse>(baseUrl, "/api/agent/setup/run");
+    },
+    startBackendCodexLogin(): Promise<AgentSetupStateSummary & AgentActionResponse & { command?: string[] }> {
+      return postJson<AgentSetupStateSummary & AgentActionResponse & { command?: string[] }>(
+        baseUrl,
+        "/api/agent/auth/codex/start",
+      );
+    },
+    configureTelegram(token: string): Promise<AgentSetupStateSummary & AgentActionResponse> {
+      return postJson<AgentSetupStateSummary & AgentActionResponse>(
+        baseUrl,
+        "/api/agent/channels/telegram/configure",
+        { token, explicitUserIntent: true },
+      );
+    },
+    testTelegram(): Promise<AgentSetupStateSummary & AgentActionResponse> {
+      return postJson<AgentSetupStateSummary & AgentActionResponse>(baseUrl, "/api/agent/channels/telegram/test");
+    },
+    enableTelegram(): Promise<AgentSetupStateSummary & AgentActionResponse> {
+      return postJson<AgentSetupStateSummary & AgentActionResponse>(baseUrl, "/api/agent/channels/telegram/enable");
     },
     retryTask(taskId: string): Promise<AgentActionResponse> {
       return postJson<AgentActionResponse>(baseUrl, `/api/agent/admin/tasks/${encodeURIComponent(taskId)}/retry`);

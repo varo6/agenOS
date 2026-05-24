@@ -73,4 +73,36 @@ describe("AgentOnboardingPanel", () => {
 
     expect(onConnectCodex).toHaveBeenCalledTimes(1);
   });
+
+  test("prioritizes backend Codex setup items before foreground login", () => {
+    const onOpenBackend = vi.fn();
+    render(
+      <AgentOnboardingPanel
+        adminStatus={{
+          ...readyStatus,
+          ok: false,
+          readiness: "needs_setup",
+          setupItems: [
+            {
+              id: "backend-codex-auth",
+              label: "Connect backend Codex auth for OpenClaw.",
+              severity: "warning",
+              action: "connect_backend_codex",
+            },
+          ],
+        }}
+        authState="disconnected"
+        backendError={null}
+        harnessAvailable
+        onConnectCodex={vi.fn()}
+        onOpenBackend={onOpenBackend}
+        onRefresh={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Setup del backend")).toBeInTheDocument();
+    expect(screen.getByText("Connect backend Codex auth for OpenClaw.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir Backend" }));
+    expect(onOpenBackend).toHaveBeenCalledTimes(1);
+  });
 });

@@ -12,6 +12,7 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 
+import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../../agent/pi-system-context";
 import { createAppTool, type AppOpenResponse } from "./agent/apps";
 import type {
   PiAuthAttemptResponse,
@@ -51,14 +52,7 @@ export function resolvePiHarnessPaths(
 const PI_PATHS = resolvePiHarnessPaths();
 const PI_AGENT_DIR = PI_PATHS.agentDir;
 const PI_AUTH_PATH = PI_PATHS.authPath;
-const PI_SYSTEM_PROMPT = [
-  "Responde siempre en espanol.",
-  "Se breve y util.",
-  "Puedes abrir aplicaciones locales permitidas con la herramienta apps_open cuando el usuario lo pida.",
-  "Usa apps_open sin pedir confirmacion para Chrome/navegador, terminal o archivos.",
-  "No inventes otras acciones de sistema, archivos o acciones externas.",
-  "Si algo requiere capacidades no disponibles en este MVP, dilo claramente.",
-].join("\n");
+export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 

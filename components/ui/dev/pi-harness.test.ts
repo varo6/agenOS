@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { createPiHarness, resolvePiHarnessPaths } from "./pi-harness";
+import { createPiHarness, PI_SYSTEM_PROMPT, resolvePiHarnessPaths } from "./pi-harness";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -192,6 +192,12 @@ async function flushTasks() {
 }
 
 describe("PiHarness", () => {
+  test("loads the foreground system prompt from markdown context", () => {
+    expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
+    expect(PI_SYSTEM_PROMPT).toContain("apps_open");
+    expect(PI_SYSTEM_PROMPT).not.toContain("[object");
+  });
+
   test("resolves packaged Codex state paths from AGENOS_PI_AGENT_DIR", () => {
     expect(resolvePiHarnessPaths({
       AGENOS_PI_AGENT_DIR: "/home/agenos/.agenos/ui-dev/pi",

@@ -13,6 +13,7 @@ Environment=AGENOS_OPENCLAW_USER_CONFIG=/home/agenos/.agenos/openclaw/config.jso
 Environment=AGENOS_OPENCLAW_STATE_DIR=/home/agenos/.agenos/openclaw
 Environment=AGENOS_WORKER_TOKEN_PATH=/home/agenos/.agenos/broker/worker-token
 WorkingDirectory=/home/agenos
+ExecStartPre=/usr/local/bin/agenos-openclaw-setup
 ExecStart=/usr/local/bin/agenos-openclaw-worker
 Restart=on-failure
 RestartSec=3

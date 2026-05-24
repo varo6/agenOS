@@ -53,8 +53,15 @@ function chooseStep({
   }
 
   if (adminStatus.readiness === "needs_setup") {
+    const backendSetupAction = adminStatus.setupItems.some((item) => (
+      item.action === "connect_backend_codex"
+      || item.action === "configure_telegram"
+      || item.action === "test_telegram"
+      || item.action === "enable_telegram"
+      || item.action === "rerun_setup"
+    ));
     return {
-      title: "Setup del agente",
+      title: backendSetupAction ? "Setup del backend" : "Setup del agente",
       detail: adminStatus.setupItems[0]?.label ?? "Completa la configuracion del provider antes de usar el agente real.",
       primary: { label: "Abrir Backend", action: "backend" },
       secondary: { label: "Refrescar salud", action: "refresh" },

@@ -29,7 +29,7 @@ import {
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
 import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
-import type { AgentAdminStatus } from "./lib/system-types";
+import type { AgentAdminStatus, AgentSetupStateSummary } from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
@@ -59,6 +59,26 @@ function describeAuthState(authState: PiAuthState): string {
   }
 }
 
+function describeOpenClawSetupStep(setup: Partial<AgentSetupStateSummary & { ok?: boolean; message?: string }>): string {
+  const actions = setup.actions ?? [];
+  if (actions.includes("codex.login")) {
+    return "Siguiente paso: conecta Codex backend desde la pestaña Backend. Después podrás probar OpenClaw y configurar Telegram.";
+  }
+  if (actions.includes("telegram.configure")) {
+    return "Siguiente paso: pega el token del bot de Telegram en Backend. Créalo con BotFather si todavía no lo tienes.";
+  }
+  if (actions.includes("telegram.test")) {
+    return "Siguiente paso: prueba Telegram desde Backend antes de activar el canal.";
+  }
+  if (actions.includes("telegram.enable")) {
+    return "Siguiente paso: activa Telegram desde Backend.";
+  }
+  if (setup.phase === "ready" || setup.ok) {
+    return "OpenClaw ya esta listo. Puedes revisar Backend para ver el estado o añadir canales.";
+  }
+  return setup.message ?? "He abierto Backend para continuar el setup de OpenClaw.";
+}
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [harnessAvailable, setHarnessAvailable] = useState(true);
@@ -76,6 +96,7 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [lastInput, setLastInput] = useState("");
   const [lastReply, setLastReply] = useState("");
+  const [setupAssistantMessage, setSetupAssistantMessage] = useState<string | null>(null);
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
@@ -164,6 +185,22 @@ export default function App() {
       try {
         const response = await agentClient.delegateBackgroundTask(command.message);
         setLastReply(response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
+        setChatState("idle");
+      } catch (error) {
+        setChatState("error");
+        setGlobalError(describeClientError(error));
+      }
+      return;
+    }
+
+    if (command.kind === "openclaw-setup") {
+      try {
+        const setup = await agentAdminClient.rerunSetup();
+        const setupMessage = describeOpenClawSetupStep(setup);
+        setLastReply(setupMessage);
+        setSetupAssistantMessage(setupMessage);
+        setActiveTab("backend");
+        await refreshAgentStatus();
         setChatState("idle");
       } catch (error) {
         setChatState("error");
@@ -475,7 +512,15 @@ export default function App() {
             </button>
           </div>
           {activeTab === "backend" ? (
-            <AgentAdminPanel client={agentAdminClient} />
+            <div className="grid w-full gap-4">
+              {setupAssistantMessage ? (
+                <section className="glass-panel p-4 text-left">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Setup guiado</p>
+                  <p className="mt-2 text-sm leading-6 text-white/75">{setupAssistantMessage}</p>
+                </section>
+              ) : null}
+              <AgentAdminPanel client={agentAdminClient} />
+            </div>
           ) : (
           <div className="flex w-full flex-col items-center gap-12 text-center">
             <div className="space-y-6">
