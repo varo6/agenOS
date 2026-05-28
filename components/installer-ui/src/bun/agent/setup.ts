@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
+const BUNDLED_WORKER_PATH = join(import.meta.dir, "worker", "agenos-worker-daemon.ts");
+
 export type OpenClawSetupPhase = "ready" | "needs_auth" | "needs_channel" | "degraded" | "failed";
 
 export type OpenClawSetupAction =
@@ -12,11 +14,14 @@ export type OpenClawSetupAction =
   | "telegram.enable"
   | "diagnostics.export";
 
+export type OpenClawWorkerMode = "openclaw" | "bundled" | "simulated";
+
 export type OpenClawSetupState = {
   schemaVersion: 1;
   ok: boolean;
   phase: OpenClawSetupPhase;
   message: string;
+  workerMode: OpenClawWorkerMode;
   openclaw: {
     installed: boolean;
     healthy: boolean;
@@ -46,6 +51,7 @@ export type OpenClawSetupState = {
 export type OpenClawSetupServiceOptions = {
   stateDir?: string;
   openClawBinaryPath?: string;
+  bundledWorkerPath?: string;
   env?: Record<string, string | undefined>;
   now?: () => Date;
   correlationIdFactory?: () => string;
@@ -61,6 +67,7 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
   const env = options.env ?? process.env;
   const stateDir = expandHome(options.stateDir ?? env.AGENOS_OPENCLAW_STATE_DIR ?? join(homedir(), ".agenos", "openclaw"));
   const binaryPath = options.openClawBinaryPath ?? env.AGENOS_OPENCLAW_BIN ?? DEFAULT_BINARY_PATH;
+  const bundledWorkerPath = options.bundledWorkerPath ?? BUNDLED_WORKER_PATH;
   const now = options.now ?? (() => new Date());
   const correlationIdFactory = options.correlationIdFactory ?? (() => `corr_${Date.now().toString(36)}`);
   const telegramProbe = options.telegramProbe ?? defaultTelegramProbe;
@@ -77,16 +84,26 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
       correlationId: correlationIdFactory(),
       message: "OpenClaw setup has not run yet.",
       openclawInstalled: existsSync(binaryPath),
+      bundledWorkerAvailable: existsSync(bundledWorkerPath),
     });
   }
 
   async function run(): Promise<OpenClawSetupState> {
+    const openclawInstalled = existsSync(binaryPath);
+    const bundledAvailable = existsSync(bundledWorkerPath);
+    let message: string;
+    if (openclawInstalled) {
+      message = "OpenClaw runtime detected. Backend auth and channels may still need setup.";
+    } else if (bundledAvailable) {
+      message = "Using bundled backend worker. Backend auth and channels may still need setup.";
+    } else {
+      message = `No backend worker available. OpenClaw binary not found: ${binaryPath}`;
+    }
     const state = buildState({
       correlationId: correlationIdFactory(),
-      message: existsSync(binaryPath)
-        ? "OpenClaw runtime detected. Backend auth and channels may still need setup."
-        : `OpenClaw binary not found: ${binaryPath}`,
-      openclawInstalled: existsSync(binaryPath),
+      message,
+      openclawInstalled,
+      bundledWorkerAvailable: bundledAvailable,
     });
     persistState(statePath, state);
     return state;
@@ -94,19 +111,21 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
 
   async function startCodexLogin(): Promise<OpenClawSetupState & { command: string[] }> {
     const base = await run();
+    const canLogin = base.openclaw.installed || base.workerMode === "bundled";
     const state: OpenClawSetupState = {
       ...base,
-      phase: base.openclaw.installed ? "needs_auth" : "degraded",
+      phase: canLogin ? "needs_auth" : "degraded",
       ok: false,
-      message: base.openclaw.installed
-        ? "Run backend Codex login with OpenClaw and complete the browser/device flow."
-        : "OpenClaw is not installed, so backend Codex login cannot start yet.",
+      message: canLogin
+        ? "Run backend Codex login and complete the browser/device flow."
+        : "No backend worker available, so Codex login cannot start yet.",
       codex: {
         ...base.codex,
-        loginAvailable: base.openclaw.installed,
+        loginAvailable: canLogin,
       },
       actions: actionsFor({
         openclawInstalled: base.openclaw.installed,
+        bundledWorkerAvailable: base.workerMode === "bundled",
         codexConfigured: false,
         telegramTokenConfigured: hasTelegramToken(),
         telegramEnabled: base.telegram.enabled,
@@ -135,6 +154,7 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
       correlationId: correlationIdFactory(),
       message: "Telegram token stored. Test the bot before enabling the channel.",
       openclawInstalled: existsSync(binaryPath),
+      bundledWorkerAvailable: existsSync(bundledWorkerPath),
       telegramTokenConfigured: true,
     });
     persistState(statePath, state);
@@ -190,6 +210,7 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
     correlationId: string;
     message: string;
     openclawInstalled: boolean;
+    bundledWorkerAvailable?: boolean;
     codexConfigured?: boolean;
     codexProfile?: string | null;
     telegramTokenConfigured?: boolean;
@@ -203,7 +224,14 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
     const openclawHealthy = input.openclawInstalled;
     const telegramEnabled = input.telegramEnabled ?? false;
     const telegramNeedsSetup = telegramEnabled && (!telegramTokenConfigured || input.telegramLastTestOk === false);
-    const phase: OpenClawSetupPhase = !input.openclawInstalled
+    const bundledAvailable = input.bundledWorkerAvailable ?? existsSync(bundledWorkerPath);
+    const hasBackend = input.openclawInstalled || bundledAvailable;
+    const workerMode: OpenClawWorkerMode = input.openclawInstalled
+      ? "openclaw"
+      : bundledAvailable
+        ? "bundled"
+        : "simulated";
+    const phase: OpenClawSetupPhase = !hasBackend
       ? "degraded"
       : !codexConfigured
         ? "needs_auth"
@@ -216,18 +244,19 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
       ok: phase === "ready",
       phase,
       message: input.message,
+      workerMode,
       openclaw: {
         installed: input.openclawInstalled,
         healthy: openclawHealthy,
         binaryPath,
         version: input.openclawInstalled ? "detected" : null,
         gatewayUrl: input.openclawInstalled ? "http://127.0.0.1:18789" : null,
-        lastError: input.openclawInstalled ? null : `OpenClaw binary not found: ${binaryPath}`,
+        lastError: hasBackend ? null : `No backend worker available. OpenClaw binary not found: ${binaryPath}`,
       },
       codex: {
         configured: codexConfigured,
         profile: input.codexProfile ?? null,
-        loginAvailable: input.openclawInstalled,
+        loginAvailable: hasBackend,
         lastError: codexConfigured ? null : "Backend Codex auth is not configured.",
       },
       telegram: {
@@ -239,6 +268,7 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
       },
       actions: actionsFor({
         openclawInstalled: input.openclawInstalled,
+        bundledWorkerAvailable: bundledAvailable,
         codexConfigured,
         telegramTokenConfigured,
         telegramEnabled,
@@ -295,13 +325,15 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
 
 function actionsFor(input: {
   openclawInstalled: boolean;
+  bundledWorkerAvailable?: boolean;
   codexConfigured: boolean;
   telegramTokenConfigured: boolean;
   telegramEnabled: boolean;
   telegramLastTestOk: boolean | null;
 }): OpenClawSetupAction[] {
   const actions: OpenClawSetupAction[] = ["setup.rerun", "diagnostics.export"];
-  if (input.openclawInstalled && !input.codexConfigured) {
+  const hasBackend = input.openclawInstalled || Boolean(input.bundledWorkerAvailable);
+  if (hasBackend && !input.codexConfigured) {
     actions.push("codex.login");
   }
   if (!input.telegramTokenConfigured) {

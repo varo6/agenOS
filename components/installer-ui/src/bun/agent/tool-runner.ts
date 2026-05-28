@@ -1,5 +1,6 @@
 import { decidePolicy, type AgentSource, type PolicyDecision } from "./policy";
 import { isMemoryNamespace, type createMemoryStore } from "./memory";
+import { runShellCommand, type ShellExecResult } from "../../../../agent/shell";
 
 export type ConfirmationRequestInput = {
   source: AgentSource;
@@ -28,11 +29,13 @@ export type ToolRunResult = {
   correlationId?: string;
   message?: string;
   confirmationId?: string;
+  shell?: ShellExecResult;
 };
 
 export type ToolRunnerOptions = {
   confirmations?: ConfirmationStoreLike;
   memoryStore?: ReturnType<typeof createMemoryStore>;
+  shellTool?: typeof runShellCommand;
   correlationIdFactory?: () => string;
 };
 
@@ -97,6 +100,22 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
             message: response.message,
           };
         }
+      }
+
+      if (input.tool === "shell.exec" && input.source === "ui" && input.input && typeof input.input === "object") {
+        const commandInput = input.input as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
+        const shell = await (options.shellTool ?? runShellCommand)({
+          command: typeof commandInput.command === "string" ? commandInput.command : "",
+          cwd: typeof commandInput.cwd === "string" ? commandInput.cwd : undefined,
+          timeoutMs: typeof commandInput.timeoutMs === "number" ? commandInput.timeoutMs : undefined,
+        });
+        return {
+          ok: shell.ok,
+          decision: "allow",
+          ...(includeCorrelationId ? { correlationId } : {}),
+          message: shell.message,
+          shell,
+        };
       }
 
       return {

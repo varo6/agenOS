@@ -44,6 +44,16 @@ export type AgentActionResponse = {
   message?: string;
 };
 
+export type AgentShellExecResponse = AgentActionResponse & {
+  command: string;
+  cwd: string;
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
 export type AgentTaskResponse = AgentActionResponse & {
   taskId?: string;
 };

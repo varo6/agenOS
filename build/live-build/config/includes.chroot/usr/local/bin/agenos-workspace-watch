@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+import time
+
+
+HOME_WORKSPACE = "1:home"
+APP_WORKSPACE = "2:app"
+
+
+def run_swaymsg(*args: str) -> str:
+    return subprocess.check_output(["swaymsg", *args], text=True, stderr=subprocess.DEVNULL)
+
+
+def walk(node):
+    yield node
+    for key in ("nodes", "floating_nodes"):
+        for child in node.get(key, []):
+            yield from walk(child)
+
+
+def get_tree():
+    return json.loads(run_swaymsg("-t", "get_tree"))
+
+
+def workspace_named(tree, name: str):
+    for node in walk(tree):
+        if node.get("type") == "workspace" and node.get("name") == name:
+            return node
+    return None
+
+
+def focused_workspace(tree):
+    for node in walk(tree):
+        if node.get("type") == "workspace" and node.get("focused") is True:
+            return node.get("name")
+    return None
+
+
+def workspace_has_views(workspace) -> bool:
+    if not workspace:
+        return False
+
+    for node in walk(workspace):
+        if node is workspace:
+            continue
+        if node.get("type") not in ("con", "floating_con"):
+            continue
+        if node.get("app_id") or node.get("window") or node.get("pid"):
+            return True
+
+    return False
+
+
+def return_home_if_app_workspace_is_empty() -> None:
+    # Let Sway finish processing close/move/focus batches before inspecting the tree.
+    time.sleep(0.15)
+    tree = get_tree()
+    if focused_workspace(tree) != APP_WORKSPACE:
+        return
+
+    if workspace_has_views(workspace_named(tree, APP_WORKSPACE)):
+        return
+
+    subprocess.run(["swaymsg", "workspace", HOME_WORKSPACE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def subscribe_forever() -> None:
+    while True:
+        try:
+            return_home_if_app_workspace_is_empty()
+            process = subprocess.Popen(
+                ["swaymsg", "-t", "subscribe", '["window", "workspace"]'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+
+            assert process.stdout is not None
+            for line in process.stdout:
+                if line.strip():
+                    return_home_if_app_workspace_is_empty()
+
+            process.wait(timeout=1)
+        except Exception:
+            time.sleep(1)
+
+
+if __name__ == "__main__":
+    subscribe_forever()

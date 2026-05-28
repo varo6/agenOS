@@ -2,6 +2,7 @@ import type {
   AgentActionResponse,
   AgentMemoryNamespace,
   AgentMemoryResponse,
+  AgentShellExecResponse,
   AgentTaskResponse,
 } from "./system-types";
 
@@ -84,6 +85,13 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app }),
+      });
+    },
+    executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<AgentShellExecResponse> {
+      return requestJson<AgentShellExecResponse>(baseUrl, "/api/agent/shell/exec", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command, cwd, timeoutMs }),
       });
     },
   };

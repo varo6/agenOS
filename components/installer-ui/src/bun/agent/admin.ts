@@ -183,6 +183,7 @@ function normalizeSetup(setup: Partial<OpenClawSetupState>): OpenClawSetupState 
     ok: setup.ok ?? false,
     phase: setup.phase ?? "degraded",
     message: setup.message ?? "OpenClaw setup state is unavailable.",
+    workerMode: setup.workerMode ?? "simulated",
     openclaw: setup.openclaw ?? {
       installed: false,
       healthy: false,

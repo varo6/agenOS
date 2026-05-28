@@ -5,6 +5,7 @@ import type {
   AgentConfirmation,
   AgentPolicyResponse,
   AgentSetupStateSummary,
+  AgentShellExecResponse,
 } from "./system-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
@@ -134,6 +135,14 @@ export function createAgentAdminClient(options: AgentAdminClientOptions = {}) {
     },
     deny(confirmationId: string): Promise<AgentActionResponse> {
       return postJson<AgentActionResponse>(baseUrl, `/api/agent/confirmations/${encodeURIComponent(confirmationId)}/deny`);
+    },
+    executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<AgentShellExecResponse> {
+      return postJson<AgentShellExecResponse>(baseUrl, "/api/agent/shell/exec", {
+        command,
+        cwd,
+        timeoutMs,
+        explicitUserIntent: true,
+      });
     },
   };
 }

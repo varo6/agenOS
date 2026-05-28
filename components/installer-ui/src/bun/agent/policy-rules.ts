@@ -23,6 +23,14 @@ function all(...predicates: Array<(request: PolicyRequest) => boolean>): (reques
 
 export const POLICY_RULES: PolicyRule[] = [
   {
+    ruleId: "agent.ui.superuser.allow",
+    tool: "*",
+    source: "ui",
+    decision: "allow",
+    reason: "Accion local explicita desde el frontend de AgenOS.",
+    matches: sourceIs("ui"),
+  },
+  {
     ruleId: "agent.shell.deny",
     tool: "shell.exec",
     source: "*",

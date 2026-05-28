@@ -17,10 +17,10 @@ describe("agent command classifier", () => {
     });
   });
 
-  test("detects OpenClaw setup requests", () => {
-    expect(classifyAgentCommand("haz un setup de openclaw")).toEqual({ kind: "openclaw-setup" });
-    expect(classifyAgentCommand("configura OpenClaw para telegram")).toEqual({ kind: "openclaw-setup" });
-    expect(classifyAgentCommand("quiero conectar telegram al backend")).toEqual({ kind: "openclaw-setup" });
+  test("leaves OpenClaw setup requests for the foreground agent", () => {
+    expect(classifyAgentCommand("haz un setup de openclaw")).toEqual({ kind: "foreground" });
+    expect(classifyAgentCommand("configura OpenClaw para telegram")).toEqual({ kind: "foreground" });
+    expect(classifyAgentCommand("quiero conectar telegram al backend")).toEqual({ kind: "foreground" });
   });
 
   test("leaves app launch requests for the foreground agent", () => {
@@ -35,7 +35,7 @@ describe("agent command classifier", () => {
   test("distinguishes broker commands from foreground chat", () => {
     expect(isBrokerCommand(classifyAgentCommand("recuerda que Pablo Lopez es mi profesor"))).toBe(true);
     expect(isBrokerCommand(classifyAgentCommand("manda esto al trabajador de fondo: prepara un email"))).toBe(true);
-    expect(isBrokerCommand(classifyAgentCommand("haz un setup de openclaw"))).toBe(true);
+    expect(isBrokerCommand(classifyAgentCommand("haz un setup de openclaw"))).toBe(false);
     expect(isBrokerCommand(classifyAgentCommand("abre Chrome"))).toBe(false);
     expect(isBrokerCommand(classifyAgentCommand("hola"))).toBe(false);
   });

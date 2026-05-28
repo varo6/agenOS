@@ -10,6 +10,7 @@ describe("OpenClaw setup service", () => {
     const service = createOpenClawSetupService({
       stateDir: rootDir,
       openClawBinaryPath: join(rootDir, "missing-openclaw"),
+      bundledWorkerPath: join(rootDir, "missing-bundled-worker"),
       env: {},
       now: () => new Date("2026-05-24T12:00:00.000Z"),
       correlationIdFactory: () => "corr_setup_missing",
@@ -44,6 +45,7 @@ describe("OpenClaw setup service", () => {
     const service = createOpenClawSetupService({
       stateDir: rootDir,
       openClawBinaryPath: join(rootDir, "missing-openclaw"),
+      bundledWorkerPath: join(rootDir, "missing-bundled-worker"),
       env: {},
       now: () => new Date("2026-05-24T12:00:00.000Z"),
       correlationIdFactory: () => "corr_telegram_configure",
@@ -69,6 +71,7 @@ describe("OpenClaw setup service", () => {
     const service = createOpenClawSetupService({
       stateDir: rootDir,
       openClawBinaryPath: join(rootDir, "missing-openclaw"),
+      bundledWorkerPath: join(rootDir, "missing-bundled-worker"),
       env: { OPENCLAW_TELEGRAM_BOT_TOKEN: "123456:telegram-secret" },
       now: () => new Date("2026-05-24T12:00:00.000Z"),
       correlationIdFactory: () => "corr_telegram_test",

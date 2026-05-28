@@ -1,8 +1,7 @@
 export type AgentCommand =
   | { kind: "foreground" }
   | { kind: "memory"; namespace: "facts"; content: string }
-  | { kind: "background"; message: string }
-  | { kind: "openclaw-setup" };
+  | { kind: "background"; message: string };
 
 export function classifyAgentCommand(input: string): AgentCommand {
   const trimmed = input.trim();
@@ -24,29 +23,9 @@ export function classifyAgentCommand(input: string): AgentCommand {
     };
   }
 
-  if (
-    lower.includes("openclaw") && (
-      lower.includes("setup")
-      || lower.includes("configura")
-      || lower.includes("configurar")
-      || lower.includes("onboard")
-      || lower.includes("onboarding")
-    )
-  ) {
-    return { kind: "openclaw-setup" };
-  }
-
-  if (
-    lower.includes("telegram")
-    && (lower.includes("backend") || lower.includes("openclaw") || lower.includes("bot"))
-    && (lower.includes("conecta") || lower.includes("conectar") || lower.includes("configura") || lower.includes("setup"))
-  ) {
-    return { kind: "openclaw-setup" };
-  }
-
   return { kind: "foreground" };
 }
 
 export function isBrokerCommand(command: AgentCommand): boolean {
-  return command.kind === "memory" || command.kind === "background" || command.kind === "openclaw-setup";
+  return command.kind === "memory" || command.kind === "background";
 }

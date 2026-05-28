@@ -10,6 +10,9 @@ VM_RAM_MB="${VM_RAM_MB:-8192}"
 VM_CPUS="${VM_CPUS:-4}"
 VM_DISK="${VM_DISK:-${STATE_DIR}/${VM_NAME}.qcow2}"
 VM_DISK_SIZE="${VM_DISK_SIZE:-32G}"
+VM_LIVE_PERSISTENCE="${VM_LIVE_PERSISTENCE:-1}"
+VM_PERSIST_DISK="${VM_PERSIST_DISK:-${STATE_DIR}/${VM_NAME}-live-home.ext4}"
+VM_PERSIST_SIZE="${VM_PERSIST_SIZE:-8G}"
 VM_UEFI="${VM_UEFI:-auto}"
 VM_DISPLAY="${VM_DISPLAY:-default}"
 VM_NET="${VM_NET:-user}"
@@ -32,6 +35,9 @@ Variables utiles:
   ISO_PATH=/ruta/a/agenos.iso
   VM_DISK=/ruta/a/agenos.qcow2
   VM_DISK_SIZE=48G
+  VM_LIVE_PERSISTENCE=1|0
+  VM_PERSIST_DISK=/ruta/a/agenos-live-home.ext4
+  VM_PERSIST_SIZE=16G
   VM_RAM_MB=8192
   VM_CPUS=8
   VM_UEFI=auto|1|0
@@ -120,9 +126,10 @@ resolve_ovmf() {
 reset_vm_state() {
   local vars_copy="${STATE_DIR}/${VM_NAME}.ovmf-vars.fd"
 
-  rm -f "${VM_DISK}" "${vars_copy}"
+  rm -f "${VM_DISK}" "${VM_PERSIST_DISK}" "${vars_copy}"
   echo "Estado de la VM eliminado:"
   echo "  - disco: ${VM_DISK}"
+  echo "  - persistencia live: ${VM_PERSIST_DISK}"
   echo "  - nvram: ${vars_copy}"
 }
 
@@ -132,6 +139,25 @@ prepare_disk() {
   if [[ ! -f "${VM_DISK}" ]]; then
     qemu-img create -f qcow2 "${VM_DISK}" "${VM_DISK_SIZE}" >/dev/null
     echo "Disco creado en ${VM_DISK} (${VM_DISK_SIZE})"
+  fi
+}
+
+prepare_live_persistence() {
+  if [[ "${VM_LIVE_PERSISTENCE}" != "1" && "${VM_LIVE_PERSISTENCE}" != "true" && "${VM_LIVE_PERSISTENCE}" != "yes" ]]; then
+    return 0
+  fi
+
+  require_command mkfs.ext4
+  mkdir -p "${STATE_DIR}"
+  mkdir -p "$(dirname "${VM_PERSIST_DISK}")"
+  if [[ ! -f "${VM_PERSIST_DISK}" ]]; then
+    local mount_dir
+    mount_dir="$(mktemp -d)"
+    printf '/home\n' >"${mount_dir}/persistence.conf"
+    qemu-img create -f raw "${VM_PERSIST_DISK}" "${VM_PERSIST_SIZE}" >/dev/null
+    mkfs.ext4 -F -L persistence -d "${mount_dir}" "${VM_PERSIST_DISK}" >/dev/null
+    rm -rf "${mount_dir}"
+    echo "Disco de persistencia live creado en ${VM_PERSIST_DISK} (${VM_PERSIST_SIZE})"
   fi
 }
 
@@ -240,6 +266,9 @@ build_qemu_args() {
       -boot order=d,menu=on
       -drive "file=${ISO_PATH},media=cdrom,if=ide"
     )
+    if [[ "${VM_LIVE_PERSISTENCE}" == "1" || "${VM_LIVE_PERSISTENCE}" == "true" || "${VM_LIVE_PERSISTENCE}" == "yes" ]]; then
+      QEMU_ARGS+=(-drive "if=virtio,format=raw,file=${VM_PERSIST_DISK}")
+    fi
   else
     QEMU_ARGS+=(-boot order=c)
   fi
@@ -294,6 +323,7 @@ esac
 
 if [[ "${MODE}" == "live" ]]; then
   prepare_disk
+  prepare_live_persistence
 elif [[ ! -f "${VM_DISK}" ]]; then
   echo "No existe el disco persistente ${VM_DISK}. Primero ejecuta 'make vm-live' para instalar AgenOS." >&2
   exit 1
@@ -303,6 +333,9 @@ build_qemu_args
 
 if [[ "${MODE}" == "live" ]]; then
   echo "Arrancando ISO: ${ISO_PATH}"
+  if [[ "${VM_LIVE_PERSISTENCE}" == "1" || "${VM_LIVE_PERSISTENCE}" == "true" || "${VM_LIVE_PERSISTENCE}" == "yes" ]]; then
+    echo "Persistencia live /home: ${VM_PERSIST_DISK}"
+  fi
 else
   echo "Arrancando disco: ${VM_DISK}"
 fi

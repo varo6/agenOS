@@ -40,4 +40,31 @@ describe("agent tool runner", () => {
     });
     expect(created).toHaveLength(1);
   });
+
+  test("executes shell from the frontend superuser", async () => {
+    const runner = createToolRunner({
+      shellTool: async (input) => ({
+        ok: true,
+        command: input.command,
+        cwd: "/tmp",
+        exitCode: 0,
+        signal: null,
+        stdout: "uid=1000\n",
+        stderr: "",
+        timedOut: false,
+        message: "Comando completado.",
+      }),
+    });
+
+    await expect(runner.run({
+      source: "ui",
+      tool: "shell.exec",
+      input: { command: "id" },
+    })).resolves.toMatchObject({
+      ok: true,
+      decision: "allow",
+      message: "Comando completado.",
+      shell: { stdout: "uid=1000\n" },
+    });
+  });
 });

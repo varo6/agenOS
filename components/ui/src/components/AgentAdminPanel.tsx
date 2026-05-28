@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   Download,
   FlaskConical,
+  Play,
   RefreshCcw,
   RotateCcw,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -38,8 +40,11 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState("");
+  const [shellCommand, setShellCommand] = useState("pwd && id");
+  const [shellOutput, setShellOutput] = useState("");
+  const [shellRunning, setShellRunning] = useState(false);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const [nextStatus, policy, pending] = await Promise.all([
         client.getStatus(),
@@ -53,11 +58,11 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "No se pudo leer el backend.");
     }
-  }
+  }, [client]);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   const pendingConfirmations = useMemo(
     () => confirmations.filter((confirmation) => confirmation.status === "pending"),
@@ -72,6 +77,32 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
       await refresh();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "No se pudo completar la accion.");
+    }
+  }
+
+  async function runShell() {
+    const command = shellCommand.trim();
+    if (!command) {
+      setError("Escribe un comando.");
+      return;
+    }
+
+    setShellRunning(true);
+    try {
+      const response = await client.executeShell(command);
+      const blocks = [
+        `$ ${response.command}`,
+        response.stdout.trim() ? response.stdout.trim() : "",
+        response.stderr.trim() ? response.stderr.trim() : "",
+        `[exit ${response.exitCode ?? "signal"}${response.timedOut ? " timeout" : ""}] ${response.message ?? ""}`.trim(),
+      ].filter(Boolean);
+      setShellOutput(blocks.join("\n"));
+      setMessage(response.message ?? "Comando completado.");
+      setError(response.ok ? null : response.message ?? "El comando fallo.");
+    } catch (shellError) {
+      setError(shellError instanceof Error ? shellError.message : "No se pudo ejecutar el comando.");
+    } finally {
+      setShellRunning(false);
     }
   }
 
@@ -157,7 +188,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
           <label className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35" htmlFor="agent-state-dir">
             State dir
           </label>
-          <input className="glass-input mt-2" id="agent-state-dir" readOnly value={status.config.stateDir} />
+          <input aria-label="State dir" className="glass-input mt-2" id="agent-state-dir" readOnly value={status.config.stateDir} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary px-3 py-2 text-sm" onClick={() => void runAction(() => client.updateConfig({ mode: "auto" }), "Modo auto solicitado.")} type="button">
               Auto
@@ -172,7 +203,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
 
         <div className="rounded-lg border border-white/8 bg-black/20 p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Tarea</p>
-          <input className="glass-input mt-2" onChange={(event) => setSelectedTaskId(event.target.value)} placeholder="task id" value={selectedTaskId} />
+          <input aria-label="Task id" className="glass-input mt-2" onChange={(event) => setSelectedTaskId(event.target.value)} placeholder="task id" value={selectedTaskId} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" disabled={!selectedTaskId} onClick={() => void runAction(() => client.retryTask(selectedTaskId), "Retry solicitado.")} type="button">
               <RefreshCcw className="h-4 w-4" />
@@ -184,6 +215,45 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-lg border border-white/8 bg-black/20 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Shell local</p>
+            <p className="mt-1 text-xs text-white/45">bash access desde el frontend</p>
+          </div>
+          <button
+            aria-label="Ejecutar comando shell"
+            className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm"
+            disabled={shellRunning || !shellCommand.trim()}
+            onClick={() => void runShell()}
+            type="button"
+          >
+            <Play className="h-4 w-4" />
+            {shellRunning ? "Ejecutando" : "Ejecutar"}
+          </button>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Terminal className="h-4 w-4 text-white/45" />
+          <input
+            aria-label="Comando shell"
+            className="glass-input font-mono"
+            onChange={(event) => setShellCommand(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                void runShell();
+              }
+            }}
+            spellCheck={false}
+            value={shellCommand}
+          />
+        </div>
+        {shellOutput ? (
+          <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-black/35 p-3 font-mono text-xs leading-relaxed text-white/70">
+            {shellOutput}
+          </pre>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

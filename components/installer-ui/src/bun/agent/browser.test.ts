@@ -14,11 +14,12 @@ describe("browser tool", () => {
     expect(() => normalizeBrowserUrl("file:///etc/passwd")).toThrow("Solo se permiten URLs http o https.");
   });
 
-  test("opens normalized urls through xdg-open", async () => {
-    const calls: Array<[string, string[]]> = [];
+  test("opens normalized urls through Chromium launcher", async () => {
+    const opened: string[] = [];
     const tool = createBrowserTool({
-      spawnCommand: (command, args) => {
-        calls.push([command, args]);
+      browserLauncher: (url) => {
+        opened.push(url);
+        return { command: "chromium", args: ["--new-window", "https://netflix.com/"], url: "https://netflix.com/" };
       },
     });
 
@@ -26,6 +27,6 @@ describe("browser tool", () => {
       ok: true,
       message: "Abriendo https://netflix.com/.",
     });
-    expect(calls).toEqual([["xdg-open", ["https://netflix.com/"]]]);
+    expect(opened).toEqual(["netflix.com"]);
   });
 });
