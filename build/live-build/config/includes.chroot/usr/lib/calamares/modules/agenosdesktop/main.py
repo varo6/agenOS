@@ -13,6 +13,8 @@ _ = gettext.translation(
     fallback=True,
 ).gettext
 
+USER_HOME_DIRS = ["Documentos", "Fotos", "Musica", "Trabajo"]
+
 
 def pretty_name():
     return _("Configurando shell gráfica de AgenOS.")
@@ -70,6 +72,43 @@ def _ensure_user_state_dirs(target_root: Path, username: str) -> None:
         directory.chmod(0o700)
         if user_ids is not None:
             os.chown(directory, user_ids[0], user_ids[1])
+
+
+def _ensure_user_home_dirs(target_root: Path, username: str) -> None:
+    home_dir = target_root / "home" / username
+    user_ids = _target_user_ids(target_root, username)
+
+    for name in USER_HOME_DIRS:
+        directory = home_dir / name
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o755)
+        if user_ids is not None:
+            os.chown(directory, user_ids[0], user_ids[1])
+
+    config_dir = home_dir / ".config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.chmod(0o700)
+    user_dirs = config_dir / "user-dirs.dirs"
+    user_dirs.write_text(
+        "\n".join(
+            [
+                'XDG_DESKTOP_DIR="$HOME/Trabajo"',
+                'XDG_DOCUMENTS_DIR="$HOME/Documentos"',
+                'XDG_DOWNLOAD_DIR="$HOME/Documentos"',
+                'XDG_MUSIC_DIR="$HOME/Musica"',
+                'XDG_PICTURES_DIR="$HOME/Fotos"',
+                'XDG_PUBLICSHARE_DIR="$HOME/Documentos"',
+                'XDG_TEMPLATES_DIR="$HOME/Documentos"',
+                'XDG_VIDEOS_DIR="$HOME/Fotos"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    user_dirs.chmod(0o600)
+    if user_ids is not None:
+        os.chown(config_dir, user_ids[0], user_ids[1])
+        os.chown(user_dirs, user_ids[0], user_ids[1])
 
 
 def _write_shell_config(target_root: Path) -> None:
@@ -148,6 +187,7 @@ def run():
     if not username:
         return (_("Configuración inválida"), _("No se ha encontrado el usuario final del sistema."))
 
+    _ensure_user_home_dirs(target_root, str(username))
     _ensure_user_state_dirs(target_root, str(username))
     _write_shell_config(target_root)
     _write_greetd_config(target_root, str(username))

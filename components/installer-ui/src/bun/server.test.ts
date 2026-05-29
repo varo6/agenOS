@@ -45,6 +45,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       instructions: "Completa el login",
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),
+    cancelAuth: () => null,
     getAuthAttempt: (attemptId: string) => ({
       attemptId,
       method: "browser" as const,
@@ -625,6 +626,34 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(202);
     expect(opened).toEqual(["Chrome"]);
+  });
+
+  test("agent shell route executes explicit frontend commands", async () => {
+    const commands: string[] = [];
+    const shellTool = async (input: { command: string; cwd?: string; timeoutMs?: number }) => {
+      commands.push(input.command);
+      return {
+        ok: true,
+        command: input.command,
+        cwd: input.cwd ?? "/home/agenos",
+        exitCode: 0,
+        signal: null,
+        stdout: "uid=1000\n",
+        stderr: "",
+        timedOut: false,
+        message: "Comando completado.",
+      };
+    };
+    const handler = createInstallerApiHandler({ shellTool: shellTool as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/shell/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "id" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toMatchObject({ ok: true, stdout: "uid=1000\n" });
+    expect(commands).toEqual(["id"]);
   });
 
   test("agent admin endpoints expose status config and policy", async () => {

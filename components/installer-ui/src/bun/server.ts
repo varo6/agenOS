@@ -20,6 +20,7 @@ import {
 } from "../shared/installer-http";
 import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
+import { runShellCommand } from "../../../agent/shell";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
@@ -49,6 +50,7 @@ import type {
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
   startAuth(): Promise<PiPendingAttempt>;
+  cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
@@ -71,6 +73,7 @@ export type InstallerApiDependencies = {
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
@@ -257,6 +260,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     startAuth() {
       return getHarness().startAuth();
     },
+    cancelAuth(attemptId?: string) {
+      return getHarness().cancelAuth(attemptId);
+    },
     getAuthAttempt(attemptId: string) {
       return getHarness().getAuthAttempt(attemptId);
     },
@@ -297,16 +303,17 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(dependencies.createPiHarness ?? createPiHarness),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup })),
     memoryStore,
     taskQueue,
     appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
+    shellTool: dependencies.shellTool ?? runShellCommand,
     confirmations,
     agentAdmin,
     setup,
     supportBundle,
-    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
+    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool: dependencies.shellTool ?? runShellCommand }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
@@ -476,6 +483,20 @@ export function createInstallerApiHandler(
 
           try {
             return json(await deps.piHarness.startAuth());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/auth/cancel") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { attemptId?: unknown };
+            deps.piHarness.cancelAuth(typeof payload.attemptId === "string" ? payload.attemptId : undefined);
+            return json({ ok: true });
           } catch (error) {
             return piErrorResponse(error);
           }
@@ -870,6 +891,26 @@ export function createInstallerApiHandler(
           }
 
           const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/agent/shell/exec") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
+          const policy = decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, {
+              status: policy.decision === "deny" ? 403 : 409,
+            });
+          }
+
+          const response = await deps.shellTool({
+            command: typeof payload.command === "string" ? payload.command : "",
+            cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+            timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined,
+          });
           return json(response, { status: response.ok ? 202 : 400 });
         }
 

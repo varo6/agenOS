@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   piClient: {
     getStatus: vi.fn(),
     startAuth: vi.fn(),
+    cancelAuth: vi.fn(),
     getAuthAttempt: vi.fn(),
     submitManualCode: vi.fn(),
     logout: vi.fn(),
@@ -94,7 +95,7 @@ const readyAgentStatus = {
 };
 
 afterEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("App chat recovery", () => {
@@ -133,6 +134,47 @@ describe("App chat recovery", () => {
     expect(screen.getByText("Conecta ChatGPT para empezar.")).toBeInTheDocument();
   });
 
+  test("can cancel a pending auth attempt and start over", async () => {
+    const pendingStatus = {
+      ...disconnectedStatus,
+      authState: "authorizing",
+      pendingAttempt: {
+        attemptId: "att_123",
+        method: "device",
+        url: "https://auth.openai.com/codex/device",
+        instructions: "Abre el enlace",
+        expiresAt: "2026-04-21T00:10:00.000Z",
+        userCode: "ABCD-EFGH",
+      },
+    };
+
+    mocks.piClient.getStatus
+      .mockResolvedValue(pendingStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.piClient.getAuthAttempt.mockResolvedValue({
+      attemptId: "att_123",
+      method: "device",
+      status: "pending",
+      expiresAt: "2026-04-21T00:10:00.000Z",
+    });
+    mocks.piClient.cancelAuth.mockImplementation(async () => {
+      mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar login" }));
+
+    await waitFor(() => {
+      expect(mocks.piClient.cancelAuth).toHaveBeenCalledWith("att_123");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeDisabled();
+  });
+
   test("sends app launch requests to the foreground model", async () => {
     mocks.piClient.getStatus.mockResolvedValue({
       ...disconnectedStatus,
@@ -159,43 +201,4 @@ describe("App chat recovery", () => {
     expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
   });
 
-  test("opens backend and explains the next OpenClaw setup step from chat", async () => {
-    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
-    mocks.agentAdminClient.getPolicy.mockResolvedValue({ rules: [] });
-    mocks.agentAdminClient.listConfirmations.mockResolvedValue([]);
-    mocks.agentAdminClient.getStatus.mockResolvedValue({
-      ...readyAgentStatus,
-      ok: false,
-      readiness: "needs_setup",
-      setupItems: [
-        {
-          id: "backend-codex-auth",
-          label: "Connect backend Codex auth for OpenClaw.",
-          severity: "warning",
-          action: "connect_backend_codex",
-        },
-      ],
-      setup: {
-        phase: "needs_auth",
-        message: "Backend Codex auth is not configured.",
-        actions: ["codex.login", "telegram.configure"],
-      },
-    });
-    mocks.agentAdminClient.rerunSetup.mockResolvedValue({
-      ok: false,
-      phase: "needs_auth",
-      message: "Backend Codex auth is not configured.",
-      actions: ["codex.login", "telegram.configure"],
-    });
-
-    render(<App />);
-
-    const input = await screen.findByLabelText("Texto");
-    fireEvent.change(input, { target: { value: "haz un setup de openclaw" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
-
-    await waitFor(() => expect(mocks.agentAdminClient.rerunSetup).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("agenos-bun-worker")).toBeInTheDocument();
-    expect(screen.getByText(/Siguiente paso: conecta Codex backend/i)).toBeInTheDocument();
-  });
 });

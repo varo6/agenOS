@@ -101,6 +101,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
   startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {
     return invokePi<PiPendingAttempt>(PI_IPC_CHANNELS.startAuth, { method });
   },
+  async cancelAuth(attemptId?: string): Promise<void> {
+    await invokePi<void>(PI_IPC_CHANNELS.cancelAuth, { attemptId });
+  },
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse> {
     return invokePi<PiAuthAttemptResponse>(PI_IPC_CHANNELS.getAuthAttempt, { attemptId });
   },

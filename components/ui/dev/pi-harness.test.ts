@@ -45,6 +45,7 @@ function createHarnessFixture() {
   };
   let createSessionOptions: unknown;
   const openedApps: string[] = [];
+  const installedApps: string[] = [];
 
   const session = {
     model: {
@@ -133,6 +134,10 @@ function createHarnessFixture() {
         openedApps.push(app);
         return { ok: true, appId: "browser", message: `Abriendo ${app}.` };
       },
+      installApp: async (app: string) => {
+        installedApps.push(app);
+        return { ok: true, packageName: app, message: `Instalado ${app}.` };
+      },
     },
     loginOpenAICodex: async (options) => {
       loginCalls += 1;
@@ -174,6 +179,7 @@ function createHarnessFixture() {
     getLoginOptions: () => loginOptions,
     getCreateSessionOptions: () => createSessionOptions,
     getOpenedApps: () => openedApps,
+    getInstalledApps: () => installedApps,
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
     },
@@ -195,6 +201,7 @@ describe("PiHarness", () => {
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("apps_open");
+    expect(PI_SYSTEM_PROMPT).toContain("apps_install");
     expect(PI_SYSTEM_PROMPT).not.toContain("[object");
   });
 
@@ -322,6 +329,42 @@ describe("PiHarness", () => {
     expect(harness.getStatus().error).toBeUndefined();
   });
 
+  test("cancelled auth attempts unblock later login attempts", async () => {
+    const { harness, loginDeferred, getDeviceLoginCalls } = createHarnessFixture();
+
+    const attempt = await harness.startAuth("device");
+    expect(harness.getStatus()).toMatchObject({
+      authState: "authorizing",
+      pendingAttempt: {
+        attemptId: attempt.attemptId,
+      },
+    });
+
+    expect(harness.cancelAuth(attempt.attemptId)).toMatchObject({
+      attemptId: attempt.attemptId,
+      status: "cancelled",
+    });
+    expect(harness.getStatus()).toMatchObject({
+      authState: "disconnected",
+      pendingAttempt: undefined,
+    });
+
+    loginDeferred.resolve({
+      access: "late-access-token",
+      refresh: "late-refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_late",
+    });
+    await flushTasks();
+    expect(harness.getStatus()).toMatchObject({
+      authState: "disconnected",
+    });
+
+    const second = await harness.startAuth("device");
+    expect(second.attemptId).not.toBe(attempt.attemptId);
+    expect(getDeviceLoginCalls()).toBe(2);
+  });
+
   test("rejects concurrent prompts with 409", async () => {
     const { harness, authData, emitAssistantReply, setPromptImpl } = createHarnessFixture();
     const promptDeferred = createDeferred<void>();
@@ -384,13 +427,42 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["apps_open"]);
+    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     await expect(openAppTool?.execute("tool_1", { app: "Chrome" })).resolves.toEqual({
       content: [{ type: "text", text: "Abriendo Chrome." }],
       details: { ok: true, appId: "browser", message: "Abriendo Chrome." },
     });
     expect(getOpenedApps()).toEqual(["Chrome"]);
+  });
+
+  test("registers an app-installing tool for the foreground model", async () => {
+    const { harness, authData, getCreateSessionOptions, getInstalledApps } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await harness.chat({
+      message: "hola",
+      source: "text",
+    });
+
+    const options = getCreateSessionOptions() as {
+      customTools?: Array<{
+        name: string;
+        execute: (toolCallId: string, params: { package: string; openAfterInstall?: boolean }) => Promise<{ content: Array<{ type: string; text: string }>; details: unknown }>;
+      }>;
+    };
+    const installAppTool = options.customTools?.find((tool) => tool.name === "apps_install");
+    await expect(installAppTool?.execute("tool_1", { package: "vlc", openAfterInstall: false })).resolves.toEqual({
+      content: [{ type: "text", text: "Instalado vlc." }],
+      details: { ok: true, packageName: "vlc", message: "Instalado vlc." },
+    });
+    expect(getInstalledApps()).toEqual(["vlc"]);
   });
 
   test("prefers the stronger foreground model when available", async () => {
@@ -431,6 +503,29 @@ describe("PiHarness", () => {
     })).resolves.toMatchObject({
       ok: true,
       reply: "Abriendo Chrome.",
+    });
+  });
+
+  test("uses built-in tool output as the chat reply when bash returns output", async () => {
+    const { harness, authData, emitToolResult, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    setPromptImpl(async () => {
+      emitToolResult("bash", "uid=1000(agenos)");
+    });
+
+    await expect(harness.chat({
+      message: "ejecuta id",
+      source: "text",
+    })).resolves.toMatchObject({
+      ok: true,
+      reply: "uid=1000(agenos)",
     });
   });
 

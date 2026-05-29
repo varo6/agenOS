@@ -78,6 +78,10 @@ export function createPiClient() {
         return bridgeRequest(() => bridge.startAuth(method));
       },
 
+      cancelAuth(attemptId?: string): Promise<void> {
+        return bridgeRequest(() => bridge.cancelAuth(attemptId));
+      },
+
       getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse> {
         return bridgeRequest(() => bridge.getAuthAttempt(attemptId));
       },
@@ -109,6 +113,16 @@ export function createPiClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
+      });
+    },
+
+    async cancelAuth(attemptId?: string): Promise<void> {
+      await requestJson<{ ok: true }>("/api/pi/auth/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ attemptId }),
       });
     },
 

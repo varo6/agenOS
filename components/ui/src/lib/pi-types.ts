@@ -3,7 +3,7 @@ export const PI_DEV_HARNESS_ORIGIN = "http://127.0.0.1:4174";
 export type PiAuthState = "disconnected" | "authorizing" | "connected" | "error";
 export type PiAuthMethod = "device" | "browser";
 export type PiChatSource = "text" | "voice";
-export type PiAuthAttemptStatus = "pending" | "success" | "error" | "expired";
+export type PiAuthAttemptStatus = "pending" | "success" | "error" | "expired" | "cancelled";
 
 export type PiPendingAttempt = {
   attemptId: string;

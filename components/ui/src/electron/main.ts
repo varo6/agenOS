@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 
 import { createPiHarness, PiHarnessError } from "../../dev/pi-harness";
+import { launchBrowserUrl } from "../../../agent/browser-launcher";
 import { PI_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
 import type { PiChatSource } from "../lib/pi-types";
 import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
@@ -17,7 +18,13 @@ type IpcEnvelope<T> =
   | { ok: false; status?: number; message: string };
 
 let mainWindow: BrowserWindow | null = null;
-const piHarness = createPiHarness();
+const piHarness = createPiHarness(undefined, {
+  onAuth: (info, attempt) => {
+    if (attempt.method === "browser") {
+      openExternalUrl(info.url);
+    }
+  },
+});
 
 function configureCommandLine(): void {
   if (GPU_MODE === "off") {
@@ -144,6 +151,15 @@ function showWindow(): void {
   mainWindow.setFullScreen(true);
 }
 
+function openExternalUrl(url: string): void {
+  try {
+    launchBrowserUrl(url);
+  } catch (error) {
+    console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
+    void shell.openExternal(url);
+  }
+}
+
 function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageResponse {
   return {
     ok: response.ok,
@@ -197,6 +213,9 @@ function registerIpcHandlers(): void {
     }
 
     return piHarness.startAuth(method);
+  }));
+  ipcMain.handle(PI_IPC_CHANNELS.cancelAuth, (_event, payload: { attemptId?: unknown }) => wrapPi(() => {
+    piHarness.cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
   }));
   ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(() => (
     piHarness.getAuthAttempt(String(payload.attemptId ?? ""))
@@ -261,7 +280,7 @@ function createMainWindow(): void {
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://") || url.startsWith("http://")) {
-      void shell.openExternal(url);
+      openExternalUrl(url);
     }
     return { action: "deny" };
   });

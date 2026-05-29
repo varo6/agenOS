@@ -8,6 +8,7 @@ export const SYSTEM_IPC_CHANNELS = {
 export const PI_IPC_CHANNELS = {
   getStatus: "agenos-pi:get-status",
   startAuth: "agenos-pi:start-auth",
+  cancelAuth: "agenos-pi:cancel-auth",
   getAuthAttempt: "agenos-pi:get-auth-attempt",
   submitManualCode: "agenos-pi:submit-manual-code",
   logout: "agenos-pi:logout",

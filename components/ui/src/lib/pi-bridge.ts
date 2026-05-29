@@ -9,6 +9,7 @@ import type {
 export type AgenosPiBridge = {
   getStatus(): Promise<PiStatusResponse>;
   startAuth(method?: PiStartAuthRequest["method"]): Promise<PiPendingAttempt>;
+  cancelAuth(attemptId?: string): Promise<void>;
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse>;
   submitManualCode(attemptId: string, input: string): Promise<PiAuthAttemptResponse>;
   logout(): Promise<void>;

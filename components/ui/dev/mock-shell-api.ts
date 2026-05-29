@@ -148,6 +148,21 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  if (url.pathname === "/api/pi/auth/cancel" && method === "POST") {
+    try {
+      const payload = await readJsonBody(request);
+      const attemptId =
+        payload && typeof payload === "object" && "attemptId" in payload && typeof payload.attemptId === "string"
+          ? payload.attemptId
+          : undefined;
+      piHarness.cancelAuth(attemptId);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   const attemptMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)$/);
   if (attemptMatch && method === "GET") {
     try {
