@@ -4,6 +4,9 @@ import type {
   AgentMemoryResponse,
   AgentShellExecResponse,
   AgentTaskResponse,
+  AgentWorkspaceFocusResponse,
+  AgentWorkspaceListResponse,
+  AgentWorkspaceNumber,
 } from "./system-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
@@ -85,6 +88,16 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app }),
+      });
+    },
+    listWorkspaces(): Promise<AgentWorkspaceListResponse> {
+      return requestJson<AgentWorkspaceListResponse>(baseUrl, "/api/agent/workspaces");
+    },
+    focusWorkspace(workspace: AgentWorkspaceNumber): Promise<AgentWorkspaceFocusResponse> {
+      return requestJson<AgentWorkspaceFocusResponse>(baseUrl, "/api/agent/workspaces/focus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, source: "ui" }),
       });
     },
     executeShell(command: string, cwd?: string, timeoutMs?: number): Promise<AgentShellExecResponse> {

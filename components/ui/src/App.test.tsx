@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     appendMemory: vi.fn(),
     delegateBackgroundTask: vi.fn(),
     openApp: vi.fn(),
+    listWorkspaces: vi.fn(),
+    focusWorkspace: vi.fn(),
   },
   piClient: {
     getStatus: vi.fn(),
@@ -96,6 +98,20 @@ const readyAgentStatus = {
 
 afterEach(() => {
   vi.resetAllMocks();
+});
+
+beforeEach(() => {
+  mocks.agentClient.listWorkspaces.mockResolvedValue({
+    ok: true,
+    activeWorkspace: 1,
+    workspaces: [
+      { number: 1, name: "1:agent", label: "Agent" },
+      { number: 2, name: "2:app", label: "Apps" },
+      { number: 3, name: "3:web", label: "Web" },
+      { number: 4, name: "4:media", label: "Media" },
+      { number: 5, name: "5:work", label: "Work" },
+    ],
+  });
 });
 
 describe("App chat recovery", () => {
@@ -199,6 +215,24 @@ describe("App chat recovery", () => {
     });
     expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
     expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
+  });
+
+  test("shows the workspace system bar and focuses workspace clicks", async () => {
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.agentClient.focusWorkspace.mockResolvedValue({
+      ok: true,
+      activeWorkspace: 2,
+      workspaces: [],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Workspace 2 Apps" }));
+
+    await waitFor(() => {
+      expect(mocks.agentClient.focusWorkspace).toHaveBeenCalledWith(2);
+    });
   });
 
 });

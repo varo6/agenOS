@@ -2,6 +2,7 @@ import { accessSync, constants, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
+import { createWorkspaceService } from "./workspaces";
 
 type SpawnOptions = {
   env: NodeJS.ProcessEnv;
@@ -14,6 +15,8 @@ export type BrowserLauncherOptions = {
   homeDir?: string;
   profileDir?: string;
   skipGraphicalSessionCheck?: boolean;
+  workspace?: unknown;
+  focus?: boolean;
 };
 
 export type BrowserLaunchResult = {
@@ -118,18 +121,6 @@ function buildChromiumArgs(url: string, profileDir: string): string[] {
   ];
 }
 
-function focusExternalWorkspace(
-  commandExists: (command: string) => boolean,
-  spawnCommand: (command: string, args: string[], options: SpawnOptions) => void,
-  env: NodeJS.ProcessEnv,
-): void {
-  if (!env.SWAYSOCK || !commandExists("swaymsg")) {
-    return;
-  }
-
-  spawnCommand("swaymsg", ["workspace", "2:app"], { env });
-}
-
 export function launchBrowserUrl(input: string, options: BrowserLauncherOptions = {}): BrowserLaunchResult {
   const env = browserEnv(options.env ?? process.env);
   if (!options.skipGraphicalSessionCheck && !hasGraphicalSession(env)) {
@@ -147,7 +138,12 @@ export function launchBrowserUrl(input: string, options: BrowserLauncherOptions 
   const profileDir = resolveProfileDir(options, env);
   mkdirSync(profileDir, { recursive: true });
 
-  focusExternalWorkspace(commandExists, spawnCommand, env);
+  if (options.focus !== false) {
+    createWorkspaceService({ commandExists, spawnCommand, env }).focusWorkspaceSync({
+      workspace: options.workspace ?? 2,
+      source: "system",
+    });
+  }
 
   const args = buildChromiumArgs(url, profileDir);
   spawnCommand(command, args, { env });

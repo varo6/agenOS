@@ -628,6 +628,37 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual(["Chrome"]);
   });
 
+  test("agent workspace routes list and focus known workspaces", async () => {
+    const focused: unknown[] = [];
+    const workspaceService = {
+      listWorkspaces: () => ({
+        ok: true,
+        activeWorkspace: 1,
+        workspaces: [{ number: 1, name: "1:agent", label: "Agent" }],
+      }),
+      focusWorkspace: async (input: unknown) => {
+        focused.push(input);
+        return {
+          ok: true,
+          activeWorkspace: 2,
+          workspaces: [{ number: 2, name: "2:app", label: "Apps" }],
+        };
+      },
+    };
+    const handler = createHandler({ workspaceService: workspaceService as never });
+
+    const list = await handler.fetch(new Request("http://localhost/api/agent/workspaces"));
+    expect(list.status).toBe(200);
+    expect(await jsonPayload(list)).toMatchObject({ activeWorkspace: 1 });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/workspaces/focus", {
+      method: "POST",
+      body: JSON.stringify({ workspace: 2, source: "ui" }),
+    }));
+    expect(response.status).toBe(202);
+    expect(focused).toEqual([{ workspace: 2, source: "ui" }]);
+  });
+
   test("agent shell route executes explicit frontend commands", async () => {
     const commands: string[] = [];
     const shellTool = async (input: { command: string; cwd?: string; timeoutMs?: number }) => {

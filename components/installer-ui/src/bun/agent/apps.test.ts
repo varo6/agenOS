@@ -73,6 +73,35 @@ describe("app tool", () => {
     expect(calls).toEqual([["gtk-launch", ["org.videolan.VLC"]]]);
   });
 
+  test("focuses explicit workspace before opening apps", async () => {
+    const calls: Array<[string, string[]]> = [];
+    const tool = createAppTool({
+      env: { SWAYSOCK: "/tmp/sway.sock" },
+      commandExists: (command) => command === "foot" || command === "swaymsg",
+      spawnCommand: (command, args) => {
+        calls.push([command, args]);
+      },
+    });
+
+    await expect(tool.openApp({ app: "terminal", workspace: 5, focus: true })).resolves.toMatchObject({ ok: true });
+    expect(calls[0]).toEqual(["swaymsg", ["workspace", "5:work"]]);
+    expect(calls[1]).toEqual(["foot", []]);
+  });
+
+  test("uses app default workspace when none is provided", async () => {
+    const calls: Array<[string, string[]]> = [];
+    const tool = createAppTool({
+      env: { SWAYSOCK: "/tmp/sway.sock" },
+      commandExists: (command) => command === "foot" || command === "swaymsg",
+      spawnCommand: (command, args) => {
+        calls.push([command, args]);
+      },
+    });
+
+    await tool.openApp("terminal");
+    expect(calls[0]).toEqual(["swaymsg", ["workspace", "5:work"]]);
+  });
+
   test("installs packages with apt and can open them afterwards", async () => {
     const calls: Array<[string, string[]]> = [];
     const tool = createAppTool({

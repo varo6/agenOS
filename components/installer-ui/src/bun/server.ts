@@ -20,6 +20,7 @@ import {
 } from "../shared/installer-http";
 import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
+import { createWorkspaceService } from "./agent/workspaces";
 import { runShellCommand } from "../../../agent/shell";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
@@ -73,6 +74,7 @@ export type InstallerApiDependencies = {
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  workspaceService: ReturnType<typeof createWorkspaceService>;
   shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
@@ -308,6 +310,7 @@ export function createInstallerApiHandler(
     taskQueue,
     appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
+    workspaceService: dependencies.workspaceService ?? createWorkspaceService(),
     shellTool: dependencies.shellTool ?? runShellCommand,
     confirmations,
     agentAdmin,
@@ -911,6 +914,29 @@ export function createInstallerApiHandler(
             cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
             timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined,
           });
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/agent/workspaces") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(deps.workspaceService.listWorkspaces());
+        }
+
+        if (url.pathname === "/api/agent/workspaces/focus") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { workspace?: unknown; source?: unknown };
+          const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
+          const policy = decidePolicy({ tool: "workspaces.focus", source });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, message: policy.reason }, { status: policy.decision === "deny" ? 403 : 409 });
+          }
+
+          const response = await deps.workspaceService.focusWorkspace({ workspace: payload.workspace, source });
           return json(response, { status: response.ok ? 202 : 400 });
         }
 

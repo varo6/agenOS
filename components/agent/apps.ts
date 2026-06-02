@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { launchBrowserUrl, type BrowserLauncherOptions } from "./browser-launcher";
+import { createWorkspaceService, resolveDefaultWorkspaceForApp } from "./workspaces";
 
 const DESKTOP_FIELD_CODE_RE = /%[fFuUdDnNickvm]/g;
 const MAX_COMMAND_OUTPUT_BYTES = 24_000;
@@ -26,6 +27,12 @@ export type AppOpenResponse = {
   appId?: string;
   displayName?: string;
   message?: string;
+};
+
+export type AppOpenInput = string | {
+  app?: unknown;
+  workspace?: unknown;
+  focus?: unknown;
 };
 
 export type AppInstallResponse = {
@@ -381,6 +388,18 @@ function availableAppsMessage(apps: AppDefinition[]): string {
   return names ? ` Apps disponibles: ${names}.` : "";
 }
 
+function parseAppOpenInput(input: AppOpenInput): { app: string; workspace?: unknown; focus: boolean } {
+  if (typeof input === "string") {
+    return { app: input, focus: true };
+  }
+
+  return {
+    app: typeof input.app === "string" ? input.app : "",
+    workspace: input.workspace,
+    focus: typeof input.focus === "boolean" ? input.focus : true,
+  };
+}
+
 function normalizePackageName(input: string): string {
   const packageName = input.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9+.-]*$/.test(packageName)) {
@@ -479,15 +498,29 @@ export function createAppTool(options: AppToolOptions = {}) {
       };
     },
 
-    async openApp(input: string): Promise<AppOpenResponse> {
+    async openApp(input: AppOpenInput): Promise<AppOpenResponse> {
+      const launchInput = parseAppOpenInput(input);
       const apps = [...KNOWN_APPS, ...discoverDesktopApps(options, commandExists)];
-      const app = resolveApp(input, apps);
+      const app = resolveApp(launchInput.app, apps);
       if (!app) {
         return {
           ok: false,
-          message: `No encontre una aplicacion instalada llamada "${input.trim()}".${availableAppsMessage(apps)}`,
+          message: `No encontre una aplicacion instalada llamada "${launchInput.app.trim()}".${availableAppsMessage(apps)}`,
         };
       }
+
+      const workspace = launchInput.workspace ?? resolveDefaultWorkspaceForApp(app.appId);
+      const focusWorkspace = () => {
+        if (!launchInput.focus) {
+          return;
+        }
+
+        createWorkspaceService({
+          commandExists,
+          env,
+          spawnCommand: (command, args) => spawnCommand(command, args),
+        }).focusWorkspaceSync({ workspace, source: "system" });
+      };
 
       if (app.appId === "browser") {
         try {
@@ -497,6 +530,8 @@ export function createAppTool(options: AppToolOptions = {}) {
           browserLauncher("https://www.google.com", {
             commandExists,
             env,
+            workspace,
+            focus: launchInput.focus,
             spawnCommand: (command, args) => spawnCommand(command, args),
           });
           return {
@@ -516,6 +551,7 @@ export function createAppTool(options: AppToolOptions = {}) {
       }
 
       if (app.desktopId && commandExists("gtk-launch")) {
+        focusWorkspace();
         spawnCommand("gtk-launch", [app.desktopId.replace(/\.desktop$/i, "")]);
         return {
           ok: true,
@@ -526,6 +562,7 @@ export function createAppTool(options: AppToolOptions = {}) {
       }
 
       if (app.desktopPath && commandExists("gio")) {
+        focusWorkspace();
         spawnCommand("gio", ["launch", app.desktopPath]);
         return {
           ok: true,
@@ -545,6 +582,7 @@ export function createAppTool(options: AppToolOptions = {}) {
         };
       }
 
+      focusWorkspace();
       spawnCommand(command.command, command.args ?? []);
       return {
         ok: true,

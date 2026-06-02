@@ -30,3 +30,4 @@ tools/agenos-shell-rust/target/
 releases/
 __pycache__/
 *.pyc
+.superpowers/

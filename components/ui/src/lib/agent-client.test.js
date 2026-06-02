@@ -106,6 +106,41 @@ describe("agent client", () => {
     expect(JSON.parse(payload)).toEqual({ app: "Chrome" });
   });
 
+  test("lists workspaces through the broker", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        ok: true,
+        activeWorkspace: 1,
+        workspaces: [{ number: 1, name: "1:agent", label: "Agent" }],
+      }), { status: 200 });
+    };
+
+    const client = createAgentClient({ baseUrl: "http://agent.test" });
+    expect(await client.listWorkspaces()).toMatchObject({ ok: true, activeWorkspace: 1 });
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces");
+  });
+
+  test("focuses workspaces through the broker", async () => {
+    let requestedUrl = "";
+    let payload = "";
+    globalThis.fetch = async (input, init) => {
+      requestedUrl = String(input);
+      payload = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        activeWorkspace: 2,
+        workspaces: [],
+      }), { status: 202 });
+    };
+
+    const client = createAgentClient({ baseUrl: "http://agent.test" });
+    expect(await client.focusWorkspace(2)).toMatchObject({ ok: true, activeWorkspace: 2 });
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces/focus");
+    expect(JSON.parse(payload)).toEqual({ workspace: 2, source: "ui" });
+  });
+
   test("uses the real packaged broker from file and Vite dev origins", async () => {
     const requests = [];
     globalThis.fetch = async (input) => {

@@ -105,6 +105,7 @@ const LOW_RISK_TOOLS = new Set([
   "apps.list",
   "apps.open",
   "browser.open_url",
+  "workspaces.focus",
   "memory.read",
   "contacts.lookup",
   "tasks.enqueue",

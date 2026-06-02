@@ -30,7 +30,12 @@ import {
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
 import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
-import type { AgentAdminStatus, AgentSetupStateSummary } from "./lib/system-types";
+import type {
+  AgentAdminStatus,
+  AgentSetupStateSummary,
+  AgentWorkspace,
+  AgentWorkspaceNumber,
+} from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
@@ -38,6 +43,14 @@ type ChatState = "idle" | "processing" | "error";
 const piClient = createPiClient();
 const agentClient = createAgentClient();
 const agentAdminClient = createAgentAdminClient();
+
+const DEFAULT_WORKSPACES: AgentWorkspace[] = [
+  { number: 1, name: "1:agent", label: "Agent" },
+  { number: 2, name: "2:app", label: "Apps" },
+  { number: 3, name: "3:web", label: "Web" },
+  { number: 4, name: "4:media", label: "Media" },
+  { number: 5, name: "5:work", label: "Work" },
+];
 
 function describeClientError(error: unknown): string {
   if (error instanceof PiClientError || error instanceof Error) {
@@ -81,6 +94,8 @@ export default function App() {
   const [lastReply, setLastReply] = useState("");
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
+  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>(DEFAULT_WORKSPACES);
+  const [activeWorkspace, setActiveWorkspace] = useState<AgentWorkspaceNumber>(1);
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
   const authActionIdRef = useRef(0);
 
@@ -132,6 +147,22 @@ export default function App() {
       const message = describeClientError(error);
       setAgentStatus(null);
       setAgentBackendError(message);
+      return null;
+    }
+  }, []);
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const response = await agentClient.listWorkspaces();
+      if (response.workspaces.length > 0) {
+        setWorkspaces(response.workspaces);
+      }
+      if (response.activeWorkspace) {
+        setActiveWorkspace(response.activeWorkspace);
+      }
+      return response;
+    } catch (error) {
+      setGlobalError(describeClientError(error));
       return null;
     }
   }, []);
@@ -234,7 +265,7 @@ export default function App() {
       setVoiceIssue("Este navegador no expone Web Speech API. Usa texto.");
     }
 
-    void Promise.allSettled([refreshStatus(), refreshAgentStatus()])
+    void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()])
       .finally(() => {
         setIsLoading(false);
       });
@@ -243,7 +274,7 @@ export default function App() {
       controller.dispose();
       speechControllerRef.current = null;
     };
-  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus]);
+  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
 
   useEffect(() => {
     if (!pendingAttempt) {
@@ -404,7 +435,28 @@ export default function App() {
     void Promise.allSettled([
       refreshStatus({ clearErrors: true }),
       refreshAgentStatus(),
+      refreshWorkspaces(),
     ]);
+  }
+
+  async function handleWorkspaceFocus(workspace: AgentWorkspaceNumber) {
+    setActiveWorkspace(workspace);
+    setGlobalError(null);
+
+    try {
+      const response = await agentClient.focusWorkspace(workspace);
+      if (response.workspaces.length > 0) {
+        setWorkspaces(response.workspaces);
+      }
+      if (response.activeWorkspace) {
+        setActiveWorkspace(response.activeWorkspace);
+      }
+      if (!response.ok) {
+        setGlobalError(response.message ?? "No se pudo cambiar de workspace.");
+      }
+    } catch (error) {
+      setGlobalError(describeClientError(error));
+    }
   }
 
   function handleVoiceStart() {
@@ -457,10 +509,40 @@ export default function App() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-[#07090f] text-white selection:bg-white/20">
       <VideoBackground />
+      <header className="fixed left-0 right-0 top-0 z-40 border-b border-white/10 bg-black/55 backdrop-blur-xl">
+        <div className="mx-auto grid h-12 w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6">
+          <div className="font-display text-sm font-medium text-white">AgenOS</div>
+          <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/5 p-1">
+            {workspaces.map((workspace) => (
+              <button
+                aria-label={`Workspace ${workspace.number} ${workspace.label}`}
+                className={[
+                  "grid h-8 w-8 place-items-center rounded text-sm font-medium transition-colors",
+                  activeWorkspace === workspace.number
+                    ? "bg-accent text-black"
+                    : "text-white/65 hover:bg-white/10 hover:text-white",
+                ].join(" ")}
+                key={workspace.number}
+                onClick={() => {
+                  void handleWorkspaceFocus(workspace.number);
+                }}
+                title={workspace.name}
+                type="button"
+              >
+                {workspace.number}
+              </button>
+            ))}
+          </div>
+          <div className="min-w-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-white/45">
+            <span className="hidden sm:inline">{authState === "connected" ? modelId : authState}</span>
+            <span className="sm:hidden">{activeWorkspace}</span>
+          </div>
+        </div>
+      </header>
       <AgentDiagnosticsButton />
 
       {globalError ? (
-        <div className="fixed left-1/2 top-6 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
+        <div className="fixed left-1/2 top-16 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
           <div className="glass-panel flex items-start gap-4 border-danger/30 bg-danger/10 p-4">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
             <div className="min-w-0 flex-1">
@@ -489,7 +571,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 py-20 sm:py-28">
+        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 pb-20 pt-28 sm:pb-28 sm:pt-32">
           <div className="mb-8 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">
             <button
               className={[

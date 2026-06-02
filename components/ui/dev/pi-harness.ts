@@ -130,7 +130,7 @@ type CodexDeviceAuthOptions = {
 };
 
 type AppToolLike = {
-  openApp(input: string): Promise<AppOpenResponse>;
+  openApp(input: string | { app?: unknown; workspace?: unknown; focus?: unknown }): Promise<AppOpenResponse>;
   installApp(input: string, options?: { openAfterInstall?: boolean; openAs?: string }): Promise<AppInstallResponse>;
 };
 
@@ -275,6 +275,14 @@ const OPEN_APP_TOOL_PARAMETERS = {
       type: "string",
       description: "Nombre de la aplicacion local instalada que se quiere abrir. Ejemplos: Chrome, VLC, GIMP, terminal, archivos.",
     },
+    workspace: {
+      type: "number",
+      description: "Workspace de AgenOS donde abrir la app: 1 agent, 2 apps, 3 web, 4 media, 5 work.",
+    },
+    focus: {
+      type: "boolean",
+      description: "Cambiar el foco del usuario al workspace. Por defecto true.",
+    },
   },
   required: ["app"],
   additionalProperties: false,
@@ -312,7 +320,11 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
     ],
     parameters: OPEN_APP_TOOL_PARAMETERS,
     async execute(_toolCallId, params) {
-      const response = await appTool.openApp(typeof params.app === "string" ? params.app : "");
+      const response = await appTool.openApp({
+        app: typeof params.app === "string" ? params.app : "",
+        workspace: params.workspace,
+        focus: typeof params.focus === "boolean" ? params.focus : true,
+      });
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
         details: response,

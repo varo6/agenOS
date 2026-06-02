@@ -44,7 +44,7 @@ function createHarnessFixture() {
     emitAssistantReply(`respuesta:${text}`);
   };
   let createSessionOptions: unknown;
-  const openedApps: string[] = [];
+  const openedApps: unknown[] = [];
   const installedApps: string[] = [];
 
   const session = {
@@ -130,9 +130,14 @@ function createHarnessFixture() {
       return { session };
     },
     appTool: {
-      openApp: async (app: string) => {
+      openApp: async (app: unknown) => {
         openedApps.push(app);
-        return { ok: true, appId: "browser", message: `Abriendo ${app}.` };
+        const appName = typeof app === "string"
+          ? app
+          : app && typeof app === "object" && "app" in app && typeof app.app === "string"
+            ? app.app
+            : "app";
+        return { ok: true, appId: "browser", message: `Abriendo ${appName}.` };
       },
       installApp: async (app: string) => {
         installedApps.push(app);
@@ -423,17 +428,23 @@ describe("PiHarness", () => {
       customTools?: Array<{
         name: string;
         promptSnippet?: string;
-        execute: (toolCallId: string, params: { app: string }) => Promise<{ content: Array<{ type: string; text: string }> }>;
+        parameters?: unknown;
+        execute: (
+          toolCallId: string,
+          params: { app: string; workspace?: number; focus?: boolean },
+        ) => Promise<{ content: Array<{ type: string; text: string }> }>;
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
     expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
-    await expect(openAppTool?.execute("tool_1", { app: "Chrome" })).resolves.toEqual({
+    expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
+    expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
+    await expect(openAppTool?.execute("tool_1", { app: "Chrome", workspace: 3, focus: true })).resolves.toEqual({
       content: [{ type: "text", text: "Abriendo Chrome." }],
       details: { ok: true, appId: "browser", message: "Abriendo Chrome." },
     });
-    expect(getOpenedApps()).toEqual(["Chrome"]);
+    expect(getOpenedApps()).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
   });
 
   test("registers an app-installing tool for the foreground model", async () => {

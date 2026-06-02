@@ -78,7 +78,7 @@ export function AgentDiagnosticsButton({
 
   return (
     <>
-      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
+      <div className="fixed right-4 top-16 z-50 sm:right-6">
         <button
           aria-label="Diagnostico"
           className="btn-secondary inline-flex items-center gap-2 bg-black/35 px-3 py-2 text-sm backdrop-blur-md"

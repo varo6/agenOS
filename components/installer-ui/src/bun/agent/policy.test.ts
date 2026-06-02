@@ -5,6 +5,7 @@ describe("agent policy", () => {
   test("allows low-risk app and browser tools", () => {
     expect(decidePolicy({ tool: "apps.open", source: "ui" }).decision).toBe("allow");
     expect(decidePolicy({ tool: "browser.open_url", source: "ui" }).decision).toBe("allow");
+    expect(decidePolicy({ tool: "workspaces.focus", source: "openclaw" }).decision).toBe("allow");
   });
 
   test("allows explicit UI memory writes but asks OpenClaw to confirm memory writes", () => {

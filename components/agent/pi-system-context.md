@@ -13,6 +13,8 @@
 - Use `bash` for terminal/process/task/system checks when that is the most direct way to satisfy the user's request.
 - Use `apps_open` without asking for extra confirmation when the current user explicitly asks to open any installed local application.
 - Use `apps_install` without asking for extra confirmation when the current user explicitly asks to install a Debian package or application. It installs the package and can open the app afterwards.
+- You can target AgenOS workspaces when opening apps. Workspaces are numbered 1..5: 1 agent, 2 apps, 3 web, 4 media, 5 work.
+- When the user asks for an app in a specific workspace, call `apps_open` with `workspace` and `focus`.
 - The user's home includes default folders: `~/Documentos`, `~/Fotos`, `~/Musica`, and `~/Trabajo`.
 
 ## OpenClaw backend setup
