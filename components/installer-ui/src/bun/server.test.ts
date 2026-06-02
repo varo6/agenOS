@@ -45,6 +45,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       instructions: "Completa el login",
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),
+    cancelAuth: () => null,
     getAuthAttempt: (attemptId: string) => ({
       attemptId,
       method: "browser" as const,
@@ -627,6 +628,34 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual(["Chrome"]);
   });
 
+  test("agent shell route executes explicit frontend commands", async () => {
+    const commands: string[] = [];
+    const shellTool = async (input: { command: string; cwd?: string; timeoutMs?: number }) => {
+      commands.push(input.command);
+      return {
+        ok: true,
+        command: input.command,
+        cwd: input.cwd ?? "/home/agenos",
+        exitCode: 0,
+        signal: null,
+        stdout: "uid=1000\n",
+        stderr: "",
+        timedOut: false,
+        message: "Comando completado.",
+      };
+    };
+    const handler = createInstallerApiHandler({ shellTool: shellTool as never });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/shell/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "id" }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toMatchObject({ ok: true, stdout: "uid=1000\n" });
+    expect(commands).toEqual(["id"]);
+  });
+
   test("agent admin endpoints expose status config and policy", async () => {
     const agentAdmin = {
       status: async () => ({
@@ -687,6 +716,60 @@ describe("createInstallerApiHandler", () => {
     expect(writeConfig.status).toBe(409);
     expect(restart.status).toBe(409);
     expect(testConnection.status).toBe(503);
+  });
+
+  test("agent setup endpoints expose rerun Codex and Telegram actions", async () => {
+    const calls: string[] = [];
+    const setup = {
+      status: async () => ({ ok: false, phase: "needs_auth", actions: ["codex.login"], message: "login required" }),
+      run: async () => {
+        calls.push("run");
+        return { ok: false, phase: "needs_auth", actions: ["codex.login"], message: "login required" };
+      },
+      startCodexLogin: async () => {
+        calls.push("codex");
+        return {
+          ok: false,
+          phase: "needs_auth",
+          actions: ["codex.login"],
+          message: "Run backend Codex login.",
+          command: ["/usr/bin/openclaw", "models", "auth", "login", "--provider", "openai-codex"],
+        };
+      },
+      configureTelegram: async (token: string) => {
+        calls.push(`telegram:${token}`);
+        return { ok: false, phase: "needs_channel", actions: ["telegram.test"], telegram: { tokenConfigured: true } };
+      },
+      testTelegram: async () => {
+        calls.push("telegram-test");
+        return { ok: true, phase: "ready", actions: ["telegram.enable"], telegram: { lastTestOk: true } };
+      },
+      enableTelegram: async () => {
+        calls.push("telegram-enable");
+        return { ok: true, phase: "ready", actions: [], telegram: { enabled: true } };
+      },
+    };
+    const handler = createInstallerApiHandler({ setup: setup as never });
+
+    const status = await handler.fetch(new Request("http://localhost/api/agent/setup/status"));
+    const rerun = await handler.fetch(new Request("http://localhost/api/agent/setup/run", { method: "POST" }));
+    const codex = await handler.fetch(new Request("http://localhost/api/agent/auth/codex/start", { method: "POST" }));
+    const configureTelegram = await handler.fetch(new Request("http://localhost/api/agent/channels/telegram/configure", {
+      method: "POST",
+      body: JSON.stringify({ token: "123456:secret" }),
+    }));
+    const testTelegram = await handler.fetch(new Request("http://localhost/api/agent/channels/telegram/test", { method: "POST" }));
+    const enableTelegram = await handler.fetch(new Request("http://localhost/api/agent/channels/telegram/enable", { method: "POST" }));
+
+    expect(status.status).toBe(200);
+    expect(await jsonPayload(status)).toMatchObject({ phase: "needs_auth" });
+    expect(rerun.status).toBe(202);
+    expect(codex.status).toBe(202);
+    expect(await jsonPayload(codex)).toMatchObject({ command: ["/usr/bin/openclaw", "models", "auth", "login", "--provider", "openai-codex"] });
+    expect(configureTelegram.status).toBe(202);
+    expect(testTelegram.status).toBe(202);
+    expect(enableTelegram.status).toBe(202);
+    expect(calls).toEqual(["run", "codex", "telegram:123456:secret", "telegram-test", "telegram-enable"]);
   });
 
   test("serves a production support bundle for diagnostics", async () => {

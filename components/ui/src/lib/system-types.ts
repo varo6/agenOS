@@ -44,6 +44,16 @@ export type AgentActionResponse = {
   message?: string;
 };
 
+export type AgentShellExecResponse = AgentActionResponse & {
+  command: string;
+  cwd: string;
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+};
+
 export type AgentTaskResponse = AgentActionResponse & {
   taskId?: string;
 };
@@ -67,8 +77,18 @@ export type AgentAdminStatus = {
     id: string;
     label: string;
     severity: "info" | "warning" | "error";
-    action: "configure_provider" | "test_connection" | "switch_mode" | "view_logs";
+    action:
+      | "configure_provider"
+      | "test_connection"
+      | "switch_mode"
+      | "view_logs"
+      | "connect_backend_codex"
+      | "configure_telegram"
+      | "test_telegram"
+      | "enable_telegram"
+      | "rerun_setup";
   }>;
+  setup?: AgentSetupStateSummary;
   worker: {
     mode: AgentWorkerMode;
     serviceActive: boolean;
@@ -80,6 +100,32 @@ export type AgentAdminStatus = {
     lastErrorCorrelationId: string | null;
   };
   config: AgentAdminConfig;
+};
+
+export type AgentSetupStateSummary = {
+  phase: "ready" | "needs_auth" | "needs_channel" | "degraded" | "failed";
+  message: string;
+  actions: Array<
+    | "setup.rerun"
+    | "codex.login"
+    | "telegram.configure"
+    | "telegram.test"
+    | "telegram.enable"
+    | "diagnostics.export"
+  >;
+  codex?: {
+    configured: boolean;
+    profile?: string | null;
+    loginAvailable?: boolean;
+    lastError?: string | null;
+  };
+  telegram?: {
+    enabled: boolean;
+    tokenConfigured: boolean;
+    botUsername?: string | null;
+    lastTestOk?: boolean | null;
+    lastError?: string | null;
+  };
 };
 
 export type AgentPolicyRule = {

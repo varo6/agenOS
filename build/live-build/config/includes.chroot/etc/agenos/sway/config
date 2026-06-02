@@ -7,15 +7,25 @@ focus_follows_mouse no
 mouse_warping none
 workspace_auto_back_and_forth no
 
+input * {
+  xkb_layout es
+  xkb_model pc105
+}
+
 output * bg #14100d solid_color
 
 workspace 1:home
 
 for_window [workspace="2:app"] fullscreen enable
+for_window [app_id="^(chromium|chromium-browser|google-chrome|google-chrome-stable|foot)$"] move to workspace "2:app", focus
+for_window [class="^(Chromium|Google-chrome|Google-chrome-stable)$"] move to workspace "2:app", focus
 for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
 for_window [title="AgenOS Installer"] move to workspace "1:home"
 
+bindsym Ctrl+Alt+1 workspace 1:home
+bindsym Ctrl+Alt+2 workspace 2:app
 bindsym Ctrl+Alt+Return exec /usr/local/bin/agenos-shell-helper terminal
 bindsym Ctrl+Alt+r exec /usr/local/bin/agenos-shell-helper reload-shell
 
+exec_always --no-startup-id /usr/local/bin/agenos-workspace-watch
 exec_always --no-startup-id sh /usr/local/bin/agenos-shell-runner

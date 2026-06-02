@@ -39,4 +39,27 @@ describe("agent admin client", () => {
     await expect(client.updateConfig({ mode: "local-simulated" })).rejects.toThrow("confirm");
     expect(JSON.parse(body)).toEqual({ mode: "local-simulated", explicitUserIntent: true });
   });
+
+  test("posts setup actions to dedicated endpoints", async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify({ ok: true, phase: "ready", actions: [] }), { status: 200 });
+    };
+
+    const client = createAgentAdminClient({ baseUrl: "http://agent.test" });
+    await client.rerunSetup();
+    await client.startBackendCodexLogin();
+    await client.configureTelegram("123456:secret");
+    await client.testTelegram();
+    await client.enableTelegram();
+
+    expect(requests).toEqual([
+      { url: "http://agent.test/api/agent/setup/run", body: { explicitUserIntent: true } },
+      { url: "http://agent.test/api/agent/auth/codex/start", body: { explicitUserIntent: true } },
+      { url: "http://agent.test/api/agent/channels/telegram/configure", body: { token: "123456:secret", explicitUserIntent: true } },
+      { url: "http://agent.test/api/agent/channels/telegram/test", body: { explicitUserIntent: true } },
+      { url: "http://agent.test/api/agent/channels/telegram/enable", body: { explicitUserIntent: true } },
+    ]);
+  });
 });

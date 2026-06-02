@@ -20,10 +20,12 @@ import {
 } from "../shared/installer-http";
 import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
+import { runShellCommand } from "../../../agent/shell";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { decidePolicy } from "./agent/policy";
+import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
 import { createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
@@ -48,6 +50,7 @@ import type {
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
   startAuth(): Promise<PiPendingAttempt>;
+  cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
@@ -70,10 +73,12 @@ export type InstallerApiDependencies = {
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
+  setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
 };
 
@@ -255,6 +260,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     startAuth() {
       return getHarness().startAuth();
     },
+    cancelAuth(attemptId?: string) {
+      return getHarness().cancelAuth(attemptId);
+    },
     getAuthAttempt(attemptId: string) {
       return getHarness().getAuthAttempt(attemptId);
     },
@@ -276,11 +284,13 @@ export function createInstallerApiHandler(
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
   const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const setup = dependencies.setup ?? createOpenClawSetupService();
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
     taskQueue,
     memoryStore,
     confirmations,
+    setup,
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
@@ -293,15 +303,17 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(dependencies.createPiHarness ?? createPiHarness),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup })),
     memoryStore,
     taskQueue,
     appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
+    shellTool: dependencies.shellTool ?? runShellCommand,
     confirmations,
     agentAdmin,
+    setup,
     supportBundle,
-    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore }),
+    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool: dependencies.shellTool ?? runShellCommand }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
@@ -476,6 +488,20 @@ export function createInstallerApiHandler(
           }
         }
 
+        if (url.pathname === "/api/pi/auth/cancel") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { attemptId?: unknown };
+            deps.piHarness.cancelAuth(typeof payload.attemptId === "string" ? payload.attemptId : undefined);
+            return json({ ok: true });
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
         const authAttemptMatch = url.pathname.match(/^\/api\/pi\/auth\/attempt\/([^/]+)$/);
         if (authAttemptMatch) {
           if (request.method !== "GET") {
@@ -566,6 +592,52 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
           return json(await deps.agentAdmin.status());
+        }
+
+        if (url.pathname === "/api/agent/setup/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.setup.status());
+        }
+
+        if (url.pathname === "/api/agent/setup/run") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.run(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/auth/codex/start") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.startCodexLogin(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/configure") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { token?: unknown };
+          if (typeof payload.token !== "string" || !payload.token.trim()) {
+            return json({ ok: false, message: "Telegram bot token is required." }, { status: 400 });
+          }
+          return json(await deps.setup.configureTelegram(payload.token), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/test") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.testTelegram(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/agent/channels/telegram/enable") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.setup.enableTelegram(), { status: 202 });
         }
 
         if (url.pathname === "/api/agent/admin/config") {
@@ -819,6 +891,26 @@ export function createInstallerApiHandler(
           }
 
           const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/agent/shell/exec") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
+          const policy = decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true });
+          if (policy.decision !== "allow") {
+            return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, {
+              status: policy.decision === "deny" ? 403 : 409,
+            });
+          }
+
+          const response = await deps.shellTool({
+            command: typeof payload.command === "string" ? payload.command : "",
+            cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+            timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined,
+          });
           return json(response, { status: response.ok ? 202 : 400 });
         }
 

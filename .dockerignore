@@ -1,0 +1,10 @@
+.git
+.worktrees
+build/live-build/chroot
+build/live-build/cache
+components/*/node_modules
+components/*/dist
+components/*/build
+components/*/.vite
+node_modules
+*.iso

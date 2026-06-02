@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -11,6 +11,7 @@ import {
   RefreshCcw,
   ShieldCheck,
   ShieldX,
+  XCircle,
 } from "lucide-react";
 
 import { AgentDiagnosticsButton } from "./components/AgentDiagnosticsButton";
@@ -29,7 +30,7 @@ import {
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
 import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
-import type { AgentAdminStatus } from "./lib/system-types";
+import type { AgentAdminStatus, AgentSetupStateSummary } from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 type ChatState = "idle" | "processing" | "error";
@@ -59,6 +60,8 @@ function describeAuthState(authState: PiAuthState): string {
   }
 }
 
+
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [harnessAvailable, setHarnessAvailable] = useState(true);
@@ -79,8 +82,9 @@ export default function App() {
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
+  const authActionIdRef = useRef(0);
 
-  const applyStatus = useEffectEvent((status: PiStatusResponse) => {
+  const applyStatus = useCallback((status: PiStatusResponse) => {
     setHarnessAvailable(true);
     setProviderName(status.providerName);
     setModelId(status.modelId);
@@ -90,9 +94,9 @@ export default function App() {
     if (status.error) {
       setGlobalError(status.error);
     }
-  });
+  }, []);
 
-  const refreshStatus = useEffectEvent(async (options: { clearErrors?: boolean } = {}) => {
+  const refreshStatus = useCallback(async (options: { clearErrors?: boolean } = {}) => {
     try {
       const status = await piClient.getStatus();
       applyStatus(status);
@@ -116,9 +120,9 @@ export default function App() {
       setGlobalError(message);
       throw error;
     }
-  });
+  }, [applyStatus]);
 
-  const refreshAgentStatus = useEffectEvent(async () => {
+  const refreshAgentStatus = useCallback(async () => {
     try {
       const status = await agentAdminClient.getStatus();
       setAgentStatus(status);
@@ -130,9 +134,9 @@ export default function App() {
       setAgentBackendError(message);
       return null;
     }
-  });
+  }, []);
 
-  const sendPrompt = useEffectEvent(async (message: string, source: PiChatSource) => {
+  const sendPrompt = useCallback(async (message: string, source: PiChatSource) => {
     const trimmed = message.trim();
     if (!trimmed) {
       return;
@@ -172,6 +176,7 @@ export default function App() {
       return;
     }
 
+
     if (authState !== "connected") {
       setChatState("idle");
       setAuthState("error");
@@ -198,22 +203,22 @@ export default function App() {
         // refreshStatus already updated the UI with the relevant failure
       }
     }
-  });
+  }, [authState, refreshAgentStatus, refreshStatus]);
 
-  const handleVoiceResult = useEffectEvent((transcript: string) => {
+  const handleVoiceResult = useCallback((transcript: string) => {
     setVoiceState("idle");
     setVoiceIssue(null);
     void sendPrompt(transcript, "voice");
-  });
+  }, [sendPrompt]);
 
-  const handleVoiceError = useEffectEvent((error: SpeechRecognitionError) => {
+  const handleVoiceError = useCallback((error: SpeechRecognitionError) => {
     setVoiceIssue(error.message);
     setVoiceState(error.disableVoice ? "unsupported" : "error");
-  });
+  }, []);
 
-  const handleVoiceEnd = useEffectEvent(() => {
+  const handleVoiceEnd = useCallback(() => {
     setVoiceState((current) => (current === "listening" ? "idle" : current));
-  });
+  }, []);
 
   useEffect(() => {
     const controller = createSpeechRecognitionController({
@@ -295,11 +300,17 @@ export default function App() {
       return;
     }
 
+    const actionId = authActionIdRef.current + 1;
+    authActionIdRef.current = actionId;
     setGlobalError(null);
     setAuthState("authorizing");
 
     try {
       const attempt = await piClient.startAuth(method);
+      if (authActionIdRef.current !== actionId) {
+        return;
+      }
+
       setPendingAttempt(attempt);
       setManualCodeInput("");
 
@@ -309,6 +320,31 @@ export default function App() {
           setGlobalError("No se pudo abrir una pestana nueva. Usa el campo manual.");
         }
       }
+    } catch (error) {
+      if (authActionIdRef.current !== actionId) {
+        return;
+      }
+
+      setAuthState("error");
+      setGlobalError(describeClientError(error));
+    }
+  }
+
+  async function handleCancelAuth() {
+    if (!harnessAvailable || !pendingAttempt) {
+      return;
+    }
+
+    authActionIdRef.current += 1;
+    setGlobalError(null);
+
+    try {
+      await piClient.cancelAuth(pendingAttempt.attemptId);
+      setPendingAttempt(null);
+      setManualCodeInput("");
+      setServerBusy(false);
+      setAuthState("disconnected");
+      await refreshStatus({ clearErrors: true });
     } catch (error) {
       setAuthState("error");
       setGlobalError(describeClientError(error));
@@ -320,6 +356,7 @@ export default function App() {
       return;
     }
 
+    authActionIdRef.current += 1;
     setGlobalError(null);
 
     try {
@@ -398,7 +435,8 @@ export default function App() {
     || isProcessing;
   const textDisabled =
     !harnessAvailable
-    || isProcessing;
+    || isProcessing
+    || authState === "authorizing";
   const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
   const voiceHint =
     voiceState === "unsupported"
@@ -475,7 +513,9 @@ export default function App() {
             </button>
           </div>
           {activeTab === "backend" ? (
-            <AgentAdminPanel client={agentAdminClient} />
+            <div className="grid w-full gap-4">
+              <AgentAdminPanel client={agentAdminClient} />
+            </div>
           ) : (
           <div className="flex w-full flex-col items-center gap-12 text-center">
             <div className="space-y-6">
@@ -607,6 +647,20 @@ export default function App() {
                     <LogOut className="h-4 w-4" />
                     Logout
                   </button>
+
+                  {pendingAttempt ? (
+                    <button
+                      className="btn-secondary inline-flex items-center gap-2"
+                      disabled={!harnessAvailable}
+                      onClick={() => {
+                        void handleCancelAuth();
+                      }}
+                      type="button"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      Cancelar login
+                    </button>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">

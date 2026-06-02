@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/installer-ui"
 SYSTEM_UI_DIR="${ROOT_DIR}/components/ui"
+AGENT_DIR="${ROOT_DIR}/components/agent"
 OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/installer"
 API_BUILD_DIR="${UI_DIR}/build/api"
 VIEW_DIST_DIR="${UI_DIR}/dist"
@@ -37,6 +38,7 @@ CURRENT_HASH="$(
   {
     source_hash "${UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json
     source_hash "${SYSTEM_UI_DIR}" src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
+    source_hash "${AGENT_DIR}" .
     sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -46,7 +48,7 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" && -f "${OUTPUT_DIR}/pi-coding-agent/package.json" ]]; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" && -f "${OUTPUT_DIR}/pi-coding-agent/package.json" && -f "${OUTPUT_DIR}/api/pi-system-context.md" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi
@@ -90,6 +92,7 @@ mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/
 install -m 0755 "${PACKAGED_BUN}" "${OUTPUT_DIR}/bin/bun"
 install -m 0755 "${API_BUILD_DIR}/server.js" "${OUTPUT_DIR}/api/server.js"
 install -m 0755 "${API_BUILD_DIR}/cli.js" "${OUTPUT_DIR}/api/cli.js"
+install -m 0644 "${AGENT_DIR}/pi-system-context.md" "${OUTPUT_DIR}/api/pi-system-context.md"
 rsync -a --delete "${VIEW_DIST_DIR}/" "${OUTPUT_DIR}/dist/"
 rsync -a --delete "${SYSTEM_DIST_DIR}/" "${OUTPUT_DIR}/system-dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${OUTPUT_DIR}/electron-app/"

@@ -9,12 +9,19 @@ const adminClient = {
   updateConfig: vi.fn(),
   restart: vi.fn(),
   testConnection: vi.fn(),
+  getSetupStatus: vi.fn(),
+  rerunSetup: vi.fn(),
+  startBackendCodexLogin: vi.fn(),
+  configureTelegram: vi.fn(),
+  testTelegram: vi.fn(),
+  enableTelegram: vi.fn(),
   retryTask: vi.fn(),
   clearTask: vi.fn(),
   exportDiagnostics: vi.fn(),
   listConfirmations: vi.fn(),
   confirm: vi.fn(),
   deny: vi.fn(),
+  executeShell: vi.fn(),
 };
 
 beforeEach(() => {
@@ -44,6 +51,17 @@ beforeEach(() => {
     },
   });
   adminClient.listConfirmations.mockResolvedValue([]);
+  adminClient.executeShell.mockResolvedValue({
+    ok: true,
+    command: "pwd && id",
+    cwd: "/home/agenos",
+    exitCode: 0,
+    signal: null,
+    stdout: "/home/agenos\nuid=1000\n",
+    stderr: "",
+    timedOut: false,
+    message: "Comando completado.",
+  });
   adminClient.getPolicy.mockResolvedValue([
     { ruleId: "agent.memory.background.confirm", tool: "memory.write", source: "openclaw", decision: "confirm", reason: "Guardar memoria requiere confirmacion." },
   ]);
@@ -60,6 +78,7 @@ describe("AgentAdminPanel", () => {
     expect(screen.getByRole("button", { name: "Reiniciar servicio" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Probar conexion" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exportar diagnostico" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ejecutar comando shell" })).toBeInTheDocument();
   });
 
   test("tests connection through the admin API", async () => {
@@ -69,5 +88,13 @@ describe("AgentAdminPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Probar conexion" }));
 
     await waitFor(() => expect(adminClient.testConnection).toHaveBeenCalledTimes(1));
+  });
+
+  test("executes shell commands through the admin API", async () => {
+    render(<AgentAdminPanel client={adminClient} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Ejecutar comando shell" }));
+
+    await waitFor(() => expect(adminClient.executeShell).toHaveBeenCalledWith("pwd && id"));
+    expect(await screen.findByText(/uid=1000/)).toBeInTheDocument();
   });
 });

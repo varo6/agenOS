@@ -24,4 +24,27 @@ describe("runCli", () => {
       commands: [{ command: "journalctl", stdout: "[redacted]" }],
     });
   });
+
+  test("setup-openclaw prints setup state as JSON", async () => {
+    const lines: string[] = [];
+    const result = await runCli(["setup-openclaw"], {
+      setupOpenClaw: async () => ({
+        ok: false,
+        phase: "degraded",
+        message: "OpenClaw binary not found.",
+        actions: ["setup.rerun", "diagnostics.export"],
+      }),
+      console: {
+        log: (line) => lines.push(String(line)),
+        error: () => undefined,
+      },
+    });
+
+    expect(result).toEqual({ handled: true, exitCode: 0 });
+    expect(JSON.parse(lines.join("\n"))).toMatchObject({
+      ok: false,
+      phase: "degraded",
+      actions: ["setup.rerun", "diagnostics.export"],
+    });
+  });
 });

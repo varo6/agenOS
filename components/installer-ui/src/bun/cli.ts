@@ -3,10 +3,12 @@ import { runInstallerApiServer } from "./server";
 import { runHelperCommand } from "./installer/commands";
 import { launchClassic, launchGuided, loadLaunchProfile } from "./installer/launch";
 import { createWorkerAdapter } from "./agent/worker";
+import { createOpenClawSetupService } from "./agent/setup";
 import { createSupportBundle } from "./diagnostics/support-bundle";
 
 export type CliDependencies = {
   createSupportBundle?: typeof createSupportBundle;
+  setupOpenClaw?: () => Promise<unknown>;
   console?: Pick<Console, "log" | "error">;
 };
 
@@ -98,6 +100,15 @@ export async function runCli(args: string[], dependencies: CliDependencies = {})
 
   if (command === "worker") {
     await runAgentWorkerLoop();
+    return {
+      handled: true,
+      exitCode: 0,
+    };
+  }
+
+  if (command === "setup-openclaw") {
+    const setup = await (dependencies.setupOpenClaw ?? (() => createOpenClawSetupService().run()))();
+    output.log(JSON.stringify(setup, null, 2));
     return {
       handled: true,
       exitCode: 0,

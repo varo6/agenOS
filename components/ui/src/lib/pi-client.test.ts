@@ -76,6 +76,7 @@ describe("createPiClient", () => {
         startAuth: async () => {
           throw new Error("not used");
         },
+        cancelAuth: async () => undefined,
         getAuthAttempt: async () => {
           throw new Error("not used");
         },
@@ -129,6 +130,34 @@ describe("createPiClient", () => {
     expect(requests).toEqual([{
       url: `${PI_DEV_HARNESS_ORIGIN}/api/pi/auth/start`,
       method: "POST",
+    }]);
+  });
+
+  test("cancels the auth flow with POST", async () => {
+    setWindowOrigin(PI_DEV_HARNESS_ORIGIN);
+
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push({
+        url: String(input),
+        method: String(init?.method ?? "GET"),
+        body: init?.body ? JSON.parse(String(init.body)) as unknown : undefined,
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+    };
+
+    const client = createPiClient();
+    await expect(client.cancelAuth("att_123")).resolves.toBeUndefined();
+    expect(requests).toEqual([{
+      url: `${PI_DEV_HARNESS_ORIGIN}/api/pi/auth/cancel`,
+      method: "POST",
+      body: { attemptId: "att_123" },
     }]);
   });
 

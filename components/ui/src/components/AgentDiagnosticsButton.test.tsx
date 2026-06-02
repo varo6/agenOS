@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { AgentDiagnosticsButton, collectAgentDiagnostics } from "./AgentDiagnosticsButton";
+import { collectAgentDiagnostics } from "../lib/agent-diagnostics";
+import { AgentDiagnosticsButton } from "./AgentDiagnosticsButton";
 
 const originalFetch = globalThis.fetch;
 

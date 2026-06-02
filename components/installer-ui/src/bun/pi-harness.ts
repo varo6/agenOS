@@ -12,7 +12,10 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 
-import { createAppTool, type AppOpenResponse } from "./agent/apps";
+import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../../agent/pi-system-context";
+import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "./agent/apps";
+import { createOpenClawSetupModelTool } from "./agent/openclaw-setup-tool";
+import { createOpenClawSetupService, type OpenClawSetupService } from "./agent/setup";
 import type {
   PiAuthAttemptResponse,
   PiAuthAttemptStatus,
@@ -51,16 +54,11 @@ export function resolvePiHarnessPaths(
 const PI_PATHS = resolvePiHarnessPaths();
 const PI_AGENT_DIR = PI_PATHS.agentDir;
 const PI_AUTH_PATH = PI_PATHS.authPath;
-const PI_SYSTEM_PROMPT = [
-  "Responde siempre en espanol.",
-  "Se breve y util.",
-  "Puedes abrir aplicaciones locales permitidas con la herramienta apps_open cuando el usuario lo pida.",
-  "Usa apps_open sin pedir confirmacion para Chrome/navegador, terminal o archivos.",
-  "No inventes otras acciones de sistema, archivos o acciones externas.",
-  "Si algo requiere capacidades no disponibles en este MVP, dilo claramente.",
-].join("\n");
+export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "openclaw_setup"];
+const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 
 type PiModelLike = {
   id: string;
@@ -116,6 +114,7 @@ type PiLoginOpenAICodexOptions = {
 
 type AppToolLike = {
   openApp(input: string): Promise<AppOpenResponse>;
+  installApp(input: string, options?: { openAfterInstall?: boolean; openAs?: string }): Promise<AppInstallResponse>;
 };
 
 type PiCustomToolLike = {
@@ -127,11 +126,11 @@ type PiCustomToolLike = {
   parameters: unknown;
   execute(
     toolCallId: string,
-    params: { app?: unknown },
+    params: Record<string, unknown>,
     signal?: AbortSignal,
     onUpdate?: unknown,
     ctx?: unknown,
-  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: AppOpenResponse }>;
+  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
 };
 
 type PiHarnessDependencies = {
@@ -145,16 +144,22 @@ type PiHarnessDependencies = {
     customTools?: PiCustomToolLike[];
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
+  setupService?: OpenClawSetupService;
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   now: () => number;
   setTimeout: typeof globalThis.setTimeout;
   clearTimeout: typeof globalThis.clearTimeout;
 };
 
+type PiHarnessOptions = {
+  onAuth?: (info: { url: string; instructions?: string }, attempt: LoginAttempt) => void;
+};
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
+  settled: boolean;
 };
 
 type LoginAttempt = {
@@ -183,11 +188,31 @@ function createDeferred<T>(): Deferred<T> {
   let reject!: (reason?: unknown) => void;
 
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
+    resolve = (value) => {
+      deferred.settled = true;
+      resolvePromise(value);
+    };
+    reject = (reason) => {
+      deferred.settled = true;
+      rejectPromise(reason);
+    };
   });
 
-  return { promise, resolve, reject };
+  void promise.catch(() => undefined);
+  const deferred = { promise, resolve, reject, settled: false };
+  return deferred;
+}
+
+function rejectDeferred<T>(deferred: Deferred<T>, reason: unknown): void {
+  if (!deferred.settled) {
+    deferred.reject(reason);
+  }
+}
+
+function resolveDeferred<T>(deferred: Deferred<T>, value: T): void {
+  if (!deferred.settled) {
+    deferred.resolve(value);
+  }
 }
 
 function normalizeErrorMessage(error: unknown): string {
@@ -228,10 +253,30 @@ const OPEN_APP_TOOL_PARAMETERS = {
   properties: {
     app: {
       type: "string",
-      description: "Nombre de la aplicacion local permitida que se quiere abrir. Ejemplos: Chrome, navegador, terminal, archivos.",
+      description: "Nombre de la aplicacion local instalada que se quiere abrir. Ejemplos: Chrome, VLC, GIMP, terminal, archivos.",
     },
   },
   required: ["app"],
+  additionalProperties: false,
+};
+
+const INSTALL_APP_TOOL_PARAMETERS = {
+  type: "object",
+  properties: {
+    package: {
+      type: "string",
+      description: "Nombre del paquete Debian a instalar, por ejemplo vlc, gimp o libreoffice.",
+    },
+    app: {
+      type: "string",
+      description: "Nombre de la aplicacion a abrir despues de instalar si difiere del paquete.",
+    },
+    openAfterInstall: {
+      type: "boolean",
+      description: "Abrir la aplicacion despues de instalarla. Por defecto true.",
+    },
+  },
+  required: ["package"],
   additionalProperties: false,
 };
 
@@ -239,10 +284,10 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
   return {
     name: "apps_open",
     label: "Abrir app",
-    description: "Abre una aplicacion local permitida en AgenOS cuando el usuario lo pide explicitamente.",
-    promptSnippet: "apps_open: abre aplicaciones locales permitidas como Chrome/navegador, terminal o archivos.",
+    description: "Abre una aplicacion local instalada en AgenOS cuando el usuario lo pide explicitamente.",
+    promptSnippet: "apps_open: abre aplicaciones locales instaladas como Chrome, VLC, GIMP, archivos o terminal.",
     promptGuidelines: [
-      "Si el usuario pide abrir Chrome, el navegador, la terminal o archivos, llama apps_open con el nombre de la aplicacion.",
+      "Si el usuario pide abrir una aplicacion instalada, llama apps_open con el nombre de la aplicacion.",
       "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
     ],
     parameters: OPEN_APP_TOOL_PARAMETERS,
@@ -250,6 +295,34 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
       const response = await appTool.openApp(typeof params.app === "string" ? params.app : "");
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
+        details: response,
+      };
+    },
+  };
+}
+
+function createInstallAppModelTool(appTool: AppToolLike): PiCustomToolLike {
+  return {
+    name: "apps_install",
+    label: "Instalar app",
+    description: "Instala un paquete Debian y opcionalmente abre la aplicacion instalada.",
+    promptSnippet: "apps_install: instala paquetes Debian cuando el usuario lo pide, y puede abrir la app al terminar.",
+    promptGuidelines: [
+      "Si el usuario pide instalar una app o paquete, llama apps_install con el nombre del paquete Debian.",
+      "Si el usuario pide instalar y abrir una app, deja openAfterInstall en true y usa app si el nombre de apertura difiere del paquete.",
+      "No uses apps_install para paquetes que el usuario no haya pedido instalar.",
+    ],
+    parameters: INSTALL_APP_TOOL_PARAMETERS,
+    async execute(_toolCallId, params) {
+      const response = await appTool.installApp(
+        typeof params.package === "string" ? params.package : "",
+        {
+          openAfterInstall: typeof params.openAfterInstall === "boolean" ? params.openAfterInstall : true,
+          openAs: typeof params.app === "string" ? params.app : undefined,
+        },
+      );
+      return {
+        content: [{ type: "text", text: response.message ?? "Solicitud de instalacion procesada." }],
         details: response,
       };
     },
@@ -281,12 +354,14 @@ function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
 function createDefaultDependencies(): PiHarnessDependencies {
   const authStorage = AuthStorage.create(PI_AUTH_PATH);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const appTool = createAppTool();
+  const setupService = createOpenClawSetupService();
 
   return {
     authStorage,
     modelRegistry,
     createSessionManager: () => SessionManager.inMemory(process.cwd()),
-    createAgentSession: async ({ model, sessionManager }) => {
+    createAgentSession: async ({ model, sessionManager, tools, customTools }) => {
       const settingsManager = SettingsManager.inMemory();
       const resourceLoader = new DefaultResourceLoader({
         cwd: process.cwd(),
@@ -310,8 +385,12 @@ function createDefaultDependencies(): PiHarnessDependencies {
         modelRegistry,
         model: model as never,
         thinkingLevel: "minimal",
-        tools: ["apps_open"],
-        customTools: [createOpenAppModelTool(createAppTool()) as never],
+        tools: tools ?? FOREGROUND_MODEL_TOOLS,
+        customTools: (customTools ?? [
+          createOpenAppModelTool(appTool),
+          createInstallAppModelTool(appTool),
+          createOpenClawSetupModelTool(setupService),
+        ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
         resourceLoader,
@@ -319,7 +398,8 @@ function createDefaultDependencies(): PiHarnessDependencies {
 
       return { session: created.session as unknown as PiAgentSessionLike };
     },
-    appTool: createAppTool(),
+    appTool,
+    setupService,
     loginOpenAICodex,
     now: () => Date.now(),
     setTimeout: globalThis.setTimeout.bind(globalThis),
@@ -329,6 +409,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
 
 export class PiHarness {
   private readonly deps: PiHarnessDependencies;
+  private readonly options: PiHarnessOptions;
   private readonly attempts = new Map<string, LoginAttempt>();
   private sessionManager: PiSessionManagerLike;
   private session: PiAgentSessionLike | undefined;
@@ -337,8 +418,9 @@ export class PiHarness {
   private busy = false;
   private lastError: string | undefined;
 
-  constructor(dependencies: PiHarnessDependencies) {
+  constructor(dependencies: PiHarnessDependencies, options: PiHarnessOptions = {}) {
     this.deps = dependencies;
+    this.options = options;
     this.sessionManager = this.deps.createSessionManager();
   }
 
@@ -394,8 +476,8 @@ export class PiHarness {
       attempt.error = "El intento de login expiro.";
       this.lastError = attempt.error;
       this.pendingAttemptId = this.pendingAttemptId === attempt.attemptId ? undefined : this.pendingAttemptId;
-      authInfo.reject(new Error(attempt.error));
-      manualInput.reject(new Error("Login attempt expired"));
+      rejectDeferred(authInfo, new Error(attempt.error));
+      rejectDeferred(manualInput, new Error("Login attempt expired"));
     }, PI_AUTH_TTL_MS);
 
     void this.runAuthAttempt(attempt);
@@ -430,6 +512,10 @@ export class PiHarness {
       throw new PiHarnessError(409, attempt.error ?? "El intento de login ya fallo.");
     }
 
+    if (attempt.status === "cancelled") {
+      throw new PiHarnessError(409, "El intento de login fue cancelado.");
+    }
+
     const value = input.trim();
     if (!value) {
       throw new PiHarnessError(400, "Pega la URL de retorno completa o el codigo.");
@@ -439,16 +525,28 @@ export class PiHarness {
     return toAttemptResponse(attempt);
   }
 
-  logout(): void {
+  cancelAuth(attemptId?: string): PiAuthAttemptResponse | null {
     const pendingAttempt = this.pendingAttemptId ? this.attempts.get(this.pendingAttemptId) : undefined;
-    if (pendingAttempt?.status === "pending") {
-      pendingAttempt.status = "error";
-      pendingAttempt.error = "Login cancelado.";
-      pendingAttempt.authInfo.reject(new Error(pendingAttempt.error));
-      pendingAttempt.manualInput.reject(new Error(pendingAttempt.error));
-      this.clearAttemptTimer(pendingAttempt);
-      this.pendingAttemptId = undefined;
+    if (!pendingAttempt || pendingAttempt.status !== "pending") {
+      return null;
     }
+
+    if (attemptId && attemptId !== pendingAttempt.attemptId) {
+      throw new PiHarnessError(409, "Hay otro login en curso.");
+    }
+
+    pendingAttempt.status = "cancelled";
+    pendingAttempt.error = "Login cancelado.";
+    rejectDeferred(pendingAttempt.authInfo, new Error(pendingAttempt.error));
+    rejectDeferred(pendingAttempt.manualInput, new Error(pendingAttempt.error));
+    this.clearAttemptTimer(pendingAttempt);
+    this.pendingAttemptId = undefined;
+    this.lastError = undefined;
+    return toAttemptResponse(pendingAttempt);
+  }
+
+  logout(): void {
+    this.cancelAuth();
 
     this.deps.authStorage.logout(PI_PROVIDER_ID);
     this.lastError = undefined;
@@ -487,7 +585,7 @@ export class PiHarness {
           completedReply = extractTextContent(event.message.content);
         }
 
-        if (event.type === "tool_execution_end" && event.toolName === "apps_open" && !event.isError) {
+        if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName) && !event.isError) {
           toolReply = extractTextContent(extractToolResultContent(event.result));
         }
       });
@@ -527,13 +625,22 @@ export class PiHarness {
       const credentials = await this.deps.loginOpenAICodex({
         originator: "pi",
         onAuth: (info) => {
+          if (attempt.status !== "pending" || this.pendingAttemptId !== attempt.attemptId) {
+            return;
+          }
+
           attempt.url = info.url;
           attempt.instructions = info.instructions ?? PI_AUTH_INSTRUCTIONS;
-          attempt.authInfo.resolve(toPendingAttempt(attempt));
+          this.options.onAuth?.({ url: attempt.url, instructions: attempt.instructions }, attempt);
+          resolveDeferred(attempt.authInfo, toPendingAttempt(attempt));
         },
         onPrompt: async () => attempt.manualInput.promise,
         onManualCodeInput: async () => attempt.manualInput.promise,
       });
+
+      if (attempt.status !== "pending" || this.pendingAttemptId !== attempt.attemptId) {
+        return;
+      }
 
       attempt.status = "success";
       this.deps.authStorage.set(PI_PROVIDER_ID, {
@@ -543,14 +650,14 @@ export class PiHarness {
       this.lastError = undefined;
       this.pendingAttemptId = this.pendingAttemptId === attempt.attemptId ? undefined : this.pendingAttemptId;
     } catch (error) {
-      if (attempt.status === "expired") {
+      if (attempt.status !== "pending") {
         return;
       }
 
       const message = normalizeErrorMessage(error);
       attempt.status = "error";
       attempt.error = message;
-      attempt.authInfo.reject(error);
+      rejectDeferred(attempt.authInfo, error);
       this.pendingAttemptId = this.pendingAttemptId === attempt.attemptId ? undefined : this.pendingAttemptId;
     } finally {
       this.clearAttemptTimer(attempt);
@@ -595,8 +702,12 @@ export class PiHarness {
     const created = await this.deps.createAgentSession({
       model,
       sessionManager: this.sessionManager,
-      tools: ["apps_open"],
-      customTools: [createOpenAppModelTool(this.deps.appTool)],
+      tools: FOREGROUND_MODEL_TOOLS,
+      customTools: [
+        createOpenAppModelTool(this.deps.appTool),
+        createInstallAppModelTool(this.deps.appTool),
+        ...(this.deps.setupService ? [createOpenClawSetupModelTool(this.deps.setupService)] : []),
+      ],
     });
 
     this.session = created.session;
@@ -638,11 +749,11 @@ export class PiHarness {
 
 let sharedHarness: PiHarness | undefined;
 
-export function createPiHarness(dependencies?: Partial<PiHarnessDependencies>): PiHarness {
+export function createPiHarness(dependencies?: Partial<PiHarnessDependencies>, options: PiHarnessOptions = {}): PiHarness {
   if (dependencies) {
-    return new PiHarness(dependencies as PiHarnessDependencies);
+    return new PiHarness(dependencies as PiHarnessDependencies, options);
   }
 
-  sharedHarness ??= new PiHarness(createDefaultDependencies());
+  sharedHarness ??= new PiHarness(createDefaultDependencies(), options);
   return sharedHarness;
 }

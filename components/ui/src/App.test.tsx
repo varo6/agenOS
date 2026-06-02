@@ -5,6 +5,9 @@ import App from "./App";
 const mocks = vi.hoisted(() => ({
   agentAdminClient: {
     getStatus: vi.fn(),
+    getPolicy: vi.fn(),
+    listConfirmations: vi.fn(),
+    rerunSetup: vi.fn(),
   },
   agentClient: {
     appendMemory: vi.fn(),
@@ -14,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   piClient: {
     getStatus: vi.fn(),
     startAuth: vi.fn(),
+    cancelAuth: vi.fn(),
     getAuthAttempt: vi.fn(),
     submitManualCode: vi.fn(),
     logout: vi.fn(),
@@ -91,7 +95,7 @@ const readyAgentStatus = {
 };
 
 afterEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("App chat recovery", () => {
@@ -130,6 +134,47 @@ describe("App chat recovery", () => {
     expect(screen.getByText("Conecta ChatGPT para empezar.")).toBeInTheDocument();
   });
 
+  test("can cancel a pending auth attempt and start over", async () => {
+    const pendingStatus = {
+      ...disconnectedStatus,
+      authState: "authorizing",
+      pendingAttempt: {
+        attemptId: "att_123",
+        method: "device",
+        url: "https://auth.openai.com/codex/device",
+        instructions: "Abre el enlace",
+        expiresAt: "2026-04-21T00:10:00.000Z",
+        userCode: "ABCD-EFGH",
+      },
+    };
+
+    mocks.piClient.getStatus
+      .mockResolvedValue(pendingStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.piClient.getAuthAttempt.mockResolvedValue({
+      attemptId: "att_123",
+      method: "device",
+      status: "pending",
+      expiresAt: "2026-04-21T00:10:00.000Z",
+    });
+    mocks.piClient.cancelAuth.mockImplementation(async () => {
+      mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar login" }));
+
+    await waitFor(() => {
+      expect(mocks.piClient.cancelAuth).toHaveBeenCalledWith("att_123");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeDisabled();
+  });
+
   test("sends app launch requests to the foreground model", async () => {
     mocks.piClient.getStatus.mockResolvedValue({
       ...disconnectedStatus,
@@ -155,4 +200,5 @@ describe("App chat recovery", () => {
     expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
     expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
   });
+
 });

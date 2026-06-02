@@ -26,6 +26,30 @@ cat >/etc/agenos/shell.json <<'EOF'
 }
 EOF
 
+install -d -m 0755 /etc/sudoers.d
+cat >/etc/sudoers.d/90-agenos-live <<'EOF'
+agenos ALL=(ALL) NOPASSWD:ALL
+EOF
+chmod 0440 /etc/sudoers.d/90-agenos-live
+
+install -d -o agenos -g agenos -m 0755 /home/agenos/Documentos
+install -d -o agenos -g agenos -m 0755 /home/agenos/Fotos
+install -d -o agenos -g agenos -m 0755 /home/agenos/Musica
+install -d -o agenos -g agenos -m 0755 /home/agenos/Trabajo
+install -d -o agenos -g agenos -m 0700 /home/agenos/.config
+cat >/home/agenos/.config/user-dirs.dirs <<'EOF'
+XDG_DESKTOP_DIR="$HOME/Trabajo"
+XDG_DOCUMENTS_DIR="$HOME/Documentos"
+XDG_DOWNLOAD_DIR="$HOME/Documentos"
+XDG_MUSIC_DIR="$HOME/Musica"
+XDG_PICTURES_DIR="$HOME/Fotos"
+XDG_PUBLICSHARE_DIR="$HOME/Documentos"
+XDG_TEMPLATES_DIR="$HOME/Documentos"
+XDG_VIDEOS_DIR="$HOME/Fotos"
+EOF
+chown agenos:agenos /home/agenos/.config/user-dirs.dirs
+chmod 0600 /home/agenos/.config/user-dirs.dirs
+
 install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos
 install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/ui-dev
 install -d -o agenos -g agenos -m 0700 /home/agenos/.agenos/ui-dev/pi
