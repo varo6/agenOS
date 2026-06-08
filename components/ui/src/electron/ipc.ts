@@ -14,3 +14,7 @@ export const PI_IPC_CHANNELS = {
   logout: "agenos-pi:logout",
   sendMessage: "agenos-pi:send-message",
 } as const;
+
+export const SPEECH_IPC_CHANNELS = {
+  transcribeOnce: "agenos-speech:transcribe-once",
+} as const;

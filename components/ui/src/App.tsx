@@ -262,7 +262,7 @@ export default function App() {
 
     if (!controller.supported) {
       setVoiceState("unsupported");
-      setVoiceIssue("Este navegador no expone Web Speech API. Usa texto.");
+      setVoiceIssue("STT local no disponible. Usa texto.");
     }
 
     void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()])
@@ -492,13 +492,13 @@ export default function App() {
   const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
   const voiceHint =
     voiceState === "unsupported"
-      ? voiceIssue ?? "Este navegador no expone Web Speech API. Usa texto."
+      ? voiceIssue ?? "STT local no disponible. Usa texto."
       : authState !== "connected"
         ? "Conecta ChatGPT para activar el micro."
         : isProcessing
           ? "Esperando la respuesta final del agente."
           : voiceState === "listening"
-            ? "Escuchando una sola frase para enviarla al agente."
+            ? "Escuchando una frase en espanol para enviarla al agente."
             : voiceState === "error"
               ? voiceIssue ?? "No se pudo usar el micro. Usa texto."
               : "Habla o escribe una frase corta.";

@@ -15,7 +15,8 @@ const STATIC_DIR: &str = "/usr/local/share/agenos-ui";
 const SHELL_CONFIG_PATH: &str = "/etc/agenos/shell.json";
 const SYSTEM_APPLICATIONS_DIR: &str = "/usr/share/applications";
 const APP_WORKSPACE: &str = "2:app";
-const HOME_WORKSPACE: &str = "1:home";
+const APP_WORKSPACES: &[&str] = &["2:app", "3:web", "4:media", "5:work"];
+const HOME_WORKSPACE: &str = "1:agent";
 const INSTALLER_URL: &str = "http://127.0.0.1:4173";
 const BOOT_MODES: &[&str] = &["installer", "home", "app", "system"];
 
@@ -527,9 +528,56 @@ fn workspace_window_count(workspace_name: &str) -> usize {
     target.map(count_windows).unwrap_or(0)
 }
 
+fn focused_workspace_name() -> Option<String> {
+    let Ok(output) = Command::new("swaymsg")
+        .args(["-t", "get_tree", "-r"])
+        .output()
+    else {
+        return None;
+    };
+    if !output.status.success() {
+        return None;
+    }
+
+    let Ok(tree) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return None;
+    };
+
+    fn find_focused_workspace(node: &serde_json::Value) -> Option<String> {
+        if node.get("type").and_then(|value| value.as_str()) == Some("workspace")
+            && node.get("focused").and_then(|value| value.as_bool()) == Some(true)
+        {
+            return node
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+        }
+
+        for key in ["nodes", "floating_nodes"] {
+            if let Some(children) = node.get(key).and_then(|value| value.as_array()) {
+                for child in children {
+                    if let Some(workspace) = find_focused_workspace(child) {
+                        return Some(workspace);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    find_focused_workspace(&tree)
+}
+
 fn start_workspace_monitor() {
     thread::spawn(|| loop {
-        if workspace_window_count(APP_WORKSPACE) == 0 {
+        if let Some(workspace) = focused_workspace_name() {
+            if APP_WORKSPACES.contains(&workspace.as_str())
+                && workspace_window_count(&workspace) == 0
+            {
+                sway_command(&format!("workspace \"{}\"", HOME_WORKSPACE));
+            }
+        } else if workspace_window_count(APP_WORKSPACE) == 0 {
             sway_command(&format!("workspace \"{}\"", HOME_WORKSPACE));
         }
         thread::sleep(Duration::from_secs(1));

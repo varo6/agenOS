@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { launchBrowserUrl, type BrowserLauncherOptions } from "./browser-launcher";
-import { createWorkspaceService, resolveDefaultWorkspaceForApp } from "./workspaces";
+import { createWorkspaceService, resolveDefaultWorkspaceForApp, workspaceNameFor } from "./workspaces";
 
 const DESKTOP_FIELD_CODE_RE = /%[fFuUdDnNickvm]/g;
 const MAX_COMMAND_OUTPUT_BYTES = 24_000;
@@ -64,6 +64,21 @@ export type CommandRunResult = {
 export type CommandRunOptions = {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+};
+
+type SwayNode = {
+  id?: number;
+  name?: string;
+  app_id?: string | null;
+  pid?: number | null;
+  window?: number | null;
+  window_properties?: {
+    class?: string;
+    instance?: string;
+    title?: string;
+  };
+  nodes?: SwayNode[];
+  floating_nodes?: SwayNode[];
 };
 
 export type AppToolOptions = {
@@ -445,6 +460,116 @@ function conciseCommandFailure(result: CommandRunResult): string {
   return (result.stderr || result.stdout || result.error || "El comando no devolvio detalles.").trim();
 }
 
+function canUseSway(env: NodeJS.ProcessEnv, commandExists: (command: string) => boolean): boolean {
+  return Boolean(env.SWAYSOCK) && commandExists("swaymsg");
+}
+
+function normalizeWindowToken(input: string | undefined): string {
+  return normalizeAppName(input ?? "").replace(/\.desktop$/i, "");
+}
+
+function appWindowCandidates(app: AppDefinition): Set<string> {
+  const commandNames = app.commands
+    .map((command) => basename(command.command))
+    .filter(Boolean);
+  return new Set([
+    app.appId,
+    app.desktopId,
+    app.desktopId?.replace(/\.desktop$/i, ""),
+    app.displayName,
+    ...app.aliases,
+    ...commandNames,
+  ].map(normalizeWindowToken).filter(Boolean));
+}
+
+function walkSwayTree(node: SwayNode | undefined): SwayNode[] {
+  if (!node) {
+    return [];
+  }
+
+  return [
+    node,
+    ...(node.nodes ?? []).flatMap(walkSwayTree),
+    ...(node.floating_nodes ?? []).flatMap(walkSwayTree),
+  ];
+}
+
+function nodeTokens(node: SwayNode): string[] {
+  return [
+    node.app_id ?? undefined,
+    node.name,
+    node.window_properties?.class,
+    node.window_properties?.instance,
+    node.window_properties?.title,
+  ].map(normalizeWindowToken).filter(Boolean);
+}
+
+function findMatchingWindow(tree: SwayNode, app: AppDefinition): SwayNode | null {
+  const candidates = appWindowCandidates(app);
+  for (const node of walkSwayTree(tree)) {
+    if (!node.id || (!node.app_id && !node.window && !node.pid)) {
+      continue;
+    }
+
+    const tokens = nodeTokens(node);
+    if (tokens.some((token) => candidates.has(token))) {
+      return node;
+    }
+
+    if (tokens.some((token) => [...candidates].some((candidate) => token.includes(candidate) || candidate.includes(token)))) {
+      return node;
+    }
+  }
+
+  return null;
+}
+
+async function settleLaunchedWindow(input: {
+  app: AppDefinition;
+  workspace: unknown;
+  focus: boolean;
+  env: NodeJS.ProcessEnv;
+  commandExists: (command: string) => boolean;
+  runCommand: (command: string, args: string[], options?: CommandRunOptions) => Promise<CommandRunResult>;
+}): Promise<"confirmed" | "unsupported" | "not-found"> {
+  if (!canUseSway(input.env, input.commandExists)) {
+    return "unsupported";
+  }
+
+  const workspaceName = workspaceNameFor(input.workspace);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const treeResult = await input.runCommand("swaymsg", ["-t", "get_tree"], {
+      env: input.env,
+      timeoutMs: 1000,
+    });
+    if (treeResult.exitCode !== 0 || !treeResult.stdout.trim()) {
+      return "not-found";
+    }
+
+    if (treeResult.exitCode === 0 && treeResult.stdout.trim()) {
+      try {
+        const tree = JSON.parse(treeResult.stdout) as SwayNode;
+        const window = findMatchingWindow(tree, input.app);
+        if (window?.id) {
+          const focusSuffix = input.focus ? ", focus" : "";
+          const command = `[con_id=${window.id}] move to workspace "${workspaceName}"${focusSuffix}`;
+          const moveResult = await input.runCommand("swaymsg", [command], {
+            env: input.env,
+            timeoutMs: 1000,
+          });
+          return moveResult.exitCode === 0 ? "confirmed" : "not-found";
+        }
+      } catch {
+        return "not-found";
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return "not-found";
+}
+
 async function runPrivilegedCommand(
   command: string,
   args: string[],
@@ -484,6 +609,25 @@ export function createAppTool(options: AppToolOptions = {}) {
   });
   const runCommand = options.runCommand ?? defaultRunCommand;
   const env = options.env ?? process.env;
+
+  async function completeLaunch(app: AppDefinition, workspace: unknown, focus: boolean): Promise<AppOpenResponse> {
+    const status = await settleLaunchedWindow({
+      app,
+      workspace,
+      focus,
+      env,
+      commandExists,
+      runCommand,
+    });
+    return {
+      ok: true,
+      appId: app.appId,
+      displayName: app.displayName,
+      message: status === "not-found"
+        ? `Lance ${app.displayName}, pero no pude confirmar ni enfocar su ventana.`
+        : `Abriendo ${app.displayName}.`,
+    };
+  }
 
   return {
     listApps(): AppListResponse {
@@ -553,23 +697,13 @@ export function createAppTool(options: AppToolOptions = {}) {
       if (app.desktopId && commandExists("gtk-launch")) {
         focusWorkspace();
         spawnCommand("gtk-launch", [app.desktopId.replace(/\.desktop$/i, "")]);
-        return {
-          ok: true,
-          appId: app.appId,
-          displayName: app.displayName,
-          message: `Abriendo ${app.displayName}.`,
-        };
+        return completeLaunch(app, workspace, launchInput.focus);
       }
 
       if (app.desktopPath && commandExists("gio")) {
         focusWorkspace();
         spawnCommand("gio", ["launch", app.desktopPath]);
-        return {
-          ok: true,
-          appId: app.appId,
-          displayName: app.displayName,
-          message: `Abriendo ${app.displayName}.`,
-        };
+        return completeLaunch(app, workspace, launchInput.focus);
       }
 
       const command = app.commands.find((candidate) => commandExists(candidate.command));
@@ -584,12 +718,7 @@ export function createAppTool(options: AppToolOptions = {}) {
 
       focusWorkspace();
       spawnCommand(command.command, command.args ?? []);
-      return {
-        ok: true,
-        appId: app.appId,
-        displayName: app.displayName,
-        message: `Abriendo ${app.displayName}.`,
-      };
+      return completeLaunch(app, workspace, launchInput.focus);
     },
 
     async installApp(input: string, installOptions: { openAfterInstall?: boolean; openAs?: string } = {}): Promise<AppInstallResponse> {

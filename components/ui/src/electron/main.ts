@@ -1,11 +1,14 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { cpus, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 
 import { createPiHarness, PiHarnessError } from "../../dev/pi-harness";
 import { launchBrowserUrl } from "../../../agent/browser-launcher";
-import { PI_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
+import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
 import type { PiChatSource } from "../lib/pi-types";
 import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
 
@@ -16,6 +19,18 @@ const GPU_MODE = process.env.AGENOS_ELECTRON_GPU_MODE?.trim().toLowerCase() === 
 type IpcEnvelope<T> =
   | { ok: true; value: T }
   | { ok: false; status?: number; message: string };
+
+type SpeechTranscriptionResponse = {
+  transcript: string;
+  engine: "whisper.cpp";
+  language: "es";
+  model: string;
+};
+
+type CommandResult = {
+  stdout: string;
+  stderr: string;
+};
 
 let mainWindow: BrowserWindow | null = null;
 const piHarness = createPiHarness(undefined, {
@@ -66,6 +81,20 @@ function firstExistingPath(candidates: Array<string | null | undefined>): string
   }
 
   return null;
+}
+
+function resolveCommand(commandName: string, configuredPath: string | undefined, candidates: string[]): string | null {
+  const trimmed = configuredPath?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  const existing = firstExistingPath(candidates);
+  if (existing) {
+    return existing;
+  }
+
+  return commandName;
 }
 
 function resolveIndexPath(): string | null {
@@ -167,6 +196,226 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
   };
 }
 
+function parsePositiveInteger(value: string | undefined, fallback: number, options: { min: number; max: number }): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(options.max, Math.max(options.min, parsed));
+}
+
+function runCommand(
+  command: string,
+  args: string[],
+  options: { timeoutMs: number; env?: NodeJS.ProcessEnv },
+): Promise<CommandResult> {
+  return new Promise((resolveCommandResult, reject) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        ...options.env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let settled = false;
+
+    const finish = (error: Error | null, result?: CommandResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) {
+        reject(error);
+      } else {
+        resolveCommandResult(result ?? { stdout: "", stderr: "" });
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(new Error(`El comando ${command} excedio el tiempo limite.`));
+    }, options.timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      finish(error);
+    });
+    child.on("close", (code) => {
+      const result = {
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      };
+
+      if (code === 0) {
+        finish(null, result);
+        return;
+      }
+
+      const detail = result.stderr.trim() || result.stdout.trim();
+      finish(new Error(`${command} termino con codigo ${code ?? 1}${detail ? `: ${detail}` : "."}`));
+    });
+  });
+}
+
+function normalizeTranscript(output: string): string {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\[[^\]]+\]\s*/, "").trim())
+    .filter((line) => line && !line.startsWith("whisper_") && !line.startsWith("main:") && !isNonSpeechTranscript(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isNonSpeechTranscript(line: string): boolean {
+  const normalized = line
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return /^\[(musica|music|silencio|silence|aplausos|applause|ruido|noise|sonido)\]$/.test(normalized);
+}
+
+function resolveWhisperBinary(): string | null {
+  const configuredPath = process.env.AGENOS_WHISPER_CPP_BIN?.trim();
+  if (configuredPath) {
+    return configuredPath;
+  }
+
+  const simdCandidates = [
+    ...appPathCandidates("../whisper.cpp/whisper-cli"),
+    "/opt/agenos/system/whisper.cpp/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+    "/usr/bin/whisper-cli",
+  ];
+  const baselineCandidates = [
+    ...appPathCandidates("../whisper.cpp/whisper-cli-baseline"),
+    "/opt/agenos/system/whisper.cpp/whisper-cli-baseline",
+  ];
+  const packagedCandidates = cpuSupportsPackagedWhisperSimd()
+    ? [...simdCandidates, ...baselineCandidates]
+    : [...baselineCandidates, ...simdCandidates];
+
+  return firstExistingPath(packagedCandidates) ?? "whisper-cli";
+}
+
+function cpuSupportsPackagedWhisperSimd(): boolean {
+  if (process.env.AGENOS_STT_FORCE_BASELINE?.trim() === "1") {
+    return false;
+  }
+
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    return true;
+  }
+
+  try {
+    const flagsLine = readFileSync("/proc/cpuinfo", "utf8")
+      .toLowerCase()
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("flags"));
+    const flags = new Set((flagsLine?.split(":")[1] ?? "").trim().split(/\s+/));
+
+    return ["sse4_2", "avx", "avx2", "fma", "f16c", "bmi2"].every((flag) => flags.has(flag));
+  } catch {
+    return true;
+  }
+}
+
+function resolveWhisperModel(): string | null {
+  const configuredPath = process.env.AGENOS_WHISPER_MODEL?.trim();
+  return firstExistingPath([
+    configuredPath ? resolve(configuredPath) : null,
+    ...appPathCandidates("../whisper.cpp/models/ggml-base.bin"),
+    "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+  ]);
+}
+
+function resolveRecorderBinary(): string | null {
+  return resolveCommand("arecord", process.env.AGENOS_STT_RECORDER_BIN, [
+    "/usr/bin/arecord",
+    "/bin/arecord",
+  ]);
+}
+
+async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
+  const whisperBinary = resolveWhisperBinary();
+  const modelPath = resolveWhisperModel();
+  const recorderBinary = resolveRecorderBinary();
+
+  if (!whisperBinary || !modelPath || !recorderBinary) {
+    throw new Error("STT local no esta instalado. Falta whisper.cpp, el modelo base multilingue o arecord.");
+  }
+
+  const seconds = parsePositiveInteger(process.env.AGENOS_STT_RECORD_SECONDS, 4, { min: 2, max: 30 });
+  const threads = parsePositiveInteger(process.env.AGENOS_STT_THREADS, Math.max(1, Math.min(4, cpus().length || 4)), { min: 1, max: 16 });
+  const runtimeDir = await mkdtemp(join(tmpdir(), "agenos-stt-"));
+  const wavPath = join(runtimeDir, "utterance.wav");
+  const device = process.env.AGENOS_STT_ALSA_DEVICE?.trim() || "default";
+
+  try {
+    await runCommand(recorderBinary, [
+      "-q",
+      "-D",
+      device,
+      "-t",
+      "wav",
+      "-f",
+      "S16_LE",
+      "-r",
+      "16000",
+      "-c",
+      "1",
+      "-d",
+      String(seconds),
+      wavPath,
+    ], { timeoutMs: (seconds + 3) * 1000 });
+
+    const transcription = await runCommand(whisperBinary, [
+      "-m",
+      modelPath,
+      "-f",
+      wavPath,
+      "-l",
+      "es",
+      "-t",
+      String(threads),
+      "-nt",
+      "-np",
+    ], {
+      timeoutMs: Math.max(20000, seconds * 12000),
+      env: {
+        LD_LIBRARY_PATH: [
+          resolve(whisperBinary, "..", "lib"),
+          process.env.LD_LIBRARY_PATH,
+        ].filter(Boolean).join(":"),
+      },
+    });
+    const transcript = normalizeTranscript(transcription.stdout);
+
+    if (!transcript) {
+      throw new Error("No se detecto voz. Intentalo otra vez o usa texto.");
+    }
+
+    return {
+      transcript,
+      engine: "whisper.cpp",
+      language: "es",
+      model: modelPath,
+    };
+  } finally {
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
+}
+
 function createVisualPreflight(): PreflightResponse {
   return {
     firmware: existsSync("/sys/firmware/efi") ? "UEFI" : "BIOS",
@@ -237,6 +486,8 @@ function registerIpcHandlers(): void {
       source: source as PiChatSource,
     });
   }));
+
+  ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
 }
 
 async function loadMainContent(): Promise<void> {

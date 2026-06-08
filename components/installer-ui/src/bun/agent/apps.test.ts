@@ -78,6 +78,12 @@ describe("app tool", () => {
     const tool = createAppTool({
       env: { SWAYSOCK: "/tmp/sway.sock" },
       commandExists: (command) => command === "foot" || command === "swaymsg",
+      runCommand: async () => ({
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "no tree",
+      }),
       spawnCommand: (command, args) => {
         calls.push([command, args]);
       },
@@ -93,6 +99,12 @@ describe("app tool", () => {
     const tool = createAppTool({
       env: { SWAYSOCK: "/tmp/sway.sock" },
       commandExists: (command) => command === "foot" || command === "swaymsg",
+      runCommand: async () => ({
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "no tree",
+      }),
       spawnCommand: (command, args) => {
         calls.push([command, args]);
       },
@@ -100,6 +112,70 @@ describe("app tool", () => {
 
     await tool.openApp("terminal");
     expect(calls[0]).toEqual(["swaymsg", ["workspace", "5:work"]]);
+  });
+
+  test("moves and focuses a discovered app window after desktop launch", async () => {
+    const desktopDir = mkdtempSync(join(tmpdir(), "agenos-apps-"));
+    writeFileSync(join(desktopDir, "org.mozilla.firefox.desktop"), [
+      "[Desktop Entry]",
+      "Type=Application",
+      "Name=Firefox",
+      "Exec=firefox %u",
+      "",
+    ].join("\n"));
+
+    const spawned: Array<[string, string[]]> = [];
+    const swayCommands: Array<[string, string[]]> = [];
+    const tool = createAppTool({
+      desktopDirs: [desktopDir],
+      env: { SWAYSOCK: "/tmp/sway.sock" },
+      commandExists: (command) => ["gtk-launch", "firefox", "swaymsg"].includes(command),
+      spawnCommand: (command, args) => {
+        spawned.push([command, args]);
+      },
+      runCommand: async (command, args) => {
+        swayCommands.push([command, args]);
+        if (args[0] === "-t") {
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: JSON.stringify({
+              nodes: [{
+                type: "workspace",
+                name: "3:web",
+                nodes: [{
+                  id: 42,
+                  type: "con",
+                  app_id: "org.mozilla.firefox",
+                  pid: 1234,
+                }],
+              }],
+            }),
+            stderr: "",
+          };
+        }
+
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+        };
+      },
+    });
+
+    await expect(tool.openApp({ app: "Firefox", workspace: 3, focus: true })).resolves.toMatchObject({
+      ok: true,
+      message: "Abriendo Firefox.",
+    });
+    expect(spawned).toEqual([
+      ["swaymsg", ["workspace", "3:web"]],
+      ["gtk-launch", ["org.mozilla.firefox"]],
+    ]);
+    expect(swayCommands.at(-1)).toEqual([
+      "swaymsg",
+      ['[con_id=42] move to workspace "3:web", focus'],
+    ]);
   });
 
   test("installs packages with apt and can open them afterwards", async () => {

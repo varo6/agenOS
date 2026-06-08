@@ -25,9 +25,9 @@ busybox	1:1.35.0-4+deb12u1+b1
 ca-certificates	20230311+deb12u1
 calamares	3.2.61-1+b1
 calamares-settings-debian	12.0.9-1+deb12u2
-chromium	148.0.7778.178-1~deb12u1
-chromium-common	148.0.7778.178-1~deb12u1
-chromium-sandbox	148.0.7778.178-1~deb12u1
+chromium	149.0.7827.53-1~deb12u1
+chromium-common	149.0.7827.53-1~deb12u1
+chromium-sandbox	149.0.7827.53-1~deb12u1
 coreutils	9.1-1
 cpio	2.13+dfsg-7.1
 cpp	4:12.2.0-3
@@ -448,7 +448,7 @@ libkworkspace5-5	4:5.27.5-2+deb12u2
 liblcms2-2:amd64	2.14-2+deb12u1
 libldap-2.5-0:amd64	2.5.13+dfsg-5
 libldap-common	2.5.13+dfsg-5
-libldb2:amd64	2:2.6.2+samba4.17.12+dfsg-0+deb12u3
+libldb2:amd64	2:2.6.2+samba4.17.12+dfsg-0+deb12u4
 liblerc4:amd64	4.0.0+ds-2
 liblilv-0-0:amd64	0.24.14-1
 libllvm15:amd64	1:15.0.6-4+b1
@@ -602,7 +602,7 @@ libserd-0-0:amd64	0.30.16-1
 libslang2:amd64	2.3.3-3
 libsm6:amd64	2:1.2.3-1
 libsmartcols1:amd64	2.38.1-5+deb12u3
-libsmbclient:amd64	2:4.17.12+dfsg-0+deb12u3
+libsmbclient:amd64	2:4.17.12+dfsg-0+deb12u4
 libsndfile1:amd64	1.2.0-1+deb12u1
 libsord-0-0:amd64	0.16.14+git221008-1
 libsoup-3.0-0:amd64	3.2.3-0+deb12u2
@@ -655,7 +655,7 @@ libwayland-client0:amd64	1.21.0-1
 libwayland-cursor0:amd64	1.21.0-1
 libwayland-egl1:amd64	1.21.0-1
 libwayland-server0:amd64	1.21.0-1
-libwbclient0:amd64	2:4.17.12+dfsg-0+deb12u3
+libwbclient0:amd64	2:4.17.12+dfsg-0+deb12u4
 libwebp7:amd64	1.2.4-0.2+deb12u1
 libwebrtc-audio-processing1:amd64	0.3-1+b1
 libwireplumber-0.4-0:amd64	0.4.13-1
@@ -729,8 +729,8 @@ libyaml-cpp0.7:amd64	0.7.0+dfsg-8+b1
 libz3-4:amd64	4.8.12-3.1
 libzstd1:amd64	1.5.4+dfsg2-5
 linux-base	4.9
-linux-image-6.1.0-48-amd64	6.1.172-1
-linux-image-amd64	6.1.172-1
+linux-image-6.1.0-49-amd64	6.1.174-1
+linux-image-amd64	6.1.174-1
 live-boot	1:20230131+deb12u1
 live-boot-doc	1:20230131+deb12u1
 live-boot-initramfs-tools	1:20230131+deb12u1
@@ -814,7 +814,7 @@ raspi-firmware	1.20220830+ds-1
 readline-common	8.2-1.3
 rsync	3.2.7-1+deb12u5
 rtkit	0.13-5
-samba-libs:amd64	2:4.17.12+dfsg-0+deb12u3
+samba-libs:amd64	2:4.17.12+dfsg-0+deb12u4
 seatd	0.7.0-6
 sed	4.9-1+deb12u1
 sensible-utils	0.0.17+nmu1

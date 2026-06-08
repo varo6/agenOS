@@ -316,6 +316,8 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
     promptSnippet: "apps_open: abre aplicaciones locales instaladas como Chrome, VLC, GIMP, archivos o terminal.",
     promptGuidelines: [
       "Si el usuario pide abrir una aplicacion instalada, llama apps_open con el nombre de la aplicacion.",
+      "Pi vive en el workspace 1; usa workspaces 2..5 para apps lanzadas por el usuario y focus true salvo que el usuario diga lo contrario.",
+      "Si el usuario nombra un workspace, pasa ese numero en workspace. Si no lo nombra, deja que el sistema enrute la app.",
       "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
     ],
     parameters: OPEN_APP_TOOL_PARAMETERS,

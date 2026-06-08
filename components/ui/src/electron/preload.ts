@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import { PI_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
+import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
 import type {
   ApiMessageResponse,
   MaintenanceAction,
@@ -19,6 +19,13 @@ import type {
 type IpcEnvelope<T> =
   | { ok: true; value: T }
   | { ok: false; status?: number; message: string };
+
+type SpeechTranscriptionResponse = {
+  transcript: string;
+  engine: "whisper.cpp";
+  language: "es";
+  model: string;
+};
 
 function normalizeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -115,6 +122,13 @@ contextBridge.exposeInMainWorld("agenosPi", {
   },
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse> {
     return invokePi<PiChatResponse>(PI_IPC_CHANNELS.sendMessage, { message, source });
+  },
+  isAvailable,
+});
+
+contextBridge.exposeInMainWorld("agenosSpeech", {
+  transcribeOnce(): Promise<SpeechTranscriptionResponse> {
+    return invokePi<SpeechTranscriptionResponse>(SPEECH_IPC_CHANNELS.transcribeOnce);
   },
   isAvailable,
 });

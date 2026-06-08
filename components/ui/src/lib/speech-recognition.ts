@@ -1,3 +1,5 @@
+import { getSpeechBridge, type AgenosSpeechBridge } from "./speech-bridge";
+
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
 };
@@ -55,6 +57,7 @@ export type SpeechRecognitionCallbacks = {
 
 export type SpeechRecognitionController = {
   supported: boolean;
+  engine: "native" | "browser" | "none";
   start: () => boolean;
   stop: () => void;
   dispose: () => void;
@@ -94,6 +97,38 @@ function normalizeSpeechError(code: string | undefined): SpeechRecognitionError 
   }
 }
 
+function normalizeNativeSpeechError(error: unknown): SpeechRecognitionError {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("no se detecto voz")) {
+    return {
+      code: "no-speech",
+      message,
+      disableVoice: false,
+    };
+  }
+
+  if (
+    normalized.includes("no esta instalado")
+    || normalized.includes("enoent")
+    || normalized.includes("arecord")
+    || normalized.includes("whisper")
+  ) {
+    return {
+      code: "native-unavailable",
+      message: "STT local no disponible. Revisa whisper.cpp, el modelo base multilingue y el microfono.",
+      disableVoice: true,
+    };
+  }
+
+  return {
+    code: "native-error",
+    message: message || "No se pudo transcribir con STT local. Usa texto.",
+    disableVoice: false,
+  };
+}
+
 function extractTranscript(results: BrowserSpeechRecognitionResultList): string {
   const chunks: string[] = [];
 
@@ -113,17 +148,70 @@ function extractTranscript(results: BrowserSpeechRecognitionResultList): string 
 }
 
 export function isSpeechRecognitionSupported(targetWindow: Window | undefined = globalThis.window): boolean {
-  return Boolean(getSpeechRecognitionConstructor(targetWindow));
+  const bridge = getSpeechBridge();
+  return Boolean(bridge?.isAvailable() || getSpeechRecognitionConstructor(targetWindow));
+}
+
+function createNativeSpeechRecognitionController(
+  callbacks: SpeechRecognitionCallbacks,
+  bridge: AgenosSpeechBridge,
+): SpeechRecognitionController {
+  let disposed = false;
+  let listening = false;
+
+  return {
+    supported: true,
+    engine: "native",
+    start() {
+      if (listening || disposed) {
+        return false;
+      }
+
+      listening = true;
+      void bridge.transcribeOnce()
+        .then((result) => {
+          if (!disposed && result.transcript.trim()) {
+            callbacks.onResult(result.transcript);
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            callbacks.onError(normalizeNativeSpeechError(error));
+          }
+        })
+        .finally(() => {
+          listening = false;
+          if (!disposed) {
+            callbacks.onEnd();
+          }
+        });
+
+      return true;
+    },
+    stop() {
+      listening = false;
+    },
+    dispose() {
+      disposed = true;
+      listening = false;
+    },
+  };
 }
 
 export function createSpeechRecognitionController(
   callbacks: SpeechRecognitionCallbacks,
   targetWindow: Window | undefined = globalThis.window,
 ): SpeechRecognitionController {
+  const bridge = getSpeechBridge();
+  if (bridge?.isAvailable()) {
+    return createNativeSpeechRecognitionController(callbacks, bridge);
+  }
+
   const SpeechRecognitionCtor = getSpeechRecognitionConstructor(targetWindow);
   if (!SpeechRecognitionCtor) {
     return {
       supported: false,
+      engine: "none",
       start: () => false,
       stop: () => {},
       dispose: () => {},
@@ -150,6 +238,7 @@ export function createSpeechRecognitionController(
 
   return {
     supported: true,
+    engine: "browser",
     start() {
       try {
         recognition.start();

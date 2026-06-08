@@ -1,6 +1,6 @@
 import { accessSync, constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 export type WorkspaceNumber = 1 | 2 | 3 | 4 | 5;
 export type WorkspaceSource = "ui" | "openclaw" | "system";
@@ -115,12 +115,40 @@ function canUseSway(env: NodeJS.ProcessEnv, commandExists: (command: string) => 
   return Boolean(env.SWAYSOCK) && commandExists("swaymsg");
 }
 
+function parseWorkspaceName(name: string | undefined): WorkspaceNumber | undefined {
+  const match = name?.match(/^([1-5])(?::|$)/);
+  if (!match) {
+    return undefined;
+  }
+
+  return normalizeWorkspaceNumber(Number(match[1]));
+}
+
 export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
   const env = options.env ?? process.env;
   const commandExists = options.commandExists ?? defaultCommandExists;
   const spawnCommand = options.spawnCommand ?? defaultSpawnCommand;
 
-  function listWorkspaces(activeWorkspace?: WorkspaceNumber): WorkspaceListResponse {
+  function readActiveWorkspace(): WorkspaceNumber | undefined {
+    if (!canUseSway(env, commandExists)) {
+      return undefined;
+    }
+
+    try {
+      const output = execFileSync("swaymsg", ["-t", "get_workspaces"], {
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1000,
+      });
+      const workspaces = JSON.parse(output) as Array<{ name?: string; focused?: boolean }>;
+      return parseWorkspaceName(workspaces.find((workspace) => workspace.focused)?.name);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function listWorkspaces(activeWorkspace: WorkspaceNumber | undefined = readActiveWorkspace()): WorkspaceListResponse {
     return {
       ok: true,
       workspaces: WORKSPACES,

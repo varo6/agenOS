@@ -85,6 +85,42 @@ describe("speech-recognition", () => {
     expect(isSpeechRecognitionSupported()).toBe(true);
   });
 
+  test("prefers the native AgenOS speech bridge", async () => {
+    globalThis.window = {
+      agenosSpeech: {
+        isAvailable: () => true,
+        transcribeOnce: async () => ({
+          transcript: "enciende las luces",
+          engine: "whisper.cpp",
+          language: "es",
+          model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+        }),
+      },
+    } as Window & typeof globalThis;
+
+    const transcripts: string[] = [];
+    let ended = 0;
+
+    const controller = createSpeechRecognitionController({
+      onResult: (transcript) => {
+        transcripts.push(transcript);
+      },
+      onError: () => {},
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+
+    expect(controller.supported).toBe(true);
+    expect(controller.engine).toBe("native");
+    expect(controller.start()).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transcripts).toEqual(["enciende las luces"]);
+    expect(ended).toBe(1);
+  });
+
   test("maps result, error and end events", () => {
     setSpeechWindow();
 
@@ -108,6 +144,7 @@ describe("speech-recognition", () => {
     });
 
     expect(controller.supported).toBe(true);
+    expect(controller.engine).toBe("browser");
     expect(controller.start()).toBe(true);
 
     const instance = FakeSpeechRecognition.instances[0];
