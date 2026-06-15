@@ -1,7 +1,7 @@
 [Unit]
 Description=AgenOS Agent Broker API
-After=network-online.target
-Wants=network-online.target
+After=dbus.service NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple

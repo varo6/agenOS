@@ -10,6 +10,7 @@ import type {
   LaunchResponse,
   ValidationResponse,
 } from "../shared/installer-types";
+import type { NetworkStatusResponse } from "../../../network/types";
 import { createInstallerApiHandler } from "./server";
 
 const validProfile: InstallerProfilePayload = {
@@ -29,6 +30,56 @@ const validProfile: InstallerProfilePayload = {
   installMode: "erase-disk",
   rootMode: "same-as-user",
 };
+
+const onlineNetworkStatus: NetworkStatusResponse = {
+  ok: true,
+  overall: "online",
+  checkedAt: "2026-06-08T00:00:00.000Z",
+  wifiEnabled: true,
+  wirelessHardware: "available",
+  activeConnection: {
+    id: "AgenOS",
+    type: "wifi",
+    ssid: "AgenOS",
+    strength: 80,
+  },
+  internet: {
+    ok: true,
+    captivePortalSuspected: false,
+    message: "Internet disponible.",
+  },
+  providers: {
+    codex: "reachable",
+    gemini: "reachable",
+  },
+};
+
+function fakeNetwork() {
+  return {
+    getStatus: async () => onlineNetworkStatus,
+    scanWifi: async () => ({ ok: true as const, message: "scan" }),
+    listAccessPoints: async () => ({
+      ok: true as const,
+      accessPoints: [
+        {
+          ssid: "AgenOS",
+          bssid: "00:11:22:33:44:55",
+          strength: 80,
+          security: "wpa2" as const,
+          frequencyMHz: 2412,
+          device: "/dev/wlan0",
+        },
+      ],
+    }),
+    connectWifi: async () => ({
+      ok: true,
+      status: "connected" as const,
+      message: "Conexión Wi-Fi lista.",
+    }),
+    disconnectWifi: async () => ({ ok: true, message: "Wi-Fi desconectado." }),
+    setWifiEnabled: async (enabled: boolean) => ({ ok: true, message: enabled ? "Wi-Fi activado." : "Wi-Fi desactivado." }),
+  };
+}
 
 function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
   const piHarness = {
@@ -109,6 +160,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       message: "maintenance ok",
     }),
     piHarness,
+    network: fakeNetwork(),
     ...overrides,
   });
 }
@@ -159,6 +211,40 @@ describe("createInstallerApiHandler", () => {
         systemDisk: false,
       },
     ]);
+  });
+
+  test("serves network status", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/network/status"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toEqual(onlineNetworkStatus);
+  });
+
+  test("connects to Wi-Fi without echoing the password", async () => {
+    const handler = createHandler({
+      network: {
+        ...fakeNetwork(),
+        connectWifi: async (request: { password?: string }) => ({
+          ok: request.password === "secret-password",
+          status: request.password === "secret-password" ? "connected" as const : "failed" as const,
+          message: "Conexión Wi-Fi lista.",
+        }),
+      },
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/network/wifi/connect", {
+      method: "POST",
+      body: JSON.stringify({
+        ssid: "AgenOS",
+        password: "secret-password",
+      }),
+    }));
+
+    const payload = await jsonPayload(response);
+    expect(response.status).toBe(202);
+    expect(JSON.stringify(payload)).not.toContain("secret-password");
   });
 
   test("returns validation responses over HTTP", async () => {

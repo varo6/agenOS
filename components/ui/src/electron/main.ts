@@ -11,6 +11,8 @@ import { launchBrowserUrl } from "../../../agent/browser-launcher";
 import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
 import type { PiChatSource } from "../lib/pi-types";
 import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
+import { createNetworkManagerService } from "../../../network/node/network-manager";
+import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
@@ -40,6 +42,7 @@ const piHarness = createPiHarness(undefined, {
     }
   },
 });
+const networkService = createNetworkManagerService();
 
 function configureCommandLine(): void {
   if (GPU_MODE === "off") {
@@ -488,6 +491,23 @@ function registerIpcHandlers(): void {
   }));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
+
+  ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.listAccessPoints, () => networkService.listAccessPoints());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.connectWifi, (_event, payload: ConnectWifiRequest) => (
+    networkService.connectWifi({
+      ssid: typeof payload?.ssid === "string" ? payload.ssid : "",
+      bssid: typeof payload?.bssid === "string" ? payload.bssid : undefined,
+      password: typeof payload?.password === "string" ? payload.password : undefined,
+      hidden: payload?.hidden === true,
+      device: typeof payload?.device === "string" ? payload.device : undefined,
+    })
+  ));
+  ipcMain.handle(NETWORK_IPC_CHANNELS.disconnectWifi, () => networkService.disconnectWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.setWifiEnabled, (_event, payload: { enabled?: unknown }) => (
+    networkService.setWifiEnabled(payload?.enabled === true)
+  ));
 }
 
 async function loadMainContent(): Promise<void> {

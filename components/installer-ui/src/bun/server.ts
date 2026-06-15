@@ -47,6 +47,8 @@ import type {
   PiPendingAttempt,
   PiStatusResponse,
 } from "../../../ui/src/lib/pi-types";
+import { createNetworkManagerService, type NetworkManagerService } from "../../../network/node/network-manager";
+import type { ConnectWifiRequest } from "../../../network/types";
 
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
@@ -82,6 +84,7 @@ export type InstallerApiDependencies = {
   agentAdmin: ReturnType<typeof createAgentAdminService>;
   setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
+  network: NetworkManagerService;
 };
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
@@ -115,6 +118,17 @@ function launchFailureStatus(response: LaunchResponse, defaultStatus: number): n
 
 function isPathInside(rootDir: string, candidate: string): boolean {
   return candidate === rootDir || candidate.startsWith(`${rootDir}/`);
+}
+
+function connectWifiPayload(payload: unknown): ConnectWifiRequest {
+  const body = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  return {
+    ssid: typeof body.ssid === "string" ? body.ssid : "",
+    bssid: typeof body.bssid === "string" ? body.bssid : undefined,
+    password: typeof body.password === "string" ? body.password : undefined,
+    hidden: body.hidden === true,
+    device: typeof body.device === "string" ? body.device : undefined,
+  };
 }
 
 function resolveFrontendPath(frontendDistDir: string, pathname: string): string {
@@ -316,6 +330,7 @@ export function createInstallerApiHandler(
     agentAdmin,
     setup,
     supportBundle,
+    network: dependencies.network ?? createNetworkManagerService(),
     toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool: dependencies.shellTool ?? runShellCommand }),
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
@@ -345,6 +360,55 @@ export function createInstallerApiHandler(
           }
 
           return json(await deps.supportBundle());
+        }
+
+        if (url.pathname === "/api/network/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.network.getStatus());
+        }
+
+        if (url.pathname === "/api/network/wifi/scan") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.network.scanWifi(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/network/wifi/access-points") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.network.listAccessPoints());
+        }
+
+        if (url.pathname === "/api/network/wifi/connect") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.network.connectWifi(connectWifiPayload(await readJsonBody(request)));
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/network/wifi/disconnect") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.network.disconnectWifi();
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/network/wifi/radio") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { enabled?: unknown };
+          if (typeof payload.enabled !== "boolean") {
+            return json({ ok: false, message: "enabled debe ser boolean." }, { status: 400 });
+          }
+          const response = await deps.network.setWifiEnabled(payload.enabled);
+          return json(response, { status: response.ok ? 202 : 400 });
         }
 
         if (url.pathname === INSTALLER_ROUTES.preflight) {

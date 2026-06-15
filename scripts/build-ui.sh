@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/ui"
 AGENT_DIR="${ROOT_DIR}/components/agent"
+NETWORK_DIR="${ROOT_DIR}/components/network"
 STATIC_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/share/agenos-ui"
 PACKAGE_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/system"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
@@ -35,6 +36,15 @@ agent_source_hash() {
   (
     cd "${AGENT_DIR}"
     find . -type f -print 2>/dev/null \
+      | LC_ALL=C sort \
+      | xargs sha256sum
+  )
+}
+
+network_source_hash() {
+  (
+    cd "${NETWORK_DIR}"
+    find package.json bun.lock bun.lockb types.ts client.ts node react -type f -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
@@ -130,6 +140,7 @@ CURRENT_HASH="$(
   {
     source_hash
     agent_source_hash
+    network_source_hash
     sha256sum "${ROOT_DIR}/scripts/build-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -150,6 +161,12 @@ if [[ -f bun.lock || -f bun.lockb ]]; then
   bun install --frozen-lockfile
 else
   bun install
+fi
+
+if [[ -f "${NETWORK_DIR}/bun.lock" || -f "${NETWORK_DIR}/bun.lockb" ]]; then
+  (cd "${NETWORK_DIR}" && bun install --frozen-lockfile)
+else
+  (cd "${NETWORK_DIR}" && bun install)
 fi
 
 bun run build

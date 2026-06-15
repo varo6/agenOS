@@ -19,8 +19,23 @@ const { installerClient } = vi.hoisted(() => ({
   },
 }));
 
+const { networkClient } = vi.hoisted(() => ({
+  networkClient: {
+    getStatus: vi.fn(),
+    scanWifi: vi.fn(),
+    listAccessPoints: vi.fn(),
+    connectWifi: vi.fn(),
+    disconnectWifi: vi.fn(),
+    setWifiEnabled: vi.fn(),
+  },
+}));
+
 vi.mock("./installer-client", () => ({
   installerClient,
+}));
+
+vi.mock("../../../../network/client", () => ({
+  createNetworkClient: () => networkClient,
 }));
 
 import App from "./App";
@@ -54,6 +69,37 @@ const singleDisk: DiskSummary = {
   sizeBytes: 64 * 1024 * 1024 * 1024,
   sizeLabel: "64 GB",
   systemDisk: false,
+};
+
+const onlineNetworkStatus = {
+  ok: true,
+  overall: "online",
+  checkedAt: "2026-06-08T00:00:00.000Z",
+  wifiEnabled: true,
+  wirelessHardware: "available",
+  internet: {
+    ok: true,
+    captivePortalSuspected: false,
+    message: "Internet disponible.",
+  },
+  providers: {
+    codex: "reachable",
+    gemini: "reachable",
+  },
+};
+
+const offlineNetworkStatus = {
+  ...onlineNetworkStatus,
+  overall: "offline",
+  internet: {
+    ok: false,
+    captivePortalSuspected: false,
+    message: "Sin conexión a internet.",
+  },
+  providers: {
+    codex: "unknown",
+    gemini: "unknown",
+  },
 };
 
 const secondDisk: DiskSummary = {
@@ -174,6 +220,12 @@ beforeEach(() => {
   vi.useRealTimers();
   window.localStorage.clear();
   window.history.replaceState({}, "", "/installer");
+  networkClient.getStatus.mockResolvedValue(onlineNetworkStatus);
+  networkClient.listAccessPoints.mockResolvedValue({ ok: true, accessPoints: [] });
+  networkClient.scanWifi.mockResolvedValue({ ok: true });
+  networkClient.connectWifi.mockResolvedValue({ ok: true, status: "connected" });
+  networkClient.disconnectWifi.mockResolvedValue({ ok: true });
+  networkClient.setWifiEnabled.mockResolvedValue({ ok: true });
 });
 
 describe("App", () => {
@@ -203,6 +255,34 @@ describe("App", () => {
     expect(screen.getByText("Memoria RAM")).toBeInTheDocument();
     expect(screen.getByText("UEFI")).toBeInTheDocument();
     expect(screen.getByText("64 GB")).toBeInTheDocument();
+  });
+
+  test("allows continuing to the installer without internet", async () => {
+    networkClient.getStatus.mockResolvedValue(offlineNetworkStatus);
+    installerClient.getPreflight.mockResolvedValue(defaultPreflight);
+    installerClient.getDisks.mockResolvedValue([singleDisk]);
+    installerClient.validateProfile.mockResolvedValue({
+      ok: true,
+      errors: {},
+      normalizedProfile: normalizedProfile(),
+    });
+    installerClient.launchGuided.mockResolvedValue({
+      ok: true,
+      launched: true,
+      message: "Perfil guiado validado. Calamares se abrira con el tramo final minimo.",
+    });
+    installerClient.launchClassic.mockResolvedValue({
+      ok: true,
+      launched: true,
+      message: "Se esta abriendo la instalacion avanzada con Calamares.",
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar al instalador sin internet" }));
+
+    expect(await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" })).toBeInTheDocument();
   });
 
   test("shows a blocked state when the installer is opened outside a live session", async () => {

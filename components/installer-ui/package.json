@@ -27,6 +27,7 @@
     "@fontsource/space-grotesk": "^5.2.8",
     "@mariozechner/pi-ai": "^0.68.0",
     "@mariozechner/pi-coding-agent": "^0.68.0",
+    "dbus-next": "^0.10.2",
     "framer-motion": "^12.36.0",
     "lucide-react": "^0.577.0",
     "react": "^19.1.1",

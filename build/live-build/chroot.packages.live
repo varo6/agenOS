@@ -166,6 +166,7 @@ isc-dhcp-client	4.4.3-P1-2
 isc-dhcp-common	4.4.3-P1-2
 iso-codes	4.15.0-1
 iucode-tool	2.3.1-3
+iw	5.19-1
 ixo-usb-jtag	0.0.1-2
 kactivities-bin	5.103.0-1
 kactivitymanagerd	5.27.5-2
@@ -812,6 +813,7 @@ qttranslations5-l10n	5.15.8-2
 qtwayland5:amd64	5.15.8-2
 raspi-firmware	1.20220830+ds-1
 readline-common	8.2-1.3
+rfkill	2.38.1-5+deb12u3
 rsync	3.2.7-1+deb12u5
 rtkit	0.13-5
 samba-libs:amd64	2:4.17.12+dfsg-0+deb12u4

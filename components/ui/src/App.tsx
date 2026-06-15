@@ -19,6 +19,8 @@ import { AgentAdminPanel } from "./components/AgentAdminPanel";
 import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
+import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
+import { createNetworkClient } from "../../network/client";
 import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
 import { classifyAgentCommand } from "./lib/agent-command";
@@ -43,6 +45,7 @@ type ChatState = "idle" | "processing" | "error";
 const piClient = createPiClient();
 const agentClient = createAgentClient();
 const agentAdminClient = createAgentAdminClient();
+const networkClient = createNetworkClient();
 
 const DEFAULT_WORKSPACES: AgentWorkspace[] = [
   { number: 1, name: "1:agent", label: "Agent" },
@@ -79,6 +82,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [harnessAvailable, setHarnessAvailable] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
   const [authState, setAuthState] = useState<PiAuthState>("disconnected");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [chatState, setChatState] = useState<ChatState>("idle");
@@ -173,6 +177,12 @@ export default function App() {
       return;
     }
 
+    if (networkOnline !== true) {
+      setChatState("idle");
+      setGlobalError("Conecta AgenOS a internet antes de usar Codex o Gemini.");
+      return;
+    }
+
     const command = classifyAgentCommand(trimmed);
 
     setChatState("processing");
@@ -234,7 +244,7 @@ export default function App() {
         // refreshStatus already updated the UI with the relevant failure
       }
     }
-  }, [authState, refreshAgentStatus, refreshStatus]);
+  }, [authState, networkOnline, refreshAgentStatus, refreshStatus]);
 
   const handleVoiceResult = useCallback((transcript: string) => {
     setVoiceState("idle");
@@ -266,6 +276,14 @@ export default function App() {
     }
 
     void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()])
+      .then(async () => {
+        try {
+          const status = await networkClient.getStatus();
+          setNetworkOnline(status.overall === "online");
+        } catch {
+          setNetworkOnline(false);
+        }
+      })
       .finally(() => {
         setIsLoading(false);
       });
@@ -327,6 +345,11 @@ export default function App() {
   }, [pendingAttempt, refreshStatus]);
 
   async function handleStartAuth(method: "device" | "browser" = "device") {
+    if (networkOnline !== true) {
+      setGlobalError("Conecta AgenOS a internet antes de iniciar sesión.");
+      return;
+    }
+
     if (!harnessAvailable || chatState === "processing") {
       return;
     }
@@ -480,13 +503,16 @@ export default function App() {
   }
 
   const isProcessing = chatState === "processing" || serverBusy;
+  const agentsBlockedByNetwork = networkOnline !== true;
   const micDisabled =
     !harnessAvailable
+    || agentsBlockedByNetwork
     || authState !== "connected"
     || voiceState === "unsupported"
     || isProcessing;
   const textDisabled =
     !harnessAvailable
+    || agentsBlockedByNetwork
     || isProcessing
     || authState === "authorizing";
   const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
@@ -570,6 +596,14 @@ export default function App() {
             </p>
           </div>
         </div>
+      ) : networkOnline !== true ? (
+        <NetworkConnectionPanel
+          client={networkClient}
+          onOnline={() => {
+            setNetworkOnline(true);
+            refreshAgentExperience();
+          }}
+        />
       ) : (
         <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 pb-20 pt-28 sm:pb-28 sm:pt-32">
           <div className="mb-8 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">

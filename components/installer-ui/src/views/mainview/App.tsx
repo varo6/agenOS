@@ -9,6 +9,8 @@ import { GlobalError } from "./components/GlobalError";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { VideoBackground } from "./components/VideoBackground";
 import { InstallerShell } from "../installer-shell/InstallerShell";
+import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnectionPanel";
+import { createNetworkClient } from "../../../../network/client";
 import { installerClient } from "./installer-client";
 import { mapDiskToCardModel, mapPreflightToWelcomeModel } from "./mappers";
 import { ConfirmSlide } from "./slides/ConfirmSlide";
@@ -27,6 +29,7 @@ import {
 
 const INSTALLER_SNAPSHOT_STORAGE_KEY = "agenos.installer.snapshot";
 const INSTALLER_SNAPSHOT_VERSION = 1;
+const networkClient = createNetworkClient();
 
 type PersistedInstallerState = {
   version: number;
@@ -158,6 +161,8 @@ export default function App() {
   const [isLiveSession, setIsLiveSession] = useState<boolean | null>(null);
   const [disks, setDisks] = useState<DiskSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
+  const [continueOffline, setContinueOffline] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [hasHydratedInstaller, setHasHydratedInstaller] = useState(false);
 
@@ -180,6 +185,7 @@ export default function App() {
           installerClient.getPreflight(),
           installerClient.getDisks(),
         ]);
+        const networkStatus = await networkClient.getStatus().catch(() => null);
 
         if (!active) {
           return;
@@ -188,6 +194,7 @@ export default function App() {
         setPreflightModel(mapPreflightToWelcomeModel(preflight));
         setIsLiveSession(preflight.isLiveSession);
         setDisks(diskResponse);
+        setNetworkOnline(networkStatus?.overall === "online");
 
         if (preflight.isLiveSession) {
           const persistedSnapshot = readInstallerSnapshot();
@@ -500,6 +507,14 @@ export default function App() {
 
       {isLoading ? (
         <LoadingScreen />
+      ) : networkOnline !== true && !continueOffline ? (
+        <NetworkConnectionPanel
+          allowContinueOffline
+          client={networkClient}
+          continueOfflineLabel="Continuar al instalador sin internet"
+          onContinueOffline={() => setContinueOffline(true)}
+          onOnline={() => setNetworkOnline(true)}
+        />
       ) : (
         <InstallerShell
           activeSlide={activeSlide}

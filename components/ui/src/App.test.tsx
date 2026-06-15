@@ -25,6 +25,14 @@ const mocks = vi.hoisted(() => ({
     logout: vi.fn(),
     sendMessage: vi.fn(),
   },
+  networkClient: {
+    getStatus: vi.fn(),
+    scanWifi: vi.fn(),
+    listAccessPoints: vi.fn(),
+    connectWifi: vi.fn(),
+    disconnectWifi: vi.fn(),
+    setWifiEnabled: vi.fn(),
+  },
 }));
 
 vi.mock("./components/VideoBackground", () => ({
@@ -55,6 +63,10 @@ vi.mock("./lib/agent-admin-client", () => ({
   createAgentAdminClient: () => mocks.agentAdminClient,
 }));
 
+vi.mock("../../network/client", () => ({
+  createNetworkClient: () => mocks.networkClient,
+}));
+
 vi.mock("./lib/speech-recognition", () => ({
   createSpeechRecognitionController: () => ({
     supported: false,
@@ -69,6 +81,37 @@ const disconnectedStatus = {
   providerName: "ChatGPT/Codex",
   modelId: "gpt-5.4-mini",
   busy: false,
+};
+
+const onlineNetworkStatus = {
+  ok: true,
+  overall: "online",
+  checkedAt: "2026-06-08T00:00:00.000Z",
+  wifiEnabled: true,
+  wirelessHardware: "available",
+  internet: {
+    ok: true,
+    captivePortalSuspected: false,
+    message: "Internet disponible.",
+  },
+  providers: {
+    codex: "reachable",
+    gemini: "reachable",
+  },
+};
+
+const offlineNetworkStatus = {
+  ...onlineNetworkStatus,
+  overall: "offline",
+  internet: {
+    ok: false,
+    captivePortalSuspected: false,
+    message: "Sin conexión a internet.",
+  },
+  providers: {
+    codex: "unknown",
+    gemini: "unknown",
+  },
 };
 
 const readyAgentStatus = {
@@ -101,6 +144,12 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  mocks.networkClient.getStatus.mockResolvedValue(onlineNetworkStatus);
+  mocks.networkClient.listAccessPoints.mockResolvedValue({ ok: true, accessPoints: [] });
+  mocks.networkClient.scanWifi.mockResolvedValue({ ok: true });
+  mocks.networkClient.connectWifi.mockResolvedValue({ ok: true, status: "connected" });
+  mocks.networkClient.disconnectWifi.mockResolvedValue({ ok: true });
+  mocks.networkClient.setWifiEnabled.mockResolvedValue({ ok: true });
   mocks.agentClient.listWorkspaces.mockResolvedValue({
     ok: true,
     activeWorkspace: 1,
@@ -115,6 +164,17 @@ beforeEach(() => {
 });
 
 describe("App chat recovery", () => {
+  test("shows the network panel and blocks ChatGPT login while offline", async () => {
+    mocks.networkClient.getStatus.mockResolvedValue(offlineNetworkStatus);
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+
+    render(<App />);
+
+    expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeInTheDocument();
+  });
+
   test("shows agent onboarding and health checklist on first load", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);

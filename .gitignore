@@ -2,6 +2,9 @@ dist/
 components/ui/dist/
 components/ui/build/
 components/ui/node_modules/
+components/network/dist/
+components/network/build/
+components/network/node_modules/
 components/installer-ui/build/
 components/installer-ui/node_modules/
 components/installer-ui/dist/

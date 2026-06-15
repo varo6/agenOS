@@ -5,6 +5,17 @@ curl
 wget
 locales
 network-manager
+wpasupplicant
+iw
+rfkill
+wireless-regdb
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-brcm80211
+firmware-libertas
+firmware-ti-connectivity
+firmware-misc-nonfree
 pipewire
 pipewire-alsa
 pipewire-pulse

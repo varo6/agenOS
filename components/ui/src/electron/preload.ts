@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
+import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import type {
   ApiMessageResponse,
   MaintenanceAction,
@@ -129,6 +130,33 @@ contextBridge.exposeInMainWorld("agenosPi", {
 contextBridge.exposeInMainWorld("agenosSpeech", {
   transcribeOnce(): Promise<SpeechTranscriptionResponse> {
     return invokePi<SpeechTranscriptionResponse>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  },
+  isAvailable,
+});
+
+contextBridge.exposeInMainWorld(
+  "__AGENOS_CAPTIVE_PORTAL_URL__",
+  process.env.AGENOS_CAPTIVE_PORTAL_URL?.trim() || null,
+);
+
+contextBridge.exposeInMainWorld("agenosNetwork", {
+  getStatus() {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.getStatus);
+  },
+  scanWifi() {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.scanWifi);
+  },
+  listAccessPoints() {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.listAccessPoints);
+  },
+  connectWifi(request: ConnectWifiRequest) {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.connectWifi, request);
+  },
+  disconnectWifi() {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.disconnectWifi);
+  },
+  setWifiEnabled(enabled: boolean) {
+    return invokeOrThrow(NETWORK_IPC_CHANNELS.setWifiEnabled, { enabled });
   },
   isAvailable,
 });

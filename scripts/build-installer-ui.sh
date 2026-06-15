@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/installer-ui"
 SYSTEM_UI_DIR="${ROOT_DIR}/components/ui"
 AGENT_DIR="${ROOT_DIR}/components/agent"
+NETWORK_DIR="${ROOT_DIR}/components/network"
 OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/installer"
 API_BUILD_DIR="${UI_DIR}/build/api"
 VIEW_DIST_DIR="${UI_DIR}/dist"
@@ -39,6 +40,7 @@ CURRENT_HASH="$(
     source_hash "${UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json
     source_hash "${SYSTEM_UI_DIR}" src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
     source_hash "${AGENT_DIR}" .
+    source_hash "${NETWORK_DIR}" package.json bun.lock bun.lockb types.ts client.ts node react
     sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"

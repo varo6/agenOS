@@ -11,6 +11,8 @@
   },
   "include": [
     "src/electron/**/*.ts",
+    "../network/types.ts",
+    "../network/node/**/*.ts",
     "vite.config.ts"
   ]
 }
