@@ -1,7 +1,7 @@
 IMAGE_NAME ?= agenos-live-build
 VERSION ?=
 
-.PHONY: build clean docker-image quick-test release release-build shell vm-live vm-disk vm-reset
+.PHONY: build clean docker-image quick-test release release-build shell vm-live vm-disk vm-reset pi-harness-eval
 
 build:
 	SKIP_DOCKER_BUILD=1 $(MAKE) docker-image
@@ -13,6 +13,9 @@ clean: docker-image
 quick-test:
 	$(MAKE) build
 	$(MAKE) vm-live
+
+pi-harness-eval:
+	cd tools/pi-harness-eval && bun run eval -- $(ARGS)
 
 release:
 	VERSION="$(VERSION)" ./scripts/release.sh

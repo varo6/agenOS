@@ -30,6 +30,7 @@ build/live-build/config/includes.chroot/opt/agenos/installer/
 build/live-build/config/includes.chroot/opt/agenos/system/
 build/live-build/config/includes.chroot/usr/local/share/agenos-ui/
 tools/agenos-shell-rust/target/
+tools/pi-harness-eval/.out/
 releases/
 __pycache__/
 *.pyc
