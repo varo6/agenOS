@@ -14,6 +14,16 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 
+import {
+  createHarnessTraceId,
+  createHarnessTraceRecorder,
+  hashHarnessPrompt,
+  previewHarnessTraceText,
+  redactHarnessTraceText,
+  type HarnessTraceRecorder,
+  type HarnessTraceStatus,
+  type HarnessTraceToolEvent,
+} from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
 import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
 import type {
@@ -39,6 +49,7 @@ export type PiHarnessPaths = {
   agentDir: string;
   authPath: string;
   codexDeviceDir: string;
+  tracePath: string;
 };
 
 export function resolvePiHarnessPaths(
@@ -51,6 +62,7 @@ export function resolvePiHarnessPaths(
     agentDir,
     authPath: join(agentDir, "auth.json"),
     codexDeviceDir: join(agentDir, "codex-device"),
+    tracePath: join(agentDir, "traces", "pi-chat.ndjson"),
   };
 }
 
@@ -58,7 +70,9 @@ const PI_PATHS = resolvePiHarnessPaths();
 const PI_AGENT_DIR = PI_PATHS.agentDir;
 const PI_AUTH_PATH = PI_PATHS.authPath;
 const PI_CODEX_DEVICE_DIR = PI_PATHS.codexDeviceDir;
+const PI_TRACE_PATH = PI_PATHS.tracePath;
 export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
+const PI_SYSTEM_PROMPT_HASH = hashHarnessPrompt(PI_SYSTEM_PROMPT);
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
@@ -161,6 +175,7 @@ type PiHarnessDependencies = {
     customTools?: PiCustomToolLike[];
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
+  traceRecorder?: HarnessTraceRecorder;
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   loginOpenAICodexDevice: (options: CodexDeviceAuthOptions) => Promise<OAuthCredentials>;
   now: () => number;
@@ -533,6 +548,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const authStorage = AuthStorage.create(PI_AUTH_PATH);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   const appTool = createAppTool();
+  const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
     authStorage,
@@ -575,6 +591,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
       return { session: created.session as unknown as PiAgentSessionLike };
     },
     appTool,
+    traceRecorder,
     loginOpenAICodex,
     loginOpenAICodexDevice,
     now: () => Date.now(),
@@ -747,11 +764,15 @@ export class PiHarness {
       throw new PiHarnessError(409, "Ya hay una respuesta en curso.");
     }
 
+    const traceId = createHarnessTraceId(() => this.deps.now());
+    const startedAtMs = this.deps.now();
+    const toolEvents: HarnessTraceToolEvent[] = [];
+    let model: PiModelLike | undefined;
     this.busy = true;
     let unsubscribe = () => {};
 
     try {
-      const model = this.selectModel();
+      model = this.selectModel();
       const session = await this.ensureSession(model);
       let streamedReply = "";
       let completedReply = "";
@@ -765,8 +786,17 @@ export class PiHarness {
           completedReply = extractTextContent(event.message.content);
         }
 
-        if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName) && !event.isError) {
-          toolReply = extractTextContent(extractToolResultContent(event.result));
+        if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName)) {
+          const toolOutput = extractTextContent(extractToolResultContent(event.result));
+          toolEvents.push({
+            toolName: event.toolName,
+            ok: !event.isError,
+            timestamp: new Date(this.deps.now()).toISOString(),
+            output: toolOutput ? previewHarnessTraceText(toolOutput) : undefined,
+          });
+          if (!event.isError) {
+            toolReply = toolOutput;
+          }
         }
       });
 
@@ -778,6 +808,16 @@ export class PiHarness {
       }
 
       this.lastError = undefined;
+      this.recordChatTrace({
+        traceId,
+        startedAtMs,
+        status: "succeeded",
+        channel: request.source,
+        model,
+        message,
+        reply,
+        toolEvents,
+      });
 
       return {
         ok: true,
@@ -788,6 +828,16 @@ export class PiHarness {
     } catch (error) {
       const message = normalizeErrorMessage(error);
       this.lastError = message;
+      this.recordChatTrace({
+        traceId,
+        startedAtMs,
+        status: "failed",
+        channel: request.source,
+        model,
+        message: request.message.trim(),
+        error: message,
+        toolEvents,
+      });
 
       if (this.isAuthenticationFailure(message)) {
         throw new PiHarnessError(401, message);
@@ -797,6 +847,42 @@ export class PiHarness {
     } finally {
       unsubscribe();
       this.busy = false;
+    }
+  }
+
+  private recordChatTrace(input: {
+    traceId: string;
+    startedAtMs: number;
+    status: HarnessTraceStatus;
+    channel: string;
+    model?: PiModelLike;
+    message: string;
+    reply?: string;
+    error?: string;
+    toolEvents: HarnessTraceToolEvent[];
+  }): void {
+    try {
+      this.deps.traceRecorder?.record({
+        schemaVersion: 1,
+        traceId: input.traceId,
+        timestamp: new Date(input.startedAtMs).toISOString(),
+        source: "pi-chat",
+        channel: input.channel,
+        status: input.status,
+        provider: input.model?.provider ?? PI_PROVIDER_ID,
+        modelId: input.model?.id,
+        durationMs: Math.max(0, this.deps.now() - input.startedAtMs),
+        harness: {
+          promptHash: PI_SYSTEM_PROMPT_HASH,
+          tools: [...FOREGROUND_MODEL_TOOLS],
+        },
+        input: previewHarnessTraceText(input.message),
+        output: input.reply ? previewHarnessTraceText(input.reply) : undefined,
+        error: input.error ? redactHarnessTraceText(input.error) : undefined,
+        toolEvents: input.toolEvents,
+      });
+    } catch {
+      // Trace persistence must never block the foreground assistant.
     }
   }
 

@@ -46,6 +46,7 @@ function createHarnessFixture() {
   let createSessionOptions: unknown;
   const openedApps: unknown[] = [];
   const installedApps: string[] = [];
+  const traceRecords: unknown[] = [];
 
   const session = {
     model: {
@@ -144,6 +145,11 @@ function createHarnessFixture() {
         return { ok: true, packageName: app, message: `Instalado ${app}.` };
       },
     },
+    traceRecorder: {
+      record(record) {
+        traceRecords.push(record);
+      },
+    },
     loginOpenAICodex: async (options) => {
       loginCalls += 1;
       loginOptions = {
@@ -185,6 +191,7 @@ function createHarnessFixture() {
     getCreateSessionOptions: () => createSessionOptions,
     getOpenedApps: () => openedApps,
     getInstalledApps: () => installedApps,
+    getTraceRecords: () => traceRecords,
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
     },
@@ -217,6 +224,7 @@ describe("PiHarness", () => {
       agentDir: "/home/agenos/.agenos/ui-dev/pi",
       authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
       codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
+      tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
     });
   });
 
@@ -225,6 +233,7 @@ describe("PiHarness", () => {
       agentDir: "/home/agenos/.agenos/ui-dev/pi",
       authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
       codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
+      tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
     });
   });
 
@@ -518,7 +527,7 @@ describe("PiHarness", () => {
   });
 
   test("uses built-in tool output as the chat reply when bash returns output", async () => {
-    const { harness, authData, emitToolResult, setPromptImpl } = createHarnessFixture();
+    const { harness, authData, emitToolResult, getTraceRecords, setPromptImpl } = createHarnessFixture();
     authData.set("openai-codex", {
       type: "oauth",
       access: "access-token",
@@ -528,7 +537,7 @@ describe("PiHarness", () => {
     });
 
     setPromptImpl(async () => {
-      emitToolResult("bash", "uid=1000(agenos)");
+      emitToolResult("bash", "uid=1000(agenos) token=sk-secret");
     });
 
     await expect(harness.chat({
@@ -536,12 +545,31 @@ describe("PiHarness", () => {
       source: "text",
     })).resolves.toMatchObject({
       ok: true,
-      reply: "uid=1000(agenos)",
+      reply: "uid=1000(agenos) token=sk-secret",
+    });
+    expect(getTraceRecords()).toHaveLength(1);
+    expect(JSON.stringify(getTraceRecords()[0])).not.toContain("sk-secret");
+    expect(getTraceRecords()[0]).toMatchObject({
+      schemaVersion: 1,
+      source: "pi-chat",
+      channel: "text",
+      status: "succeeded",
+      provider: "openai-codex",
+      modelId: "gpt-5.4",
+      input: { text: "ejecuta id" },
+      output: { text: "uid=1000(agenos) token=[redacted]" },
+      toolEvents: [
+        {
+          toolName: "bash",
+          ok: true,
+          output: { text: "uid=1000(agenos) token=[redacted]" },
+        },
+      ],
     });
   });
 
   test("surfaces backend auth failures in status", async () => {
-    const { harness, authData, setPromptImpl } = createHarnessFixture();
+    const { harness, authData, getTraceRecords, setPromptImpl } = createHarnessFixture();
 
     authData.set("openai-codex", {
       type: "oauth",
@@ -551,7 +579,7 @@ describe("PiHarness", () => {
       accountId: "acct_123",
     });
     setPromptImpl(async () => {
-      throw new Error("missing_codex_entitlement");
+      throw new Error("missing_codex_entitlement sk-secret");
     });
 
     await expect(harness.chat({
@@ -559,11 +587,16 @@ describe("PiHarness", () => {
       source: "text",
     })).rejects.toMatchObject({
       status: 401,
-      message: "missing_codex_entitlement",
+      message: "missing_codex_entitlement sk-secret",
     });
     expect(harness.getStatus()).toMatchObject({
       authState: "error",
-      error: "missing_codex_entitlement",
+      error: "missing_codex_entitlement sk-secret",
+    });
+    expect(JSON.stringify(getTraceRecords()[0])).not.toContain("sk-secret");
+    expect(getTraceRecords()[0]).toMatchObject({
+      status: "failed",
+      error: "missing_codex_entitlement [redacted]",
     });
   });
 });
