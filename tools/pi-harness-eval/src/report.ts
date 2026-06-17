@@ -7,6 +7,8 @@ export function createMarkdownReport(result: EvalRunResult): string {
     `Generated: ${result.generatedAt}`,
     `Suite: \`${result.suitePath}\``,
     `Trace: \`${result.tracePath}\``,
+    `Model filter: ${result.modelFilter ? `\`${result.modelFilter}\`` : "none"}`,
+    `Trace records: ${result.traceRecordsEvaluated}/${result.traceRecordsRead} evaluated`,
     "",
     "## Summary",
     "",

@@ -120,6 +120,7 @@ function createHarnessFixture() {
     modelRegistry: {
       getAll() {
         return [
+          { id: "gpt-5.5-instant", provider: "openai-codex" },
           { id: "gpt-5.4", provider: "openai-codex" },
           { id: "gpt-5.4-mini", provider: "openai-codex" },
         ];
@@ -412,7 +413,7 @@ describe("PiHarness", () => {
     promptDeferred.resolve();
     await expect(firstPrompt).resolves.toMatchObject({
       ok: true,
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5-instant",
       provider: "openai-codex",
     });
   });
@@ -499,7 +500,28 @@ describe("PiHarness", () => {
       message: "hola",
       source: "text",
     })).resolves.toMatchObject({
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5-instant",
+    });
+  });
+
+  test("honors an explicit foreground model preference", async () => {
+    const fixture = createHarnessFixture();
+    const { harness, authData } = fixture;
+    (harness as unknown as { deps: { modelPreference: string[] } }).deps.modelPreference = ["gpt-5.4-mini"];
+
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await expect(harness.chat({
+      message: "hola",
+      source: "text",
+    })).resolves.toMatchObject({
+      modelId: "gpt-5.4-mini",
     });
   });
 
@@ -555,7 +577,7 @@ describe("PiHarness", () => {
       channel: "text",
       status: "succeeded",
       provider: "openai-codex",
-      modelId: "gpt-5.4",
+      modelId: "gpt-5.5-instant",
       input: { text: "ejecuta id" },
       output: { text: "uid=1000(agenos) token=[redacted]" },
       toolEvents: [

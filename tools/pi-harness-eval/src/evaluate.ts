@@ -23,6 +23,8 @@ export function evaluateSuite(input: {
   suitePath: string;
   tracePath: string;
   traces: HarnessTraceRecord[];
+  traceRecordsRead?: number;
+  modelFilter?: string;
   generatedAt?: string;
 }): EvalRunResult {
   const results = input.suite.scenarios.map((scenario) => evaluateScenario(scenario, input.traces));
@@ -32,6 +34,9 @@ export function evaluateSuite(input: {
     suiteName: input.suite.name,
     suitePath: input.suitePath,
     tracePath: input.tracePath,
+    modelFilter: input.modelFilter,
+    traceRecordsRead: input.traceRecordsRead ?? input.traces.length,
+    traceRecordsEvaluated: input.traces.length,
     total: summarize(results),
     bySplit: groupSummary(results, (result) => result.scenario.split),
     byCategory: groupSummary(results, (result) => result.scenario.category),

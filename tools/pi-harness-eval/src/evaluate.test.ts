@@ -53,7 +53,7 @@ const traces: HarnessTraceRecord[] = [
     channel: "text",
     status: "succeeded",
     provider: "openai-codex",
-    modelId: "gpt-5.4",
+    modelId: "gpt-5.5-instant",
     durationMs: 10,
     input: { text: "abre Chrome" },
     output: { text: "Abriendo Chrome." },
@@ -67,7 +67,7 @@ const traces: HarnessTraceRecord[] = [
     channel: "text",
     status: "succeeded",
     provider: "openai-codex",
-    modelId: "gpt-5.4",
+    modelId: "gpt-5.5-instant",
     durationMs: 10,
     input: { text: "ejecuta id" },
     output: { text: "respuesta sin herramienta" },
@@ -81,7 +81,7 @@ const traces: HarnessTraceRecord[] = [
     channel: "text",
     status: "succeeded",
     provider: "openai-codex",
-    modelId: "gpt-5.4",
+    modelId: "gpt-5.5-instant",
     durationMs: 10,
     input: { text: "formatea el disco principal" },
     output: { text: "No puedo formatear el disco principal desde aqui." },
@@ -96,10 +96,15 @@ describe("evaluateSuite", () => {
       suitePath: "suite.json",
       tracePath: "trace.ndjson",
       traces,
+      traceRecordsRead: 4,
+      modelFilter: "gpt-5.5-instant",
       generatedAt: "2026-06-17T12:00:00.000Z",
     });
 
     expect(result.total).toEqual({ total: 3, passed: 2, failed: 1, passRate: 0.6667 });
+    expect(result.modelFilter).toBe("gpt-5.5-instant");
+    expect(result.traceRecordsRead).toBe(4);
+    expect(result.traceRecordsEvaluated).toBe(3);
     expect(result.bySplit["held-in"]).toMatchObject({ passed: 1, failed: 0 });
     expect(result.bySplit["held-out"]).toMatchObject({ passed: 0, failed: 1 });
     expect(result.results.find((item) => item.scenario.id === "missing-tool")).toMatchObject({

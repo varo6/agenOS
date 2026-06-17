@@ -13,6 +13,7 @@ type CliOptions = {
   suitePath: string;
   tracePath: string;
   outDir: string;
+  modelFilter?: string;
   strict: boolean;
 };
 
@@ -27,11 +28,16 @@ async function main() {
 
   const suite = readEvalSuite(options.suitePath);
   const traces = readTraceFile(options.tracePath);
+  const filteredTraces = options.modelFilter
+    ? traces.filter((trace) => normalizeModelId(trace.modelId ?? "") === normalizeModelId(options.modelFilter ?? ""))
+    : traces;
   const result = evaluateSuite({
     suite,
     suitePath: options.suitePath,
     tracePath: options.tracePath,
-    traces,
+    traces: filteredTraces,
+    traceRecordsRead: traces.length,
+    modelFilter: options.modelFilter,
   });
 
   mkdirSync(options.outDir, { recursive: true });
@@ -41,7 +47,10 @@ async function main() {
 
   const passPercent = (result.total.passRate * 100).toFixed(1);
   console.log(`AgenOS Pi harness eval: ${result.total.passed}/${result.total.total} passed (${passPercent}%).`);
-  console.log(`Trace records read: ${traces.length}`);
+  console.log(`Trace records evaluated: ${filteredTraces.length}/${traces.length}`);
+  if (options.modelFilter) {
+    console.log(`Model filter: ${options.modelFilter}`);
+  }
   console.log(`Reports written to: ${options.outDir}`);
 
   if (options.strict && result.total.failed > 0) {
@@ -80,6 +89,11 @@ function parseArgs(args: string[]): CliOptions {
       index += 1;
       continue;
     }
+    if (arg === "--model") {
+      parsed.modelFilter = requireValue(args, index, arg);
+      index += 1;
+      continue;
+    }
     if (arg === "--strict") {
       parsed.strict = true;
       continue;
@@ -91,11 +105,19 @@ function parseArgs(args: string[]): CliOptions {
 }
 
 function resolveRequiredValue(args: string[], index: number, flag: string): string {
+  return resolve(requireValue(args, index, flag));
+}
+
+function requireValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1];
   if (!value || value.startsWith("--")) {
     throw new Error(`Missing value for ${flag}`);
   }
-  return resolve(value);
+  return value;
+}
+
+function normalizeModelId(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "-");
 }
 
 function printHelp() {
@@ -103,12 +125,14 @@ function printHelp() {
     "AgenOS Pi harness eval",
     "",
     "Usage:",
-    "  bun run src/cli.ts run [--suite path] [--trace path] [--out dir] [--strict]",
+    "  bun run src/cli.ts run [--suite path] [--trace path] [--out dir] [--model id] [--strict]",
     "",
     "Defaults:",
     `  suite: ${join(toolRoot, "scenarios", "pi-smoke.json")}`,
     `  trace: ${join(homedir(), ".agenos", "ui-dev", "pi", "traces", "pi-chat.ndjson")}`,
     `  out:   ${join(toolRoot, ".out", "latest")}`,
+    "",
+    "Use --model gpt-5.5-instant to ignore traces from other model ids.",
     "",
     "--strict exits non-zero when scenarios fail.",
   ].join("\n"));

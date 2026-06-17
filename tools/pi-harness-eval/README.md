@@ -25,6 +25,12 @@ Most local runs will use the default trace location instead:
 bun run eval
 ```
 
+For the current Pi/Codex target model:
+
+```bash
+bun run eval -- --model gpt-5.5-instant
+```
+
 Defaults:
 
 - suite: `scenarios/pi-smoke.json`

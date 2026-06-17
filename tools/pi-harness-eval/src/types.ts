@@ -86,6 +86,9 @@ export type EvalRunResult = {
   suiteName: string;
   suitePath: string;
   tracePath: string;
+  modelFilter?: string;
+  traceRecordsRead: number;
+  traceRecordsEvaluated: number;
   total: EvalSummaryBucket;
   bySplit: Record<string, EvalSummaryBucket>;
   byCategory: Record<string, EvalSummaryBucket>;

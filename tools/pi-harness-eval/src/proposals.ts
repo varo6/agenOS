@@ -14,6 +14,7 @@ export function createProposalReport(result: EvalRunResult): string {
     "",
     `Source suite: \`${result.suitePath}\``,
     `Source trace: \`${result.tracePath}\``,
+    `Model filter: ${result.modelFilter ? `\`${result.modelFilter}\`` : "none"}`,
     "",
   ];
 

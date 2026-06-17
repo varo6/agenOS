@@ -73,6 +73,7 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "openclaw_setup"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
+const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
 type PiModelLike = {
   id: string;
@@ -160,6 +161,7 @@ type PiHarnessDependencies = {
   appTool: AppToolLike;
   setupService?: OpenClawSetupService;
   traceRecorder?: HarnessTraceRecorder;
+  modelPreference?: string[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   now: () => number;
   setTimeout: typeof globalThis.setTimeout;
@@ -232,6 +234,15 @@ function resolveDeferred<T>(deferred: Deferred<T>, value: T): void {
 
 function normalizeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeModelId(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function resolvePiModelPreference(env: Record<string, string | undefined> = process.env): string[] {
+  const configured = env.AGENOS_PI_MODEL_ID?.trim();
+  return configured ? [configured, ...DEFAULT_PI_MODEL_PREFERENCE] : DEFAULT_PI_MODEL_PREFERENCE;
 }
 
 function extractTextContent(content: unknown): string {
@@ -429,6 +440,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
     appTool,
     setupService,
     traceRecorder,
+    modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,
     now: () => Date.now(),
     setTimeout: globalThis.setTimeout.bind(globalThis),
@@ -778,9 +790,12 @@ export class PiHarness {
       .filter((model) => model.provider === PI_PROVIDER_ID)
       .sort((left, right) => left.id.localeCompare(right.id));
 
+    const preference = this.deps.modelPreference ?? DEFAULT_PI_MODEL_PREFERENCE;
     const preferred =
-      models.find((model) => model.id === "gpt-5.4")
-      ?? models.find((model) => model.id === "gpt-5.4-mini")
+      preference
+        .map(normalizeModelId)
+        .map((wanted) => models.find((model) => normalizeModelId(model.id) === wanted))
+        .find((model): model is PiModelLike => Boolean(model))
       ?? models[0];
 
     if (!preferred) {
