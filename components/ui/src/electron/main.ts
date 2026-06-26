@@ -184,11 +184,25 @@ function showWindow(): void {
 }
 
 function openExternalUrl(url: string): void {
+  if (!isHttpUrl(url)) {
+    console.warn(`URL externa bloqueada: ${url}`);
+    return;
+  }
+
   try {
     launchBrowserUrl(url);
   } catch (error) {
     console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
     void shell.openExternal(url);
+  }
+}
+
+function isHttpUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
   }
 }
 
@@ -550,10 +564,19 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https://") || url.startsWith("http://")) {
+    if (isHttpUrl(url)) {
       openExternalUrl(url);
     }
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file://") || url.startsWith("data:")) {
+      return;
+    }
+
+    event.preventDefault();
+    openExternalUrl(url);
   });
 
   mainWindow.once("ready-to-show", showWindow);

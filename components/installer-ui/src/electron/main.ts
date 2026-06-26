@@ -92,6 +92,15 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
   };
 }
 
+function isHttpUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function registerIpcHandlers(): void {
   if (ipcRegistered) {
     return;
@@ -370,8 +379,21 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isHttpUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file://") || url === APP_URL || url.startsWith(`${APP_URL}/`)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (isHttpUrl(url)) {
+      void shell.openExternal(url);
+    }
   });
 
   mainWindow.once("ready-to-show", () => {

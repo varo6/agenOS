@@ -26,6 +26,9 @@ import {
 } from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
 import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
+import { createOpenFileModelTool } from "../../agent/file-open-tool";
+import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
+import { createOpenClawSetupService, type OpenClawSetupService } from "../../installer-ui/src/bun/agent/setup";
 import type {
   PiAuthAttemptResponse,
   PiAuthMethod,
@@ -77,7 +80,7 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install"];
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
@@ -176,6 +179,7 @@ type PiHarnessDependencies = {
     customTools?: PiCustomToolLike[];
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
+  setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "configureTelegram" | "testTelegram" | "enableTelegram">;
   traceRecorder?: HarnessTraceRecorder;
   modelPreference?: string[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
@@ -559,6 +563,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const authStorage = AuthStorage.create(PI_AUTH_PATH);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   const appTool = createAppTool();
+  const setupService = createOpenClawSetupService();
   const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
@@ -593,6 +598,8 @@ function createDefaultDependencies(): PiHarnessDependencies {
         customTools: (customTools ?? [
           createOpenAppModelTool(appTool),
           createInstallAppModelTool(appTool),
+          createOpenFileModelTool(),
+          createOpenClawSetupModelTool(setupService),
         ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
@@ -602,6 +609,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
       return { session: created.session as unknown as PiAgentSessionLike };
     },
     appTool,
+    setupService,
     traceRecorder,
     modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,

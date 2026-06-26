@@ -6,7 +6,7 @@ import { createObservabilityState } from "./observability";
 import { createPlannerAdapter, PROVIDER_AUTH_MISSING, type PlannerAdapter } from "./planner";
 import { AGENT_PROTOCOL_SCHEMA_VERSION } from "./protocol";
 import { createWorkerTaskStore } from "./task-store";
-import type { WorkerAdapter, WorkerProgressEvent, WorkerTask } from "./types";
+import type { WorkerAdapter, WorkerProgressEvent, WorkerTask, WorkerTaskStatus } from "./types";
 
 export type WorkerToolCall = {
   correlationId: string;
@@ -36,6 +36,7 @@ export function createAgenosWorkerDaemonAdapter(options: AgenosWorkerDaemonAdapt
   const env = options.env ?? process.env;
   const degradedReason = providerAuthConfigured(config, env) ? null : PROVIDER_AUTH_MISSING;
   const planner = options.planner ?? createPlannerAdapter({ mode: degradedReason ? "disabled" : "model-backed" });
+  const runToolCall = options.runToolCall;
   const observability = createObservabilityState({ now });
   const store = createWorkerTaskStore(taskDir);
 
@@ -92,6 +93,7 @@ export function createAgenosWorkerDaemonAdapter(options: AgenosWorkerDaemonAdapt
 
       const plan = await planner.plan({ correlationId, taskId, message });
       if (!plan.ok && plan.degradedReason) {
+        appendTaskStatus(task, "failed", 100, plan.degradedReason);
         store.appendEvent({
           schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
           taskId,
@@ -101,13 +103,148 @@ export function createAgenosWorkerDaemonAdapter(options: AgenosWorkerDaemonAdapt
           message: `${plan.degradedReason} Configure provider/auth in the admin UI.`,
           progress: 0,
         });
+        store.appendEvent({
+          schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+          taskId,
+          correlationId,
+          timestamp: now().toISOString(),
+          type: "failed",
+          message: plan.degradedReason,
+          progress: 100,
+        });
+        observability.increment("failed");
+        observability.setDegraded(plan.degradedReason, correlationId);
+        return { ok: false, taskId, correlationId, message: plan.degradedReason };
       }
+
+      if (!plan.ok) {
+        const reason = "Planner did not return executable steps.";
+        appendTaskStatus(task, "failed", 100, reason);
+        store.appendEvent({
+          schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+          taskId,
+          correlationId,
+          timestamp: now().toISOString(),
+          type: "failed",
+          message: reason,
+          progress: 100,
+        });
+        observability.increment("failed");
+        return { ok: false, taskId, correlationId, message: reason };
+      }
+
+      appendTaskStatus(task, "running", 5, null);
+      store.appendEvent({
+        schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+        taskId,
+        correlationId,
+        timestamp: now().toISOString(),
+        type: "started",
+        message: "Worker started executing the planned task.",
+        progress: 5,
+      });
+
+      if (plan.steps.length === 0) {
+        appendTaskStatus(task, "succeeded", 100, null);
+        store.appendEvent({
+          schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+          taskId,
+          correlationId,
+          timestamp: now().toISOString(),
+          type: "completed",
+          message: "Worker completed with no tool calls required.",
+          progress: 100,
+        });
+        observability.recordHeartbeat(correlationId);
+        return { ok: true, taskId, correlationId, message: "Task completed." };
+      }
+
+      if (!runToolCall) {
+        const reason = "No tool runner is configured for the AgenOS worker.";
+        appendTaskStatus(task, "failed", 100, reason);
+        store.appendEvent({
+          schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+          taskId,
+          correlationId,
+          timestamp: now().toISOString(),
+          type: "failed",
+          message: reason,
+          progress: 100,
+        });
+        observability.increment("failed");
+        observability.setDegraded(reason, correlationId);
+        return { ok: false, taskId, correlationId, message: reason };
+      }
+
+      for (const [index, step] of plan.steps.entries()) {
+        const progress = Math.max(10, Math.floor((index / plan.steps.length) * 80) + 10);
+        store.appendEvent({
+          schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+          taskId,
+          correlationId,
+          timestamp: now().toISOString(),
+          type: "tool_request",
+          message: step.summary || `Running ${step.tool}.`,
+          progress,
+        });
+
+        const result = await runToolCall({
+          correlationId,
+          taskId,
+          tool: step.tool,
+          input: step.input,
+        }) as { ok?: unknown; decision?: unknown; message?: unknown };
+
+        if (result.decision === "confirm") {
+          const reason = typeof result.message === "string" ? result.message : "Waiting for confirmation.";
+          appendTaskStatus(task, "waiting_confirmation", progress, reason);
+          store.appendEvent({
+            schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+            taskId,
+            correlationId,
+            timestamp: now().toISOString(),
+            type: "waiting_confirmation",
+            message: reason,
+            progress,
+          });
+          return { ok: true, taskId, correlationId, message: reason };
+        }
+
+        if (result.ok === false || result.decision === "deny") {
+          const reason = typeof result.message === "string" ? result.message : `Tool ${step.tool} failed.`;
+          appendTaskStatus(task, "failed", progress, reason);
+          store.appendEvent({
+            schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+            taskId,
+            correlationId,
+            timestamp: now().toISOString(),
+            type: "failed",
+            message: reason,
+            progress,
+          });
+          observability.increment("failed");
+          observability.setDegraded(reason, correlationId);
+          return { ok: false, taskId, correlationId, message: reason };
+        }
+      }
+
+      appendTaskStatus(task, "succeeded", 100, null);
+      store.appendEvent({
+        schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
+        taskId,
+        correlationId,
+        timestamp: now().toISOString(),
+        type: "completed",
+        message: "Task completed.",
+        progress: 100,
+      });
+      observability.recordHeartbeat(correlationId);
 
       return {
         ok: true,
         taskId,
         correlationId,
-        message: "Task accepted by AgenOS worker daemon.",
+        message: "Task completed.",
       };
     },
     async status(taskId) {
@@ -120,6 +257,21 @@ export function createAgenosWorkerDaemonAdapter(options: AgenosWorkerDaemonAdapt
       return store.list(limit);
     },
   };
+
+  function appendTaskStatus(
+    originalTask: WorkerTask,
+    status: WorkerTaskStatus,
+    progress: number,
+    lastError: string | null,
+  ): void {
+    store.appendTask({
+      ...originalTask,
+      timestamp: now().toISOString(),
+      status,
+      progress,
+      lastError,
+    });
+  }
 }
 
 function providerAuthConfigured(config: WorkerConfig, env: Record<string, string | undefined>): boolean {

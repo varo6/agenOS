@@ -20,12 +20,12 @@ type AgentAdminPanelProps = {
   client: AgentAdminClient;
 };
 
-function formatHeartbeat(timestamp: string | null): string {
+function formatHeartbeat(timestamp: string | null, now: number): string {
   if (!timestamp) {
     return "sin heartbeat";
   }
 
-  const ageMs = Date.now() - new Date(timestamp).getTime();
+  const ageMs = now - new Date(timestamp).getTime();
   if (!Number.isFinite(ageMs) || ageMs < 0) {
     return timestamp;
   }
@@ -43,6 +43,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
   const [shellCommand, setShellCommand] = useState("pwd && id");
   const [shellOutput, setShellOutput] = useState("");
   const [shellRunning, setShellRunning] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const refresh = useCallback(async () => {
     try {
@@ -63,6 +64,11 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const timer = globalThis.setInterval(() => setNow(Date.now()), 1000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
 
   const pendingConfirmations = useMemo(
     () => confirmations.filter((confirmation) => confirmation.status === "pending"),
@@ -165,7 +171,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
         <div className="rounded-lg border border-white/8 bg-black/20 p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Cola</p>
           <p className="mt-2 text-xl text-white">{status.worker.queueDepth}</p>
-          <p className="mt-1 text-xs text-white/45">heartbeat {formatHeartbeat(status.worker.lastHeartbeatAt)}</p>
+          <p className="mt-1 text-xs text-white/45">heartbeat {formatHeartbeat(status.worker.lastHeartbeatAt, now)}</p>
         </div>
         <div className="rounded-lg border border-white/8 bg-black/20 p-4">
           <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Provider</p>

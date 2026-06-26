@@ -15,15 +15,26 @@ input * {
 output * bg #14100d solid_color
 
 workspace 1:home
+workspace 2:app
+workspace 3:web
+workspace 4:media
+workspace 5:work
 
 for_window [workspace="2:app"] fullscreen enable
-for_window [app_id="^(chromium|chromium-browser|google-chrome|google-chrome-stable|foot)$"] move to workspace "2:app", focus
-for_window [class="^(Chromium|Google-chrome|Google-chrome-stable)$"] move to workspace "2:app", focus
+for_window [workspace="3:web"] fullscreen enable
+for_window [workspace="4:media"] fullscreen enable
+for_window [workspace="5:work"] fullscreen enable
+for_window [app_id="^(chromium|chromium-browser|google-chrome|google-chrome-stable)$"] move to workspace "3:web", focus
+for_window [class="^(Chromium|Google-chrome|Google-chrome-stable)$"] move to workspace "3:web", focus
+for_window [app_id="^foot$"] move to workspace "5:work", focus
 for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
 for_window [title="AgenOS Installer"] move to workspace "1:home"
 
 bindsym Ctrl+Alt+1 workspace 1:home
 bindsym Ctrl+Alt+2 workspace 2:app
+bindsym Ctrl+Alt+3 workspace 3:web
+bindsym Ctrl+Alt+4 workspace 4:media
+bindsym Ctrl+Alt+5 workspace 5:work
 bindsym Ctrl+Alt+Return exec /usr/local/bin/agenos-shell-helper terminal
 bindsym Ctrl+Alt+r exec /usr/local/bin/agenos-shell-helper reload-shell
 

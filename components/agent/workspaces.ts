@@ -1,6 +1,7 @@
 import { accessSync, constants } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import { resolveGraphicalSessionEnv } from "./session-env";
 
 export type WorkspaceNumber = 1 | 2 | 3 | 4 | 5;
 export type WorkspaceSource = "ui" | "openclaw" | "system";
@@ -40,7 +41,7 @@ export type WorkspaceServiceOptions = {
 };
 
 export const WORKSPACES: WorkspaceDefinition[] = [
-  { number: 1, name: "1:agent", label: "Agent" },
+  { number: 1, name: "1:home", label: "Home" },
   { number: 2, name: "2:app", label: "Apps" },
   { number: 3, name: "3:web", label: "Web" },
   { number: 4, name: "4:media", label: "Media" },
@@ -100,6 +101,10 @@ export function workspaceNameFor(workspace: unknown): string {
 
 export function resolveDefaultWorkspaceForApp(appId: string | undefined): WorkspaceNumber {
   const normalized = (appId ?? "").trim().toLowerCase();
+  if (normalized === "browser" || normalized.includes("chrome") || normalized.includes("chromium") || normalized.includes("firefox")) {
+    return 3;
+  }
+
   if (normalized === "terminal" || normalized.includes("terminal") || normalized === "foot") {
     return 5;
   }
@@ -125,7 +130,7 @@ function parseWorkspaceName(name: string | undefined): WorkspaceNumber | undefin
 }
 
 export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
-  const env = options.env ?? process.env;
+  const env = resolveGraphicalSessionEnv(options.env ?? process.env);
   const commandExists = options.commandExists ?? defaultCommandExists;
   const spawnCommand = options.spawnCommand ?? defaultSpawnCommand;
 

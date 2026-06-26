@@ -5,7 +5,7 @@ import time
 
 
 HOME_WORKSPACE = "1:home"
-APP_WORKSPACE = "2:app"
+APP_WORKSPACES = {"2:app", "3:web", "4:media", "5:work"}
 
 
 def run_swaymsg(*args: str) -> str:
@@ -56,10 +56,11 @@ def return_home_if_app_workspace_is_empty() -> None:
     # Let Sway finish processing close/move/focus batches before inspecting the tree.
     time.sleep(0.15)
     tree = get_tree()
-    if focused_workspace(tree) != APP_WORKSPACE:
+    focused = focused_workspace(tree)
+    if focused not in APP_WORKSPACES:
         return
 
-    if workspace_has_views(workspace_named(tree, APP_WORKSPACE)):
+    if workspace_has_views(workspace_named(tree, focused)):
         return
 
     subprocess.run(["swaymsg", "workspace", HOME_WORKSPACE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

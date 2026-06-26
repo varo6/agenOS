@@ -103,9 +103,11 @@ export function NetworkConnectionPanel({
     return typeof configured === "string" && configured.trim() ? configured : CAPTIVE_PORTAL_URL;
   }, []);
 
-  const refresh = useCallback(async (options: { scan?: boolean } = {}) => {
-    setBusy(options.scan ? "scan" : "status");
-    setMessage(null);
+  const refresh = useCallback(async (options: { scan?: boolean; background?: boolean } = {}) => {
+    if (!options.background) {
+      setBusy(options.scan ? "scan" : "status");
+      setMessage(null);
+    }
     try {
       if (options.scan) {
         await networkClient.scanWifi();
@@ -120,16 +122,20 @@ export function NetworkConnectionPanel({
         onOnline?.(nextStatus);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo leer la red.");
+      if (!options.background) {
+        setMessage(error instanceof Error ? error.message : "No se pudo leer la red.");
+      }
     } finally {
-      setBusy(null);
+      if (!options.background) {
+        setBusy(null);
+      }
     }
   }, [networkClient, onOnline]);
 
   useEffect(() => {
     void refresh();
     const interval = window.setInterval(() => {
-      void refresh();
+      void refresh({ background: true });
     }, 5000);
     return () => window.clearInterval(interval);
   }, [refresh]);

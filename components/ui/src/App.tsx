@@ -48,7 +48,7 @@ const agentAdminClient = createAgentAdminClient();
 const networkClient = createNetworkClient();
 
 const DEFAULT_WORKSPACES: AgentWorkspace[] = [
-  { number: 1, name: "1:agent", label: "Agent" },
+  { number: 1, name: "1:home", label: "Home" },
   { number: 2, name: "2:app", label: "Apps" },
   { number: 3, name: "3:web", label: "Web" },
   { number: 4, name: "4:media", label: "Media" },
@@ -230,7 +230,7 @@ export default function App() {
       setLastReply(response.reply ?? "");
       setModelId(response.modelId);
       setChatState("idle");
-      await refreshStatus();
+      await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
     } catch (error) {
       const message = describeClientError(error);
       setChatState("error");
@@ -239,12 +239,12 @@ export default function App() {
         setAuthState("error");
       }
       try {
-        await refreshStatus();
+        await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
       } catch {
         // refreshStatus already updated the UI with the relevant failure
       }
     }
-  }, [authState, networkOnline, refreshAgentStatus, refreshStatus]);
+  }, [authState, networkOnline, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
 
   const handleVoiceResult = useCallback((transcript: string) => {
     setVoiceState("idle");
@@ -275,20 +275,32 @@ export default function App() {
       setVoiceIssue("STT local no disponible. Usa texto.");
     }
 
-    void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()])
-      .then(async () => {
-        try {
-          const status = await networkClient.getStatus();
+    let cancelled = false;
+
+    async function bootstrap() {
+      void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()]);
+
+      try {
+        const status = await networkClient.getStatus();
+        if (!cancelled) {
           setNetworkOnline(status.overall === "online");
-        } catch {
+        }
+      } catch {
+        if (!cancelled) {
           setNetworkOnline(false);
         }
-      })
-      .finally(() => {
+      } finally {
+        if (cancelled) {
+          return;
+        }
         setIsLoading(false);
-      });
+      }
+    }
+
+    void bootstrap();
 
     return () => {
+      cancelled = true;
       controller.dispose();
       speechControllerRef.current = null;
     };
@@ -463,6 +475,7 @@ export default function App() {
   }
 
   async function handleWorkspaceFocus(workspace: AgentWorkspaceNumber) {
+    const previousWorkspace = activeWorkspace;
     setActiveWorkspace(workspace);
     setGlobalError(null);
 
@@ -473,11 +486,15 @@ export default function App() {
       }
       if (response.activeWorkspace) {
         setActiveWorkspace(response.activeWorkspace);
+      } else if (response.ok) {
+        setActiveWorkspace(workspace);
       }
       if (!response.ok) {
+        setActiveWorkspace(previousWorkspace);
         setGlobalError(response.message ?? "No se pudo cambiar de workspace.");
       }
     } catch (error) {
+      setActiveWorkspace(previousWorkspace);
       setGlobalError(describeClientError(error));
     }
   }

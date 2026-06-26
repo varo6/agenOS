@@ -1,8 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
-const BUNDLED_WORKER_PATH = join(import.meta.dir, "worker", "agenos-worker-daemon.ts");
+const BUNDLED_WORKER_PATHS = [
+  join(dirname(fileURLToPath(import.meta.url)), "worker", "agenos-worker-daemon.ts"),
+  "/usr/local/bin/agenos-openclaw-worker",
+];
 
 export type OpenClawSetupPhase = "ready" | "needs_auth" | "needs_channel" | "degraded" | "failed";
 
@@ -67,7 +71,7 @@ export function createOpenClawSetupService(options: OpenClawSetupServiceOptions 
   const env = options.env ?? process.env;
   const stateDir = expandHome(options.stateDir ?? env.AGENOS_OPENCLAW_STATE_DIR ?? join(homedir(), ".agenos", "openclaw"));
   const binaryPath = options.openClawBinaryPath ?? env.AGENOS_OPENCLAW_BIN ?? DEFAULT_BINARY_PATH;
-  const bundledWorkerPath = options.bundledWorkerPath ?? BUNDLED_WORKER_PATH;
+  const bundledWorkerPath = options.bundledWorkerPath ?? firstExistingPath(BUNDLED_WORKER_PATHS) ?? BUNDLED_WORKER_PATHS[0];
   const now = options.now ?? (() => new Date());
   const correlationIdFactory = options.correlationIdFactory ?? (() => `corr_${Date.now().toString(36)}`);
   const telegramProbe = options.telegramProbe ?? defaultTelegramProbe;
@@ -394,4 +398,8 @@ async function defaultTelegramProbe(token: string): Promise<{ ok: boolean; botUs
 
 function expandHome(path: string): string {
   return path.replace(/^~(?=\/)/, homedir());
+}
+
+function firstExistingPath(paths: string[]): string | null {
+  return paths.find((path) => existsSync(path)) ?? null;
 }

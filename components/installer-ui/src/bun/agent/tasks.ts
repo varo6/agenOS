@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createWorkerAdapter } from "./worker";
-import type { WorkerAdapter, WorkerTaskSource } from "./worker";
+import type { CreateWorkerAdapterOptions, WorkerAdapter, WorkerTaskSource } from "./worker";
 
-export type TaskQueueOptions = {
+export type TaskQueueOptions = CreateWorkerAdapterOptions & {
   rootDir?: string;
   now?: () => Date;
   idFactory?: () => string;
@@ -22,7 +22,7 @@ function defaultRootDir(): string {
 
 export function createTaskQueue(options: TaskQueueOptions = {}) {
   const rootDir = options.rootDir ?? defaultRootDir();
-  const adapter = options.adapter ?? createWorkerAdapter({ ...options, rootDir, configMode: "local-simulated" });
+  const adapter = options.adapter ?? createWorkerAdapter({ ...options, rootDir });
 
   return {
     async health() {

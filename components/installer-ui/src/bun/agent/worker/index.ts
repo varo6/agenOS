@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { createObservabilityState } from "./observability";
 import { AGENT_PROTOCOL_SCHEMA_VERSION } from "./protocol";
 import { readWorkerConfig, type WorkerConfig, type WorkerConfiguredMode } from "./config";
-import { createAgenosWorkerDaemonAdapter } from "./agenos-worker-daemon";
+import { createAgenosWorkerDaemonAdapter, type WorkerToolCall } from "./agenos-worker-daemon";
 import { createLocalSimulatedWorkerAdapter, type LocalSimulatedWorkerAdapterOptions } from "./local-simulated";
 import { createOpenClawProcessAdapter } from "./openclaw-process";
 import type { WorkerAdapter, WorkerMode } from "./types";
@@ -14,6 +14,7 @@ export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOpti
   configMode?: WorkerConfiguredMode;
   openClawBinaryPath?: string;
   bundledWorkerPath?: string;
+  runToolCall?: (call: WorkerToolCall) => Promise<unknown>;
 };
 
 export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): WorkerAdapter {
@@ -36,6 +37,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
       idFactory: options.idFactory,
       correlationIdFactory: options.correlationIdFactory,
       config,
+      runToolCall: options.runToolCall,
     });
   }
 
@@ -50,6 +52,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
         idFactory: options.idFactory,
         correlationIdFactory: options.correlationIdFactory,
         config,
+        runToolCall: options.runToolCall,
       });
     }
     return createLocalSimulatedWorkerAdapter({ ...options, rootDir });
@@ -66,8 +69,13 @@ function openClawAvailable(binaryPath = "/usr/bin/openclaw"): boolean {
   return existsSync(binaryPath);
 }
 
-function bundledWorkerAvailable(workerPath = join(import.meta.dir, "agenos-worker-daemon.ts")): boolean {
-  return existsSync(workerPath);
+function bundledWorkerAvailable(workerPath?: string): boolean {
+  const candidates = [
+    workerPath,
+    join(import.meta.dir, "agenos-worker-daemon.ts"),
+    "/usr/local/bin/agenos-openclaw-worker",
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.some((candidate) => existsSync(candidate));
 }
 
 function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, stateDir: string, reason: string | null): WorkerAdapter {

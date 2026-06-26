@@ -98,12 +98,12 @@ describe("agent client", () => {
     };
 
     const client = createAgentClient({ baseUrl: "http://agent.test" });
-    expect(await client.openApp("Chrome")).toEqual({
+    expect(await client.openApp("Chrome", { workspace: 3, focus: true })).toEqual({
       ok: true,
       message: "Abriendo Chrome.",
     });
     expect(requestedUrl).toBe("http://agent.test/api/agent/apps/open");
-    expect(JSON.parse(payload)).toEqual({ app: "Chrome" });
+    expect(JSON.parse(payload)).toEqual({ app: "Chrome", workspace: 3, focus: true });
   });
 
   test("lists workspaces through the broker", async () => {
@@ -113,7 +113,7 @@ describe("agent client", () => {
       return new Response(JSON.stringify({
         ok: true,
         activeWorkspace: 1,
-        workspaces: [{ number: 1, name: "1:agent", label: "Agent" }],
+        workspaces: [{ number: 1, name: "1:home", label: "Home" }],
       }), { status: 200 });
     };
 

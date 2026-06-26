@@ -31,11 +31,19 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: sourceIs("ui"),
   },
   {
-    ruleId: "agent.shell.deny",
+    ruleId: "agent.shell.destructive.confirm",
     tool: "shell.exec",
     source: "*",
-    decision: "deny",
-    reason: "La ejecucion shell arbitraria no esta permitida en AgenOS.",
+    decision: "confirm",
+    reason: "Este comando shell puede borrar datos o cambiar servicios criticos y requiere confirmacion.",
+    matches: (request) => request.tool === "shell.exec" && isDestructiveShellInput(request.input),
+  },
+  {
+    ruleId: "agent.shell.local.allow",
+    tool: "shell.exec",
+    source: "*",
+    decision: "allow",
+    reason: "Comando shell local permitido para operar AgenOS.",
     matches: toolIs("shell.exec"),
   },
   {
@@ -110,3 +118,31 @@ const LOW_RISK_TOOLS = new Set([
   "contacts.lookup",
   "tasks.enqueue",
 ]);
+
+function isDestructiveShellInput(input: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  const command = (input as { command?: unknown }).command;
+  if (typeof command !== "string") {
+    return false;
+  }
+
+  const normalized = command.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const destructivePatterns = [
+    /\brm\s+(-[^\s]*r[^\s]*f|-f[^\s]*r|-[^\s]*rf)\b/,
+    /\b(shred|wipefs|mkfs|mke2fs|parted|fdisk|sfdisk|sgdisk|cryptsetup\s+luksformat)\b/,
+    /\bdd\b.*\bof=\/dev\//,
+    /\b(systemctl|service)\s+(disable|mask)\b/,
+    /\b(systemctl|service)\s+(stop|restart)\s+(ssh|sshd|networkmanager|dbus|display-manager|gdm|sddm|lightdm|agenos|ui|kiosk)\b/,
+    /\b(chown|chmod)\b.*\s(\/|\/etc|\/usr|\/bin|\/sbin|\/boot)\b/,
+    />\s*\/(etc|boot|usr|bin|sbin)\//,
+  ];
+
+  return destructivePatterns.some((pattern) => pattern.test(normalized));
+}

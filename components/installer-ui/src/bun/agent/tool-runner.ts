@@ -51,6 +51,7 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
       const policy = decidePolicy({
         tool: input.tool,
         source: input.source,
+        input: input.input,
       });
 
       if (policy.decision === "deny") {
@@ -58,7 +59,7 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
           ok: false,
           decision: "deny",
           ...(includeCorrelationId ? { correlationId } : {}),
-          message: input.tool === "shell.exec" ? SHELL_DENIED_MESSAGE : policy.reason,
+          message: input.tool === "shell.exec" ? policy.reason || SHELL_DENIED_MESSAGE : policy.reason,
         };
       }
 
@@ -102,7 +103,7 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         }
       }
 
-      if (input.tool === "shell.exec" && input.source === "ui" && input.input && typeof input.input === "object") {
+      if (input.tool === "shell.exec" && input.input && typeof input.input === "object") {
         const commandInput = input.input as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
         const shell = await (options.shellTool ?? runShellCommand)({
           command: typeof commandInput.command === "string" ? commandInput.command : "",
@@ -129,6 +130,13 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
 }
 
 function summarizeToolCall(tool: string, input: unknown): string {
+  if (tool === "shell.exec" && input && typeof input === "object") {
+    const command = (input as { command?: unknown }).command;
+    return typeof command === "string" && command.trim()
+      ? `Ejecutar shell: ${command.trim()}`
+      : "Ejecutar shell";
+  }
+
   if (tool === "memory.write" && input && typeof input === "object") {
     const record = input as { namespace?: unknown; content?: unknown };
     const namespace = typeof record.namespace === "string" ? record.namespace : "memory";

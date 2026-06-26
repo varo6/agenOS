@@ -146,6 +146,28 @@ function createHarnessFixture() {
         return { ok: true, packageName: app, message: `Instalado ${app}.` };
       },
     },
+    setupService: {
+      status: async () => ({
+        phase: "ready",
+        message: "Setup listo.",
+        actions: [],
+        backend: { available: true, mode: "agenos-bun-worker", lastError: null },
+        codex: { configured: true, lastError: null },
+        telegram: { configured: false, enabled: false, lastError: null },
+      }),
+      run: async () => ({
+        phase: "ready",
+        message: "Setup listo.",
+        actions: [],
+        backend: { available: true, mode: "agenos-bun-worker", lastError: null },
+        codex: { configured: true, lastError: null },
+        telegram: { configured: false, enabled: false, lastError: null },
+      }),
+      startCodexLogin: async () => ({ ok: true, message: "Login iniciado.", command: ["codex", "login"] }),
+      configureTelegram: async () => ({ ok: true, message: "Telegram configurado." }),
+      testTelegram: async () => ({ ok: true, message: "Telegram probado." }),
+      enableTelegram: async () => ({ ok: true, message: "Telegram activado." }),
+    },
     traceRecorder: {
       record(record) {
         traceRecords.push(record);
@@ -215,6 +237,8 @@ describe("PiHarness", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("apps_open");
     expect(PI_SYSTEM_PROMPT).toContain("apps_install");
+    expect(PI_SYSTEM_PROMPT).toContain("files_open");
+    expect(PI_SYSTEM_PROMPT).toContain("openclaw_setup");
     expect(PI_SYSTEM_PROMPT).not.toContain("[object");
   });
 
@@ -446,7 +470,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install"]);
+    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");

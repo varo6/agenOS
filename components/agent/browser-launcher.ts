@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createWorkspaceService } from "./workspaces";
+import { resolveGraphicalSessionEnv } from "./session-env";
 
 type SpawnOptions = {
   env: NodeJS.ProcessEnv;
@@ -122,7 +123,7 @@ function buildChromiumArgs(url: string, profileDir: string): string[] {
 }
 
 export function launchBrowserUrl(input: string, options: BrowserLauncherOptions = {}): BrowserLaunchResult {
-  const env = browserEnv(options.env ?? process.env);
+  const env = browserEnv(resolveGraphicalSessionEnv(options.env ?? process.env));
   if (!options.skipGraphicalSessionCheck && !hasGraphicalSession(env)) {
     throw new Error("No hay una sesion grafica Wayland/X11 disponible para abrir el navegador.");
   }
@@ -140,7 +141,7 @@ export function launchBrowserUrl(input: string, options: BrowserLauncherOptions 
 
   if (options.focus !== false) {
     createWorkspaceService({ commandExists, spawnCommand, env }).focusWorkspaceSync({
-      workspace: options.workspace ?? 2,
+      workspace: options.workspace ?? 3,
       source: "system",
     });
   }

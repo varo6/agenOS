@@ -16,7 +16,7 @@ const SHELL_CONFIG_PATH: &str = "/etc/agenos/shell.json";
 const SYSTEM_APPLICATIONS_DIR: &str = "/usr/share/applications";
 const APP_WORKSPACE: &str = "2:app";
 const APP_WORKSPACES: &[&str] = &["2:app", "3:web", "4:media", "5:work"];
-const HOME_WORKSPACE: &str = "1:agent";
+const HOME_WORKSPACE: &str = "1:home";
 const INSTALLER_URL: &str = "http://127.0.0.1:4173";
 const BOOT_MODES: &[&str] = &["installer", "home", "app", "system"];
 

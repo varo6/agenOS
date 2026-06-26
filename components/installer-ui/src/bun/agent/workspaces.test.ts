@@ -35,7 +35,7 @@ describe("workspace service", () => {
 
   test("resolves app defaults", () => {
     expect(resolveDefaultWorkspaceForApp("terminal")).toBe(5);
-    expect(resolveDefaultWorkspaceForApp("browser")).toBe(2);
+    expect(resolveDefaultWorkspaceForApp("browser")).toBe(3);
     expect(resolveDefaultWorkspaceForApp("org.videolan.VLC")).toBe(2);
   });
 });

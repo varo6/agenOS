@@ -49,7 +49,7 @@ require_literal "${CALAMARES_DESKTOP}" 'XDG_DOCUMENTS_DIR="$HOME/Documentos"'
 require_literal "${LIVE_BOOT_CONFIG}" "persistence hostname=agenos"
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
 require_literal "${SWAY_CONFIG}" "agenos-workspace-watch"
-require_literal "${SWAY_CONFIG}" 'workspace 1:agent'
+require_literal "${SWAY_CONFIG}" 'workspace 1:home'
 require_literal "${SWAY_CONFIG}" 'workspace 2:app'
 require_literal "${SWAY_CONFIG}" 'workspace 3:web'
 require_literal "${SWAY_CONFIG}" 'workspace 4:media'

@@ -154,7 +154,7 @@ beforeEach(() => {
     ok: true,
     activeWorkspace: 1,
     workspaces: [
-      { number: 1, name: "1:agent", label: "Agent" },
+      { number: 1, name: "1:home", label: "Home" },
       { number: 2, name: "2:app", label: "Apps" },
       { number: 3, name: "3:web", label: "Web" },
       { number: 4, name: "4:media", label: "Media" },

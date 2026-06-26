@@ -6,6 +6,7 @@ export type PolicyDecision = "allow" | "confirm" | "deny";
 export type PolicyRequest = {
   tool: string;
   source: AgentSource;
+  input?: unknown;
   explicitUserIntent?: boolean;
   correlationId?: string;
 };

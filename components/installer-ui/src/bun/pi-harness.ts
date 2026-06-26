@@ -24,6 +24,7 @@ import {
 } from "../../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../../agent/pi-system-context";
 import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "./agent/apps";
+import { createOpenFileModelTool } from "../../../agent/file-open-tool";
 import { createOpenClawSetupModelTool } from "./agent/openclaw-setup-tool";
 import { createOpenClawSetupService, type OpenClawSetupService } from "./agent/setup";
 import type {
@@ -71,7 +72,7 @@ export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_SYSTEM_PROMPT_HASH = hashHarnessPrompt(PI_SYSTEM_PROMPT);
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "openclaw_setup"];
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
@@ -428,6 +429,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         customTools: (customTools ?? [
           createOpenAppModelTool(appTool),
           createInstallAppModelTool(appTool),
+          createOpenFileModelTool(),
           createOpenClawSetupModelTool(setupService),
         ]) as never,
         sessionManager: sessionManager as SessionManager,

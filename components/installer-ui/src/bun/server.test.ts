@@ -696,10 +696,10 @@ describe("createInstallerApiHandler", () => {
   });
 
   test("agent apps route opens allowlisted apps", async () => {
-    const opened: string[] = [];
+    const opened: unknown[] = [];
     const appTool = {
-      openApp: async (app: string) => {
-        opened.push(app);
+      openApp: async (input: unknown) => {
+        opened.push(input);
         return { ok: true, appId: "browser", message: "Abriendo Chrome." };
       },
     };
@@ -707,11 +707,11 @@ describe("createInstallerApiHandler", () => {
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/apps/open", {
       method: "POST",
-      body: JSON.stringify({ app: "Chrome" }),
+      body: JSON.stringify({ app: "Chrome", workspace: 3, focus: true }),
     }));
 
     expect(response.status).toBe(202);
-    expect(opened).toEqual(["Chrome"]);
+    expect(opened).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
   });
 
   test("agent workspace routes list and focus known workspaces", async () => {
@@ -720,7 +720,7 @@ describe("createInstallerApiHandler", () => {
       listWorkspaces: () => ({
         ok: true,
         activeWorkspace: 1,
-        workspaces: [{ number: 1, name: "1:agent", label: "Agent" }],
+        workspaces: [{ number: 1, name: "1:home", label: "Home" }],
       }),
       focusWorkspace: async (input: unknown) => {
         focused.push(input);

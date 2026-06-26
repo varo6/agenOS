@@ -7,7 +7,11 @@ import { createTaskQueue } from "./tasks";
 describe("agent task queue", () => {
   test("enqueues a simulated OpenClaw task", async () => {
     const root = mkdtempSync(join(tmpdir(), "agenos-tasks-"));
-    const queue = createTaskQueue({ rootDir: root, now: () => new Date("2026-05-15T12:00:00.000Z") });
+    const queue = createTaskQueue({
+      rootDir: root,
+      configMode: "local-simulated",
+      now: () => new Date("2026-05-15T12:00:00.000Z"),
+    });
 
     const result = await queue.enqueue({ message: "prepara un email a Pablo", source: "ui" });
 

@@ -10,6 +10,7 @@ import type {
 import { getPiBridge } from "./pi-bridge";
 
 const PI_API_BASE_DEFAULT = "http://127.0.0.1:4173";
+const REQUEST_TIMEOUT_MS = 8_000;
 
 type ErrorPayload = {
   message?: string;
@@ -34,24 +35,39 @@ function resolveHttpBase(): string {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), init);
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) as T | ErrorPayload : undefined;
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const message =
-      payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
-        ? payload.message
-        : `${response.status} ${response.statusText}`;
-    throw new PiClientError(message, response.status);
+  try {
+    const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), {
+      ...init,
+      signal: init?.signal ?? controller.signal,
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) as T | ErrorPayload : undefined;
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+          ? payload.message
+          : `${response.status} ${response.statusText}`;
+      throw new PiClientError(message, response.status);
+    }
+
+    return payload as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new PiClientError("La solicitud al harness excedio el tiempo limite.");
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
   }
-
-  return payload as T;
 }
 
 async function bridgeRequest<T>(operation: () => Promise<T>): Promise<T> {
   try {
-    return await operation();
+    return await withTimeout(operation(), "La solicitud IPC al harness excedio el tiempo limite.");
   } catch (error) {
     if (error instanceof PiClientError) {
       throw error;
@@ -62,6 +78,22 @@ async function bridgeRequest<T>(operation: () => Promise<T>): Promise<T> {
       : undefined;
     throw new PiClientError(error instanceof Error ? error.message : String(error), status);
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => reject(new PiClientError(message)), REQUEST_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        globalThis.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        globalThis.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export type PiClient = ReturnType<typeof createPiClient>;

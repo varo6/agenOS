@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { spawn } from "node:child_process";
 import { launchBrowserUrl, type BrowserLauncherOptions } from "./browser-launcher";
+import { resolveGraphicalSessionEnv } from "./session-env";
 import { createWorkspaceService, resolveDefaultWorkspaceForApp, workspaceNameFor } from "./workspaces";
 
 const DESKTOP_FIELD_CODE_RE = /%[fFuUdDnNickvm]/g;
@@ -239,7 +240,7 @@ function defaultDesktopDirs(options: AppToolOptions, env: NodeJS.ProcessEnv): st
 }
 
 function discoverDesktopApps(options: AppToolOptions, commandExists: (command: string) => boolean): AppDefinition[] {
-  const env = options.env ?? process.env;
+  const env = resolveGraphicalSessionEnv(options.env ?? process.env);
   const desktopDirs = options.desktopDirs ?? defaultDesktopDirs(options, env);
   const apps: AppDefinition[] = [];
   const seen = new Set<string>();

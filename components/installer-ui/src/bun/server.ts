@@ -299,7 +299,17 @@ export function createInstallerApiHandler(
 ): { fetch: (request: Request) => Promise<Response> } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
-  const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const shellTool = dependencies.shellTool ?? runShellCommand;
+  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool });
+  const taskQueue = dependencies.taskQueue ?? createTaskQueue({
+    runToolCall: (call) => toolRunner.run({
+      source: "system",
+      taskId: call.taskId,
+      correlationId: call.correlationId,
+      tool: call.tool,
+      input: call.input,
+    }),
+  });
   const setup = dependencies.setup ?? createOpenClawSetupService();
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
@@ -325,13 +335,13 @@ export function createInstallerApiHandler(
     appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
     workspaceService: dependencies.workspaceService ?? createWorkspaceService(),
-    shellTool: dependencies.shellTool ?? runShellCommand,
+    shellTool,
     confirmations,
     agentAdmin,
     setup,
     supportBundle,
     network: dependencies.network ?? createNetworkManagerService(),
-    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool: dependencies.shellTool ?? runShellCommand }),
+    toolRunner,
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
@@ -1008,13 +1018,17 @@ export function createInstallerApiHandler(
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          const payload = await readJsonBody(request) as { app?: unknown };
+          const payload = await readJsonBody(request) as { app?: unknown; workspace?: unknown; focus?: unknown };
           const policy = decidePolicy({ tool: "apps.open", source: "ui" });
           if (policy.decision !== "allow") {
             return json({ ok: false, message: policy.reason }, { status: 403 });
           }
 
-          const response = await deps.appTool.openApp(typeof payload.app === "string" ? payload.app : "");
+          const response = await deps.appTool.openApp({
+            app: typeof payload.app === "string" ? payload.app : "",
+            workspace: payload.workspace,
+            focus: payload.focus !== false,
+          });
           return json(response, { status: response.ok ? 202 : 400 });
         }
 
