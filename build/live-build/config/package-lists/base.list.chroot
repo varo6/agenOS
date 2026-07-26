@@ -21,6 +21,7 @@ pipewire-alsa
 pipewire-pulse
 wireplumber
 alsa-utils
+ffmpeg
 grub-common
 grub-pc-bin
 grub-efi-amd64-bin

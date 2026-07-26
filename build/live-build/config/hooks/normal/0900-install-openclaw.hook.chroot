@@ -1,0 +1,53 @@
+#!/bin/sh
+set -eu
+
+minimum_node_version="22.19.0"
+install_node=false
+
+if ! command -v node >/dev/null 2>&1; then
+    install_node=true
+else
+    node_version=$(node --version)
+    node_version=${node_version#v}
+    if ! dpkg --compare-versions "$node_version" ge "$minimum_node_version"; then
+        install_node=true
+    fi
+fi
+
+if [ "$install_node" = true ]; then
+    apt-get update
+    apt-get install -y ca-certificates curl
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+fi
+
+npm install -g openclaw@2026.6.11
+
+openclaw_binary="$(npm prefix -g)/bin/openclaw"
+if [ ! -x "$openclaw_binary" ]; then
+    echo "OpenClaw binary not found at $openclaw_binary" >&2
+    exit 1
+fi
+
+if [ "$openclaw_binary" != /usr/bin/openclaw ]; then
+    if [ -e /usr/bin/openclaw ] && [ ! -L /usr/bin/openclaw ]; then
+        echo "Refusing to overwrite existing /usr/bin/openclaw" >&2
+    else
+        ln -sfn "$openclaw_binary" /usr/bin/openclaw
+    fi
+fi
+
+if [ ! -x /usr/bin/openclaw ]; then
+    echo "OpenClaw is not executable at /usr/bin/openclaw" >&2
+    exit 1
+fi
+
+openclaw_version=$(openclaw --version)
+if [ -z "$openclaw_version" ]; then
+    echo "OpenClaw version check returned no output" >&2
+    exit 1
+fi
+printf '%s\n' "$openclaw_version"
+
+npm cache clean --force
+rm -rf /root/.npm /tmp/npm-*

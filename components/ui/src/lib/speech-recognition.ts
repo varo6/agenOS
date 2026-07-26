@@ -1,3 +1,8 @@
+import {
+  createLocalHttpSpeechController,
+  getCachedLocalSttAvailability,
+  probeLocalSttAvailability,
+} from "./local-stt";
 import { getSpeechBridge, type AgenosSpeechBridge } from "./speech-bridge";
 
 type BrowserSpeechRecognitionAlternative = {
@@ -57,7 +62,7 @@ export type SpeechRecognitionCallbacks = {
 
 export type SpeechRecognitionController = {
   supported: boolean;
-  engine: "native" | "browser" | "none";
+  engine: "native" | "local-http" | "browser" | "none";
   start: () => boolean;
   stop: () => void;
   dispose: () => void;
@@ -149,7 +154,11 @@ function extractTranscript(results: BrowserSpeechRecognitionResultList): string 
 
 export function isSpeechRecognitionSupported(targetWindow: Window | undefined = globalThis.window): boolean {
   const bridge = getSpeechBridge();
-  return Boolean(bridge?.isAvailable() || getSpeechRecognitionConstructor(targetWindow));
+  return Boolean(
+    bridge?.isAvailable()
+    || getCachedLocalSttAvailability()
+    || getSpeechRecognitionConstructor(targetWindow),
+  );
 }
 
 function createNativeSpeechRecognitionController(
@@ -196,6 +205,22 @@ function createNativeSpeechRecognitionController(
       listening = false;
     },
   };
+}
+
+export async function createPreferredSpeechRecognitionController(
+  callbacks: SpeechRecognitionCallbacks,
+  targetWindow: Window | undefined = globalThis.window,
+): Promise<SpeechRecognitionController> {
+  const bridge = getSpeechBridge();
+  if (bridge?.isAvailable()) {
+    return createNativeSpeechRecognitionController(callbacks, bridge);
+  }
+
+  if (await probeLocalSttAvailability()) {
+    return createLocalHttpSpeechController(callbacks);
+  }
+
+  return createSpeechRecognitionController(callbacks, targetWindow);
 }
 
 export function createSpeechRecognitionController(

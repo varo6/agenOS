@@ -12,6 +12,7 @@ import type {
 } from "../shared/installer-types";
 import type { NetworkStatusResponse } from "../../../network/types";
 import { createInstallerApiHandler } from "./server";
+import { createConfirmationStore } from "./agent/confirmations";
 
 const validProfile: InstallerProfilePayload = {
   schemaVersion: 1,
@@ -81,6 +82,25 @@ function fakeNetwork() {
   };
 }
 
+function fakeSpeech() {
+  return {
+    status: () => ({
+      ok: true as const,
+      available: true,
+      engine: "whisper.cpp" as const,
+      model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+      reason: null,
+    }),
+    transcribe: async () => ({
+      ok: true as const,
+      text: "abre fotos",
+      durationMs: 850,
+      engine: "whisper.cpp" as const,
+      model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+    }),
+  };
+}
+
 function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
   const piHarness = {
     getStatus: () => ({
@@ -116,6 +136,54 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       provider: "openai-codex" as const,
       modelId: "gpt-5.4-mini",
     }),
+    startChat: () => ({
+      turnId: "turn_abc",
+      status: "processing" as const,
+      source: "text" as const,
+      input: "hola",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "",
+        currentTool: null,
+        completedTools: [],
+      },
+    }),
+    getTurn: (turnId: string) => ({
+      turnId,
+      status: "succeeded" as const,
+      source: "text" as const,
+      input: "hola",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      finishedAt: "2026-07-03T12:00:05.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "hecho",
+        currentTool: null,
+        completedTools: ["openclaw_setup"],
+      },
+      reply: "hecho",
+      modelId: "gpt-5.4-mini",
+    }),
+    getLatestTurn: () => null,
+    listTurns: () => [
+      {
+        turnId: "turn_abc",
+        status: "succeeded" as const,
+        source: "text" as const,
+        input: "hola",
+        startedAt: "2026-07-03T12:00:00.000Z",
+        finishedAt: "2026-07-03T12:00:05.000Z",
+        progress: {
+          startedAt: "2026-07-03T12:00:00.000Z",
+          streamedText: "hecho",
+          currentTool: null,
+          completedTools: [],
+        },
+        reply: "hecho",
+        modelId: "gpt-5.4-mini",
+      },
+    ],
   };
 
   return createInstallerApiHandler({
@@ -161,6 +229,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
     }),
     piHarness,
     network: fakeNetwork(),
+    speech: fakeSpeech(),
     ...overrides,
   });
 }
@@ -448,6 +517,66 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("starts an async pi turn through the packaged API", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/turns", {
+      method: "POST",
+      body: JSON.stringify({
+        message: "hola",
+        source: "text",
+      }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toMatchObject({
+      turnId: "turn_abc",
+      status: "processing",
+      input: "hola",
+    });
+  });
+
+  test("rejects async pi turns with an invalid source", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/turns", {
+      method: "POST",
+      body: JSON.stringify({
+        message: "hola",
+        source: "invalid",
+      }),
+    }));
+
+    expect(response.status).toBe(400);
+  });
+
+  test("lists pi turn history through the packaged API", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/turns?limit=10"));
+
+    expect(response.status).toBe(200);
+    const payload = await jsonPayload(response) as Array<Record<string, unknown>>;
+    expect(payload).toHaveLength(1);
+    expect(payload[0]).toMatchObject({ turnId: "turn_abc", status: "succeeded", reply: "hecho" });
+  });
+
+  test("serves pi turn state and latest turn through the packaged API", async () => {
+    const handler = createHandler();
+
+    const turn = await handler.fetch(new Request("http://localhost/api/pi/turns/turn_abc"));
+    const latest = await handler.fetch(new Request("http://localhost/api/pi/turns/latest"));
+
+    expect(turn.status).toBe(200);
+    expect(await jsonPayload(turn)).toMatchObject({
+      turnId: "turn_abc",
+      status: "succeeded",
+      reply: "hecho",
+    });
+    expect(latest.status).toBe(200);
+    expect(await jsonPayload(latest)).toBeNull();
+  });
+
   test("keeps health available when the default pi harness cannot initialize", async () => {
     const handler = createInstallerApiHandler({
       createPiHarness: () => {
@@ -553,7 +682,10 @@ describe("createInstallerApiHandler", () => {
   });
 
   test("background memory writes create confirmation instead of writing immediately", async () => {
-    const handler = createInstallerApiHandler();
+    const confirmationRoot = mkdtempSync(join(tmpdir(), "agenos-confirmations-"));
+    const handler = createInstallerApiHandler({
+      confirmations: createConfirmationStore({ rootDir: confirmationRoot }),
+    });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/memory/facts", {
       method: "POST",
@@ -908,5 +1040,64 @@ describe("createInstallerApiHandler", () => {
       schemaVersion: 1,
       commands: [{ command: "journalctl", stdout: "[redacted]" }],
     });
+  });
+
+  test("serves /api/speech/status", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/status"));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      available: true,
+      engine: "whisper.cpp",
+    });
+  });
+
+  test("transcribes audio through /api/speech/transcribe", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe?lang=es", {
+      method: "POST",
+      headers: { "content-type": "audio/webm" },
+      body: new Uint8Array([1, 2, 3]),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      text: "abre fotos",
+      engine: "whisper.cpp",
+    });
+  });
+
+  test("rejects empty audio bodies on /api/speech/transcribe", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe", {
+      method: "POST",
+      headers: { "content-type": "audio/webm" },
+    }));
+
+    expect(response.status).toBe(400);
+  });
+
+  test("maps speech engine unavailability to 503", async () => {
+    const handler = createHandler({
+      speech: {
+        status: () => ({ ok: true, available: false, engine: null, model: null, reason: "falta whisper-cli" }),
+        transcribe: async () => ({ ok: false, code: "unavailable", message: "falta whisper-cli" }),
+      },
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe", {
+      method: "POST",
+      headers: { "content-type": "audio/webm" },
+      body: new Uint8Array([1, 2, 3]),
+    }));
+
+    expect(response.status).toBe(503);
+    expect(await jsonPayload(response)).toMatchObject({ ok: false, message: "falta whisper-cli" });
   });
 });

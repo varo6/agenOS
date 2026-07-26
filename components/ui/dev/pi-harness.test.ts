@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { createPiHarness, PI_SYSTEM_PROMPT, resolvePiHarnessPaths } from "./pi-harness";
+import type { AgentTaskClient } from "../../agent/agent-task-tool";
+import { createPiHarness, PI_SYSTEM_PROMPT, resolvePiHarnessPaths, type PiTurnStoreLike } from "./pi-harness";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -20,7 +21,7 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function createHarnessFixture() {
+function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; agentTaskClient?: AgentTaskClient } = {}) {
   let now = Date.parse("2026-04-21T12:00:00.000Z");
   const authData = new Map<string, { type: "oauth"; access: string; refresh: string; expires: number; accountId: string }>();
   const loginDeferred = createDeferred<{
@@ -105,6 +106,15 @@ function createHarnessFixture() {
     }
   }
 
+  function emitToolStart(toolName: string) {
+    for (const listener of listeners) {
+      listener({
+        type: "tool_execution_start",
+        toolName,
+      });
+    }
+  }
+
   const harness = createPiHarness({
     authStorage: {
       get(provider) {
@@ -127,6 +137,7 @@ function createHarnessFixture() {
       },
     },
     createSessionManager: () => ({ createdAt: now }),
+    turnStore: fixtureOptions.turnStore,
     createAgentSession: async (options) => {
       createSessionOptions = options;
       return { session };
@@ -146,6 +157,7 @@ function createHarnessFixture() {
         return { ok: true, packageName: app, message: `Instalado ${app}.` };
       },
     },
+    agentTaskClient: fixtureOptions.agentTaskClient,
     setupService: {
       status: async () => ({
         phase: "ready",
@@ -164,6 +176,7 @@ function createHarnessFixture() {
         telegram: { configured: false, enabled: false, lastError: null },
       }),
       startCodexLogin: async () => ({ ok: true, message: "Login iniciado.", command: ["codex", "login"] }),
+      codexLoginStatus: async () => ({ ok: true, message: "Login pendiente." }),
       configureTelegram: async () => ({ ok: true, message: "Telegram configurado." }),
       testTelegram: async () => ({ ok: true, message: "Telegram probado." }),
       enableTelegram: async () => ({ ok: true, message: "Telegram activado." }),
@@ -208,6 +221,7 @@ function createHarnessFixture() {
     loginDeferred,
     emitAssistantReply,
     emitToolResult,
+    emitToolStart,
     getLoginCalls: () => loginCalls,
     getDeviceLoginCalls: () => deviceLoginCalls,
     getLoginOptions: () => loginOptions,
@@ -232,6 +246,10 @@ async function flushTasks() {
   await Promise.resolve();
 }
 
+async function settleTurn() {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+}
+
 describe("PiHarness", () => {
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
@@ -250,6 +268,8 @@ describe("PiHarness", () => {
       authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
       codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
+      turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
+      sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
     });
   });
 
@@ -259,6 +279,8 @@ describe("PiHarness", () => {
       authPath: "/home/agenos/.agenos/ui-dev/pi/auth.json",
       codexDeviceDir: "/home/agenos/.agenos/ui-dev/pi/codex-device",
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
+      turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
+      sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
     });
   });
 
@@ -470,7 +492,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup"]);
+    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -508,6 +530,239 @@ describe("PiHarness", () => {
       details: { ok: true, packageName: "vlc", message: "Instalado vlc." },
     });
     expect(getInstalledApps()).toEqual(["vlc"]);
+  });
+
+  test("registers the file-open and openclaw setup tools for the foreground model", async () => {
+    const { harness, authData, getCreateSessionOptions } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await harness.chat({
+      message: "hola",
+      source: "text",
+    });
+
+    const options = getCreateSessionOptions() as {
+      customTools?: Array<{ name: string }>;
+    };
+    const names = options.customTools?.map((tool) => tool.name) ?? [];
+    expect(names).toEqual(["apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
+  });
+
+  test("registers an agent_task tool that delegates to the OpenClaw broker", async () => {
+    const delegated: string[] = [];
+    const agentTaskClient: AgentTaskClient = {
+      enqueue: async (message) => {
+        delegated.push(message);
+        return { ok: true, taskId: "task_1", message: "Tarea enviada a OpenClaw." };
+      },
+      status: async () => ({
+        taskId: "task_1",
+        status: "succeeded",
+        progress: 100,
+        message: "investiga precios",
+        lastError: null,
+      }),
+      events: async () => [
+        { type: "completed", message: "Tarea completada.", timestamp: "2026-04-21T12:00:05.000Z" },
+      ],
+      list: async () => [],
+      health: async () => ({ ok: true, mode: "openclaw-process" }),
+    };
+    const { harness, authData, getCreateSessionOptions } = createHarnessFixture({ agentTaskClient });
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await harness.chat({
+      message: "hola",
+      source: "text",
+    });
+
+    const options = getCreateSessionOptions() as {
+      customTools?: Array<{
+        name: string;
+        execute: (toolCallId: string, params: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+      }>;
+    };
+    const agentTaskTool = options.customTools?.find((tool) => tool.name === "agent_task");
+    const result = await agentTaskTool?.execute("tool_1", { action: "delegate", message: "investiga precios" });
+    expect(delegated).toEqual(["investiga precios"]);
+    expect(result?.content[0]?.text).toContain("task_1");
+    expect(result?.content[0]?.text).toContain("completada");
+  });
+
+  test("exposes turn progress while a chat is running and clears it afterwards", async () => {
+    const { harness, authData, emitAssistantReply, emitToolStart, emitToolResult, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    const observed: Array<ReturnType<typeof harness.getStatus>> = [];
+    setPromptImpl(async () => {
+      emitAssistantReply("Voy a configurar OpenClaw.");
+      observed.push(harness.getStatus());
+      emitToolStart("openclaw_setup");
+      observed.push(harness.getStatus());
+      emitToolResult("openclaw_setup", "Estado del setup: fase=needs_auth");
+      observed.push(harness.getStatus());
+    });
+
+    await harness.chat({
+      message: "configura openclaw",
+      source: "text",
+    });
+
+    expect(observed[0]?.busy).toBe(true);
+    expect(observed[0]?.turn?.streamedText).toContain("Voy a configurar OpenClaw.");
+    expect(observed[1]?.turn?.currentTool).toBe("openclaw_setup");
+    expect(observed[2]?.turn?.currentTool).toBeNull();
+    expect(observed[2]?.turn?.completedTools).toEqual(["openclaw_setup"]);
+
+    const finalStatus = harness.getStatus();
+    expect(finalStatus.busy).toBe(false);
+    expect(finalStatus.turn).toBeUndefined();
+  });
+
+  test("startChat returns a processing turn that resolves with the reply", async () => {
+    const { harness, authData, emitAssistantReply, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    const promptDeferred = createDeferred<void>();
+    setPromptImpl(async () => {
+      await promptDeferred.promise;
+      emitAssistantReply("hecho");
+    });
+
+    const turn = harness.startChat({ message: "configura openclaw", source: "text" });
+
+    expect(turn.status).toBe("processing");
+    expect(turn.input).toBe("configura openclaw");
+    expect(harness.getTurn(turn.turnId).status).toBe("processing");
+    expect(harness.getStatus().busy).toBe(true);
+    expect(() => harness.startChat({ message: "otro", source: "text" })).toThrow("Ya hay una respuesta en curso.");
+
+    promptDeferred.resolve();
+    await settleTurn();
+
+    const finished = harness.getTurn(turn.turnId);
+    expect(finished.status).toBe("succeeded");
+    expect(finished.reply).toBe("hecho");
+    expect(finished.modelId).toBe("gpt-5.5-instant");
+    expect(finished.finishedAt).toBeTruthy();
+    expect(harness.getStatus().busy).toBe(false);
+    expect(harness.getLatestTurn()?.turnId).toBe(turn.turnId);
+  });
+
+  test("failed turns record the error and status code", async () => {
+    const { harness, authData, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    setPromptImpl(async () => {
+      throw new Error("authentication failed");
+    });
+
+    const turn = harness.startChat({ message: "hola", source: "text" });
+    await settleTurn();
+
+    const finished = harness.getTurn(turn.turnId);
+    expect(finished.status).toBe("failed");
+    expect(finished.error).toBe("authentication failed");
+    expect(finished.errorStatus).toBe(401);
+    expect(harness.getStatus().busy).toBe(false);
+  });
+
+  test("getTurn rejects unknown turn ids with 404", () => {
+    const { harness } = createHarnessFixture();
+
+    expect(harness.getLatestTurn()).toBeNull();
+    expect(() => harness.getTurn("turn_missing")).toThrow("Turno no encontrado.");
+  });
+
+  test("persists finished turns and restores them in a new harness instance", async () => {
+    let saved: unknown[] = [];
+    const turnStore: PiTurnStoreLike = {
+      load: () => saved as never,
+      save: (turns) => {
+        saved = turns;
+      },
+    };
+
+    const first = createHarnessFixture({ turnStore });
+    first.authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await first.harness.chat({ message: "hola", source: "text" });
+    expect(saved.length).toBe(1);
+
+    const second = createHarnessFixture({ turnStore });
+    const restored = second.harness.listTurns();
+    expect(restored.length).toBe(1);
+    expect(restored[0]).toMatchObject({
+      status: "succeeded",
+      input: "hola",
+      reply: "respuesta:hola",
+    });
+    expect(second.harness.getLatestTurn()?.input).toBe("hola");
+  });
+
+  test("marks turns persisted as processing as failed after a restart", () => {
+    const turnStore: PiTurnStoreLike = {
+      load: () => [
+        {
+          turnId: "turn_interrupted",
+          status: "processing" as const,
+          source: "text" as const,
+          input: "configura openclaw",
+          startedAt: "2026-04-21T11:59:00.000Z",
+          progress: {
+            startedAt: "2026-04-21T11:59:00.000Z",
+            streamedText: "Voy a ello.",
+            currentTool: "openclaw_setup",
+            completedTools: [],
+          },
+        },
+      ],
+      save: () => undefined,
+    };
+
+    const { harness } = createHarnessFixture({ turnStore });
+    const restored = harness.getTurn("turn_interrupted");
+
+    expect(restored.status).toBe("failed");
+    expect(restored.error).toBe("El turno se interrumpio por un reinicio.");
+    expect(restored.finishedAt).toBeTruthy();
+    expect(harness.getStatus().busy).toBe(false);
   });
 
   test("prefers the stronger foreground model when available", async () => {

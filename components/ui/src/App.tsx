@@ -26,12 +26,12 @@ import { createAgentClient } from "./lib/agent-client";
 import { classifyAgentCommand } from "./lib/agent-command";
 import { createPiClient, PiClientError } from "./lib/pi-client";
 import {
-  createSpeechRecognitionController,
+  createPreferredSpeechRecognitionController,
   isSpeechRecognitionSupported,
   type SpeechRecognitionController,
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
-import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse } from "./lib/pi-types";
+import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse, PiTurnProgress, PiTurnState } from "./lib/pi-types";
 import type {
   AgentAdminStatus,
   AgentSetupStateSummary,
@@ -61,6 +61,33 @@ function describeClientError(error: unknown): string {
   }
 
   return "No se pudo completar la accion.";
+}
+
+const TOOL_ACTIVITY_LABELS: Record<string, string> = {
+  openclaw_setup: "configurando OpenClaw",
+  apps_open: "abriendo una aplicacion",
+  apps_install: "instalando una aplicacion",
+  files_open: "abriendo un archivo",
+  bash: "ejecutando un comando",
+  read: "leyendo archivos",
+  edit: "editando archivos",
+  write: "escribiendo archivos",
+  grep: "buscando en archivos",
+  find: "buscando archivos",
+  ls: "listando directorios",
+};
+
+function describeTurnActivity(turn: PiTurnProgress | null): string | null {
+  if (!turn) {
+    return null;
+  }
+  if (turn.currentTool) {
+    return `Pi esta ${TOOL_ACTIVITY_LABELS[turn.currentTool] ?? `usando ${turn.currentTool}`}...`;
+  }
+  if (turn.completedTools.length > 0) {
+    return "Pi esta procesando los resultados de las herramientas...";
+  }
+  return "Pi esta pensando...";
 }
 
 function describeAuthState(authState: PiAuthState): string {
@@ -94,8 +121,8 @@ export default function App() {
   const [agentBackendError, setAgentBackendError] = useState<string | null>(null);
   const [manualCodeInput, setManualCodeInput] = useState("");
   const [draft, setDraft] = useState("");
-  const [lastInput, setLastInput] = useState("");
-  const [lastReply, setLastReply] = useState("");
+  const [turns, setTurns] = useState<PiTurnState[]>([]);
+  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
   const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>(DEFAULT_WORKSPACES);
@@ -171,6 +198,38 @@ export default function App() {
     }
   }, []);
 
+  const upsertTurn = useCallback((turn: PiTurnState) => {
+    setTurns((current) => {
+      const index = current.findIndex((candidate) => candidate.turnId === turn.turnId);
+      if (index === -1) {
+        return [...current, turn].slice(-40);
+      }
+
+      const next = [...current];
+      next[index] = turn;
+      return next;
+    });
+  }, []);
+
+  const appendLocalTurn = useCallback((input: string, reply: string) => {
+    const timestamp = new Date().toISOString();
+    upsertTurn({
+      turnId: `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      status: "succeeded",
+      source: "text",
+      input,
+      startedAt: timestamp,
+      finishedAt: timestamp,
+      progress: {
+        startedAt: timestamp,
+        streamedText: "",
+        currentTool: null,
+        completedTools: [],
+      },
+      reply,
+    });
+  }, [upsertTurn]);
+
   const sendPrompt = useCallback(async (message: string, source: PiChatSource) => {
     const trimmed = message.trim();
     if (!trimmed) {
@@ -187,8 +246,6 @@ export default function App() {
 
     setChatState("processing");
     setGlobalError(null);
-    setLastInput(trimmed);
-    setLastReply("");
     if (source === "text") {
       setDraft("");
     }
@@ -196,7 +253,7 @@ export default function App() {
     if (command.kind === "memory") {
       try {
         const response = await agentClient.appendMemory(command.namespace, command.content);
-        setLastReply(response.message ?? "Memoria guardada.");
+        appendLocalTurn(trimmed, response.message ?? "Memoria guardada.");
         setChatState("idle");
       } catch (error) {
         setChatState("error");
@@ -208,7 +265,7 @@ export default function App() {
     if (command.kind === "background") {
       try {
         const response = await agentClient.delegateBackgroundTask(command.message);
-        setLastReply(response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
+        appendLocalTurn(trimmed, response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
         setChatState("idle");
       } catch (error) {
         setChatState("error");
@@ -226,11 +283,9 @@ export default function App() {
     }
 
     try {
-      const response = await piClient.sendMessage(trimmed, source);
-      setLastReply(response.reply ?? "");
-      setModelId(response.modelId);
-      setChatState("idle");
-      await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
+      const turn = await piClient.startTurn(trimmed, source);
+      upsertTurn(turn);
+      setActiveTurnId(turn.turnId);
     } catch (error) {
       const message = describeClientError(error);
       setChatState("error");
@@ -244,7 +299,69 @@ export default function App() {
         // refreshStatus already updated the UI with the relevant failure
       }
     }
-  }, [authState, networkOnline, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
+  }, [authState, networkOnline, refreshAgentStatus, refreshStatus, refreshWorkspaces, upsertTurn, appendLocalTurn]);
+
+  const applyFinishedTurn = useCallback((turn: PiTurnState) => {
+    setActiveTurnId(null);
+    if (turn.status === "succeeded") {
+      if (turn.modelId) {
+        setModelId(turn.modelId);
+      }
+      setChatState("idle");
+      return;
+    }
+
+    setChatState("error");
+    setGlobalError(turn.error ?? "El turno fallo.");
+    if (turn.errorStatus === 401) {
+      setAuthState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeTurnId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollTurn = async () => {
+      try {
+        const turn = await piClient.getTurn(activeTurnId);
+        if (cancelled) {
+          return;
+        }
+
+        upsertTurn(turn);
+        if (turn.status !== "processing") {
+          applyFinishedTurn(turn);
+          await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        // El turno sigue corriendo en el harness aunque falle una consulta
+        // puntual; solo un 404 significa que el turno ya no existe.
+        if (error instanceof PiClientError && error.status === 404) {
+          setActiveTurnId(null);
+          setChatState("error");
+          setGlobalError("Se perdio el turno en curso. Intentalo de nuevo.");
+        }
+      }
+    };
+
+    void pollTurn();
+    const intervalId = window.setInterval(() => {
+      void pollTurn();
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeTurnId, applyFinishedTurn, refreshStatus, refreshWorkspaces, upsertTurn]);
 
   const handleVoiceResult = useCallback((transcript: string) => {
     setVoiceState("idle");
@@ -262,23 +379,44 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const controller = createSpeechRecognitionController({
+    let cancelled = false;
+    let speechController: SpeechRecognitionController | null = null;
+
+    void createPreferredSpeechRecognitionController({
       onResult: handleVoiceResult,
       onError: handleVoiceError,
       onEnd: handleVoiceEnd,
+    }).then((controller) => {
+      if (cancelled) {
+        controller.dispose();
+        return;
+      }
+
+      speechController = controller;
+      speechControllerRef.current = controller;
+
+      if (!controller.supported) {
+        setVoiceState("unsupported");
+        setVoiceIssue("STT local no disponible. Usa texto.");
+      }
     });
-
-    speechControllerRef.current = controller;
-
-    if (!controller.supported) {
-      setVoiceState("unsupported");
-      setVoiceIssue("STT local no disponible. Usa texto.");
-    }
-
-    let cancelled = false;
 
     async function bootstrap() {
       void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()]);
+
+      try {
+        const history = await piClient.listTurns(20);
+        if (!cancelled && Array.isArray(history) && history.length > 0) {
+          setTurns(history);
+          const latestTurn = history[history.length - 1];
+          if (latestTurn?.status === "processing") {
+            setChatState("processing");
+            setActiveTurnId(latestTurn.turnId);
+          }
+        }
+      } catch {
+        // Recuperar el historial es opcional; el resto de la UI sigue funcionando.
+      }
 
       try {
         const status = await networkClient.getStatus();
@@ -301,7 +439,7 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      controller.dispose();
+      speechController?.dispose();
       speechControllerRef.current = null;
     };
   }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
@@ -429,8 +567,7 @@ export default function App() {
       await piClient.logout();
       setPendingAttempt(null);
       setManualCodeInput("");
-      setLastInput("");
-      setLastReply("");
+      setActiveTurnId(null);
       setChatState("idle");
       setServerBusy(false);
       setAuthState("disconnected");
@@ -925,41 +1062,55 @@ export default function App() {
               <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
                 <div>
                   <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
-                    Ultimo Turno
+                    Conversacion
                   </p>
                   <h2 className="mt-3 text-2xl font-medium text-white">
-                    Respuesta minima
+                    Historial con Pi
                   </h2>
                   <p className="mt-2 text-sm text-white/55">
-                    Este MVP solo muestra el ultimo input y la ultima respuesta del agente.
+                    Los turnos se guardan en este equipo y sobreviven reinicios del shell.
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-white/8 bg-black/20 p-5">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
-                    Input
-                  </p>
-                  <p className="mt-3 min-h-[4.5rem] text-sm leading-6 text-white/80">
-                    {lastInput || "Todavia no enviaste ningun mensaje."}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/8 bg-black/20 p-5">
-                  <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
-                    Respuesta
-                  </p>
-                  <p className="mt-3 min-h-[10rem] whitespace-pre-wrap text-sm leading-6 text-white/85">
-                    {lastReply
-                      || (chatState === "error" && globalError
-                        ? globalError
-                        : isProcessing
-                          ? "Esperando respuesta final..."
-                          : "Todavia no hay respuesta.")}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/8 bg-black/20 p-5 text-sm text-white/60">
-                  Disponible solo en `http://127.0.0.1:4174` con `bun dev`.
+                <div className="flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1">
+                  {turns.length === 0 ? (
+                    <div className="rounded-2xl border border-white/8 bg-black/20 p-5 text-sm text-white/55">
+                      Todavia no hay conversacion. Escribe o usa el microfono para hablar con Pi.
+                    </div>
+                  ) : (
+                    turns.map((turn) => (
+                      <div className="rounded-2xl border border-white/8 bg-black/20 p-5" key={turn.turnId}>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
+                          Tu
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/80">
+                          {turn.input}
+                        </p>
+                        <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
+                          Pi
+                        </p>
+                        {turn.status === "processing" ? (
+                          <>
+                            <p className="mt-2 inline-flex items-center gap-2 text-xs text-accent-light">
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              {describeTurnActivity(turn.progress) ?? "Pi esta trabajando..."}
+                            </p>
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/85">
+                              {turn.progress.streamedText || "Esperando la primera respuesta de Pi..."}
+                            </p>
+                          </>
+                        ) : turn.status === "failed" ? (
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-danger">
+                            {turn.error ?? "El turno fallo."}
+                          </p>
+                        ) : (
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/85">
+                            {turn.reply ?? ""}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>

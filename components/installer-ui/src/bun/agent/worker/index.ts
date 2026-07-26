@@ -7,6 +7,7 @@ import { readWorkerConfig, type WorkerConfig, type WorkerConfiguredMode } from "
 import { createAgenosWorkerDaemonAdapter, type WorkerToolCall } from "./agenos-worker-daemon";
 import { createLocalSimulatedWorkerAdapter, type LocalSimulatedWorkerAdapterOptions } from "./local-simulated";
 import { createOpenClawProcessAdapter } from "./openclaw-process";
+import { createOpenClawRuntime } from "./openclaw-runtime";
 import type { WorkerAdapter, WorkerMode } from "./types";
 
 export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOptions> & {
@@ -65,8 +66,8 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
   );
 }
 
-function openClawAvailable(binaryPath = "/usr/bin/openclaw"): boolean {
-  return existsSync(binaryPath);
+function openClawAvailable(binaryPath?: string): boolean {
+  return createOpenClawRuntime({ binaryPath }).resolveBinary() !== null;
 }
 
 function bundledWorkerAvailable(workerPath?: string): boolean {

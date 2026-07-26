@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai/oauth";
 import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
@@ -25,6 +26,7 @@ import {
   type HarnessTraceToolEvent,
 } from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
+import { createAgentTaskModelTool, createHttpAgentTaskClient, type AgentTaskClient } from "../../agent/agent-task-tool";
 import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
 import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
@@ -37,6 +39,7 @@ import type {
   PiChatResponse,
   PiPendingAttempt,
   PiStatusResponse,
+  PiTurnState,
 } from "../src/lib/pi-types";
 
 export const PI_PROVIDER_ID = "openai-codex" as const;
@@ -53,6 +56,8 @@ export type PiHarnessPaths = {
   authPath: string;
   codexDeviceDir: string;
   tracePath: string;
+  turnsPath: string;
+  sessionsDir: string;
 };
 
 export function resolvePiHarnessPaths(
@@ -66,6 +71,8 @@ export function resolvePiHarnessPaths(
     authPath: join(agentDir, "auth.json"),
     codexDeviceDir: join(agentDir, "codex-device"),
     tracePath: join(agentDir, "traces", "pi-chat.ndjson"),
+    turnsPath: join(agentDir, "turns.json"),
+    sessionsDir: join(agentDir, "sessions"),
   };
 }
 
@@ -74,13 +81,15 @@ const PI_AGENT_DIR = PI_PATHS.agentDir;
 const PI_AUTH_PATH = PI_PATHS.authPath;
 const PI_CODEX_DEVICE_DIR = PI_PATHS.codexDeviceDir;
 const PI_TRACE_PATH = PI_PATHS.tracePath;
+const PI_TURNS_PATH = PI_PATHS.turnsPath;
+const PI_SESSIONS_DIR = PI_PATHS.sessionsDir;
 export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_SYSTEM_PROMPT_HASH = hashHarnessPrompt(PI_SYSTEM_PROMPT);
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup"];
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
@@ -168,10 +177,16 @@ type PiCustomToolLike = {
   ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
 };
 
+export type PiTurnStoreLike = {
+  load(): PiTurnState[];
+  save(turns: PiTurnState[]): void;
+};
+
 type PiHarnessDependencies = {
   authStorage: PiAuthStorageLike;
   modelRegistry: PiModelRegistryLike;
-  createSessionManager: () => PiSessionManagerLike;
+  createSessionManager: (mode?: "resume" | "fresh") => PiSessionManagerLike;
+  turnStore?: PiTurnStoreLike;
   createAgentSession: (options: {
     model: PiModelLike;
     sessionManager: PiSessionManagerLike;
@@ -179,7 +194,8 @@ type PiHarnessDependencies = {
     customTools?: PiCustomToolLike[];
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
-  setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "configureTelegram" | "testTelegram" | "enableTelegram">;
+  setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "codexLoginStatus" | "configureTelegram" | "testTelegram" | "enableTelegram">;
+  agentTaskClient?: AgentTaskClient;
   traceRecorder?: HarnessTraceRecorder;
   modelPreference?: string[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
@@ -417,6 +433,49 @@ function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
   };
 }
 
+const TURN_TEXT_MAX_CHARS = 4000;
+const MAX_RETAINED_TURNS = 20;
+
+function truncateTurnText(value: string): string {
+  return value.length > TURN_TEXT_MAX_CHARS ? value.slice(value.length - TURN_TEXT_MAX_CHARS) : value;
+}
+
+function snapshotTurn(turn: PiTurnState): PiTurnState {
+  return {
+    ...turn,
+    progress: {
+      ...turn.progress,
+      completedTools: [...turn.progress.completedTools],
+    },
+  };
+}
+
+export function createFileTurnStore(filePath: string): PiTurnStoreLike {
+  return {
+    load(): PiTurnState[] {
+      try {
+        const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+        if (!Array.isArray(parsed)) {
+          return [];
+        }
+        return parsed.filter((turn): turn is PiTurnState => (
+          Boolean(turn)
+          && typeof turn === "object"
+          && typeof (turn as PiTurnState).turnId === "string"
+          && typeof (turn as PiTurnState).input === "string"
+          && typeof (turn as PiTurnState).status === "string"
+        ));
+      } catch {
+        return [];
+      }
+    },
+    save(turns: PiTurnState[]): void {
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, `${JSON.stringify(turns)}\n`, { mode: 0o600 });
+    },
+  };
+}
+
 function stripAnsi(value: string): string {
   return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "");
 }
@@ -564,12 +623,24 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   const appTool = createAppTool();
   const setupService = createOpenClawSetupService();
+  const agentTaskClient = createHttpAgentTaskClient();
   const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
     authStorage,
     modelRegistry,
-    createSessionManager: () => SessionManager.inMemory(process.cwd()),
+    // Persist the conversation under the Pi agent dir so Pi keeps its context
+    // across shell restarts; "fresh" starts a new session file (logout).
+    createSessionManager: (mode) => {
+      try {
+        return mode === "fresh"
+          ? SessionManager.create(process.cwd(), PI_SESSIONS_DIR)
+          : SessionManager.continueRecent(process.cwd(), PI_SESSIONS_DIR);
+      } catch {
+        return SessionManager.inMemory(process.cwd());
+      }
+    },
+    turnStore: createFileTurnStore(PI_TURNS_PATH),
     createAgentSession: async ({ model, sessionManager, tools, customTools }) => {
       const settingsManager = SettingsManager.inMemory();
       const resourceLoader = new DefaultResourceLoader({
@@ -600,6 +671,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
           createInstallAppModelTool(appTool),
           createOpenFileModelTool(),
           createOpenClawSetupModelTool(setupService),
+          createAgentTaskModelTool(agentTaskClient),
         ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
@@ -610,6 +682,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
     },
     appTool,
     setupService,
+    agentTaskClient,
     traceRecorder,
     modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,
@@ -630,11 +703,60 @@ export class PiHarness {
   private pendingAttemptId: string | undefined;
   private busy = false;
   private lastError: string | undefined;
+  private readonly turns = new Map<string, PiTurnState>();
+  private readonly turnWaiters = new Map<string, Deferred<PiChatResponse>>();
+  private activeTurnId: string | undefined;
 
   constructor(dependencies: PiHarnessDependencies, options: PiHarnessOptions = {}) {
     this.deps = dependencies;
     this.options = options;
-    this.sessionManager = this.deps.createSessionManager();
+    this.sessionManager = this.deps.createSessionManager("resume");
+    this.restoreTurns();
+  }
+
+  private restoreTurns(): void {
+    let stored: PiTurnState[] = [];
+    try {
+      stored = this.deps.turnStore?.load() ?? [];
+    } catch {
+      return;
+    }
+
+    for (const turn of stored.slice(-MAX_RETAINED_TURNS)) {
+      if (!turn || typeof turn.turnId !== "string" || !turn.turnId) {
+        continue;
+      }
+
+      const progress = turn.progress && Array.isArray(turn.progress.completedTools)
+        ? turn.progress
+        : {
+          startedAt: turn.startedAt,
+          streamedText: "",
+          currentTool: null,
+          completedTools: [],
+        };
+
+      // A turn persisted as "processing" cannot survive a restart.
+      const restored: PiTurnState = turn.status === "processing"
+        ? {
+          ...turn,
+          progress,
+          status: "failed",
+          error: "El turno se interrumpio por un reinicio.",
+          errorStatus: 500,
+          finishedAt: turn.finishedAt ?? new Date(this.deps.now()).toISOString(),
+        }
+        : { ...turn, progress };
+      this.turns.set(restored.turnId, restored);
+    }
+  }
+
+  private persistTurns(): void {
+    try {
+      this.deps.turnStore?.save([...this.turns.values()].map(snapshotTurn));
+    } catch {
+      // Turn persistence must never block the foreground assistant.
+    }
   }
 
   getStatus(): PiStatusResponse {
@@ -653,8 +775,15 @@ export class PiHarness {
       modelId: this.selectModel().id,
       busy: this.busy,
       pendingAttempt: pendingAttempt?.status === "pending" ? toPendingAttempt(pendingAttempt) : undefined,
+      turn: this.busy && this.activeTurn()
+        ? snapshotTurn(this.activeTurn()!).progress
+        : undefined,
       error: this.lastError,
     };
+  }
+
+  private activeTurn(): PiTurnState | undefined {
+    return this.activeTurnId ? this.turns.get(this.activeTurnId) : undefined;
   }
 
   async startAuth(method: PiAuthMethod = "device"): Promise<PiPendingAttempt> {
@@ -770,7 +899,7 @@ export class PiHarness {
     this.resetSession();
   }
 
-  async chat(request: PiChatRequest): Promise<PiChatResponse> {
+  startChat(request: PiChatRequest): PiTurnState {
     const message = request.message.trim();
     if (!message) {
       throw new PiHarnessError(400, "Escribe un mensaje.");
@@ -784,11 +913,72 @@ export class PiHarness {
       throw new PiHarnessError(409, "Ya hay una respuesta en curso.");
     }
 
-    const traceId = createHarnessTraceId(() => this.deps.now());
     const startedAtMs = this.deps.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const turn: PiTurnState = {
+      turnId: `turn_${startedAtMs.toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+      status: "processing",
+      source: request.source,
+      input: message,
+      startedAt,
+      progress: {
+        startedAt,
+        streamedText: "",
+        currentTool: null,
+        completedTools: [],
+      },
+    };
+
+    this.busy = true;
+    this.activeTurnId = turn.turnId;
+    this.turns.set(turn.turnId, turn);
+    this.pruneTurns();
+    this.persistTurns();
+    this.turnWaiters.set(turn.turnId, createDeferred<PiChatResponse>());
+
+    void this.runTurn(turn, startedAtMs);
+
+    return snapshotTurn(turn);
+  }
+
+  getTurn(turnId: string): PiTurnState {
+    const turn = this.turns.get(turnId);
+    if (!turn) {
+      throw new PiHarnessError(404, "Turno no encontrado.");
+    }
+
+    return snapshotTurn(turn);
+  }
+
+  getLatestTurn(): PiTurnState | null {
+    let latest: PiTurnState | undefined;
+    for (const turn of this.turns.values()) {
+      latest = turn;
+    }
+
+    return latest ? snapshotTurn(latest) : null;
+  }
+
+  listTurns(limit = 20): PiTurnState[] {
+    const normalizedLimit = Math.max(1, Math.min(Math.floor(limit) || 20, MAX_RETAINED_TURNS));
+    return [...this.turns.values()].slice(-normalizedLimit).map(snapshotTurn);
+  }
+
+  async chat(request: PiChatRequest): Promise<PiChatResponse> {
+    const turn = this.startChat(request);
+    const waiter = this.turnWaiters.get(turn.turnId);
+    if (!waiter) {
+      throw new PiHarnessError(500, "El turno no se registro correctamente.");
+    }
+
+    return waiter.promise;
+  }
+
+  private async runTurn(turn: PiTurnState, startedAtMs: number): Promise<void> {
+    const waiter = this.turnWaiters.get(turn.turnId);
+    const traceId = createHarnessTraceId(() => this.deps.now());
     const toolEvents: HarnessTraceToolEvent[] = [];
     let model: PiModelLike | undefined;
-    this.busy = true;
     let unsubscribe = () => {};
 
     try {
@@ -800,10 +990,15 @@ export class PiHarness {
       unsubscribe = session.subscribe((event) => {
         if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
           streamedReply += event.assistantMessageEvent.delta ?? "";
+          turn.progress.streamedText = truncateTurnText(streamedReply);
         }
 
         if (event.type === "message_end" && event.message?.role === "assistant") {
           completedReply = extractTextContent(event.message.content);
+        }
+
+        if (event.type === "tool_execution_start" && event.toolName) {
+          turn.progress.currentTool = event.toolName;
         }
 
         if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName)) {
@@ -818,9 +1013,14 @@ export class PiHarness {
             toolReply = toolOutput;
           }
         }
+
+        if (event.type === "tool_execution_end" && event.toolName) {
+          turn.progress.completedTools.push(event.toolName);
+          turn.progress.currentTool = null;
+        }
       });
 
-      await session.prompt(message);
+      await session.prompt(turn.input);
 
       const reply = (streamedReply || completedReply || toolReply || this.getLastAssistantReply(session)).trim();
       if (!reply) {
@@ -832,19 +1032,25 @@ export class PiHarness {
         traceId,
         startedAtMs,
         status: "succeeded",
-        channel: request.source,
+        channel: turn.source,
         model,
-        message,
+        message: turn.input,
         reply,
         toolEvents,
       });
 
-      return {
-        ok: true,
-        reply,
-        provider: PI_PROVIDER_ID,
-        modelId: model.id,
-      };
+      turn.status = "succeeded";
+      turn.reply = reply;
+      turn.modelId = model.id;
+      turn.finishedAt = new Date(this.deps.now()).toISOString();
+      if (waiter) {
+        resolveDeferred(waiter, {
+          ok: true,
+          reply,
+          provider: PI_PROVIDER_ID,
+          modelId: model.id,
+        });
+      }
     } catch (error) {
       const message = normalizeErrorMessage(error);
       this.lastError = message;
@@ -852,21 +1058,39 @@ export class PiHarness {
         traceId,
         startedAtMs,
         status: "failed",
-        channel: request.source,
+        channel: turn.source,
         model,
-        message: request.message.trim(),
+        message: turn.input,
         error: message,
         toolEvents,
       });
 
-      if (this.isAuthenticationFailure(message)) {
-        throw new PiHarnessError(401, message);
+      const harnessError = this.isAuthenticationFailure(message)
+        ? new PiHarnessError(401, message)
+        : new PiHarnessError(500, message);
+      turn.status = "failed";
+      turn.error = harnessError.message;
+      turn.errorStatus = harnessError.status;
+      turn.finishedAt = new Date(this.deps.now()).toISOString();
+      if (waiter) {
+        rejectDeferred(waiter, harnessError);
       }
-
-      throw new PiHarnessError(500, message);
     } finally {
       unsubscribe();
       this.busy = false;
+      this.activeTurnId = this.activeTurnId === turn.turnId ? undefined : this.activeTurnId;
+      this.turnWaiters.delete(turn.turnId);
+      this.persistTurns();
+    }
+  }
+
+  private pruneTurns(): void {
+    while (this.turns.size > MAX_RETAINED_TURNS) {
+      const oldest = this.turns.keys().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.turns.delete(oldest);
     }
   }
 
@@ -1016,6 +1240,9 @@ export class PiHarness {
       customTools: [
         createOpenAppModelTool(this.deps.appTool),
         createInstallAppModelTool(this.deps.appTool),
+        createOpenFileModelTool(),
+        createOpenClawSetupModelTool(this.deps.setupService),
+        createAgentTaskModelTool(this.deps.agentTaskClient),
       ],
     });
 
@@ -1028,7 +1255,7 @@ export class PiHarness {
     this.session?.dispose?.();
     this.session = undefined;
     this.sessionModelId = undefined;
-    this.sessionManager = this.deps.createSessionManager();
+    this.sessionManager = this.deps.createSessionManager("fresh");
   }
 
   private getLastAssistantReply(session: PiAgentSessionLike): string {
@@ -1068,7 +1295,12 @@ let sharedHarness: PiHarness | undefined;
 
 export function createPiHarness(dependencies?: Partial<PiHarnessDependencies>, options: PiHarnessOptions = {}): PiHarness {
   if (dependencies) {
-    return new PiHarness(dependencies as PiHarnessDependencies, options);
+    // Tests inject a complete dependency set; runtime callers (e.g. the HTTP
+    // server passing only setupService) need the rest filled with defaults.
+    const complete = dependencies.authStorage && dependencies.modelRegistry
+      ? (dependencies as PiHarnessDependencies)
+      : { ...createDefaultDependencies(), ...dependencies };
+    return new PiHarness(complete, options);
   }
 
   sharedHarness ??= new PiHarness(createDefaultDependencies(), options);

@@ -27,7 +27,7 @@ source_hash() {
       [[ -e "${path}" ]] && inputs+=("${path}")
     done
 
-    find "${inputs[@]}" -type f -print 2>/dev/null \
+    find "${inputs[@]}" -type f -not -path "*/node_modules/*" -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
@@ -59,6 +59,17 @@ if [[ -f bun.lock || -f bun.lockb ]]; then
   bun install --frozen-lockfile
 else
   bun install
+fi
+
+if [[ -f "${NETWORK_DIR}/node/package.json" ]]; then
+  (
+    cd "${NETWORK_DIR}/node"
+    if [[ -f bun.lock || -f bun.lockb ]]; then
+      bun install --frozen-lockfile
+    else
+      bun install
+    fi
+  )
 fi
 
 bash "${ROOT_DIR}/scripts/build-ui.sh"

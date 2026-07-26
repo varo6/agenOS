@@ -361,7 +361,7 @@ function createMainWindow(): void {
 
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    show: false,
+    show: true,
     backgroundColor: "#090b12",
     autoHideMenuBar: true,
     fullscreen: true,

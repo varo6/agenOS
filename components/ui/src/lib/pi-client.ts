@@ -6,11 +6,16 @@ import type {
   PiPendingAttempt,
   PiStartAuthRequest,
   PiStatusResponse,
+  PiTurnState,
 } from "./pi-types";
 import { getPiBridge } from "./pi-bridge";
 
 const PI_API_BASE_DEFAULT = "http://127.0.0.1:4173";
 const REQUEST_TIMEOUT_MS = 8_000;
+// Chat turns run a full agent loop with tool calls (setup, installs, shell
+// commands), so they legitimately take minutes. Progress is surfaced via
+// status polling while the turn runs.
+const CHAT_TIMEOUT_MS = 10 * 60 * 1000;
 
 type ErrorPayload = {
   message?: string;
@@ -34,9 +39,9 @@ function resolveHttpBase(): string {
   return PI_API_BASE_DEFAULT;
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(new URL(path, `${resolveHttpBase()}/`).toString(), {
@@ -65,9 +70,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
-async function bridgeRequest<T>(operation: () => Promise<T>): Promise<T> {
+async function bridgeRequest<T>(operation: () => Promise<T>, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   try {
-    return await withTimeout(operation(), "La solicitud IPC al harness excedio el tiempo limite.");
+    return await withTimeout(operation(), "La solicitud IPC al harness excedio el tiempo limite.", timeoutMs);
   } catch (error) {
     if (error instanceof PiClientError) {
       throw error;
@@ -80,9 +85,9 @@ async function bridgeRequest<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = globalThis.setTimeout(() => reject(new PiClientError(message)), REQUEST_TIMEOUT_MS);
+    const timer = globalThis.setTimeout(() => reject(new PiClientError(message)), timeoutMs);
     promise.then(
       (value) => {
         globalThis.clearTimeout(timer);
@@ -127,7 +132,23 @@ export function createPiClient() {
       },
 
       sendMessage(message: string, source: PiChatRequest["source"]): Promise<PiChatResponse> {
-        return bridgeRequest(() => bridge.sendMessage(message, source));
+        return bridgeRequest(() => bridge.sendMessage(message, source), CHAT_TIMEOUT_MS);
+      },
+
+      startTurn(message: string, source: PiChatRequest["source"]): Promise<PiTurnState> {
+        return bridgeRequest(() => bridge.startTurn(message, source));
+      },
+
+      getTurn(turnId: string): Promise<PiTurnState> {
+        return bridgeRequest(() => bridge.getTurn(turnId));
+      },
+
+      getLatestTurn(): Promise<PiTurnState | null> {
+        return bridgeRequest(() => bridge.getLatestTurn());
+      },
+
+      listTurns(limit?: number): Promise<PiTurnState[]> {
+        return bridgeRequest(() => bridge.listTurns(limit));
       },
     };
   }
@@ -187,7 +208,31 @@ export function createPiClient() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
+      }, CHAT_TIMEOUT_MS);
+    },
+
+    startTurn(message: string, source: PiChatRequest["source"]): Promise<PiTurnState> {
+      const body: PiChatRequest = { message, source };
+      return requestJson<PiTurnState>("/api/pi/turns", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
       });
+    },
+
+    getTurn(turnId: string): Promise<PiTurnState> {
+      return requestJson<PiTurnState>(`/api/pi/turns/${encodeURIComponent(turnId)}`);
+    },
+
+    getLatestTurn(): Promise<PiTurnState | null> {
+      return requestJson<PiTurnState | null>("/api/pi/turns/latest");
+    },
+
+    listTurns(limit?: number): Promise<PiTurnState[]> {
+      const query = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";
+      return requestJson<PiTurnState[]>(`/api/pi/turns${query}`);
     },
   };
 }

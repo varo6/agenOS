@@ -52,15 +52,30 @@ def workspace_has_views(workspace) -> bool:
     return False
 
 
-def return_home_if_app_workspace_is_empty() -> None:
-    # Let Sway finish processing close/move/focus batches before inspecting the tree.
-    time.sleep(0.15)
+def empty_focused_app_workspace():
     tree = get_tree()
     focused = focused_workspace(tree)
     if focused not in APP_WORKSPACES:
-        return
+        return None
 
     if workspace_has_views(workspace_named(tree, focused)):
+        return None
+
+    return focused
+
+
+def return_home_if_app_workspace_is_empty() -> None:
+    # Let Sway finish processing close/move/focus batches before inspecting the tree.
+    time.sleep(0.15)
+    focused = empty_focused_app_workspace()
+    if focused is None:
+        return
+
+    # Grace period: an AI/app launch focuses the target workspace before the
+    # window maps, so wait and confirm the workspace is still focused and empty
+    # before bouncing back home.
+    time.sleep(2.0)
+    if empty_focused_app_workspace() != focused:
         return
 
     subprocess.run(["swaymsg", "workspace", HOME_WORKSPACE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

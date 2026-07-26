@@ -1,5 +1,9 @@
 # Real Agent Backend Integration
 
+## OpenClaw Lifecycle
+
+The ISO hook `build/live-build/config/hooks/normal/0900-install-openclaw.hook.chroot` installs the pinned `openclaw@2026.6.11` package. `agenos-openclaw-setup` runs idempotent configuration with `AGENOS_OPENCLAW_AUTO_INSTALL=1`. The worker service supervises `openclaw gateway` on `127.0.0.1:18789`, using token authentication from `~/.agenos/openclaw/openclaw.json`. In auto mode, the broker routes `/api/agent/tasks` to the gateway through `/v1/chat/completions`.
+
 ## Worker Mode Decision
 
 The preferred mode is `openclaw-process` when all gates pass:
@@ -12,13 +16,19 @@ The preferred mode is `openclaw-process` when all gates pass:
 - Routes memory writes, outbound sends, browser actions, diagnostics, and service changes through the AgenOS broker.
 - Fails closed to `local-simulated` when the real process is missing or unhealthy.
 
-Use `agenos-bun-worker` for this phase if any gate fails. The fallback is not a separate product direction; it is a minimal worker behind the same `WorkerAdapter` contract.
-
-The local gate checks on 2026-05-16 found no `openclaw` binary on `PATH` and no OpenClaw package, binary, or source tree under `components`. Repository search only found OpenClaw references in Superpowers specs and plans. Because there is no real process artifact to evaluate for non-root execution, bounded task APIs, broker-mediated tools, or service control, the `openclaw-process` gate fails for this phase.
+The fallbacks are not a separate product direction; they are minimal workers behind the same `WorkerAdapter` contract.
 
 ## Selected Mode
 
-`agenos-bun-worker` is selected for this phase because no packageable OpenClaw binary with a bounded broker-mediated tool API is present in the repo.
+Since 2026-07-02 the real OpenClaw worker is integrated and `openclaw-process` is the selected mode. The ISO installs the pinned `openclaw@2026.6.11` package via the `0900-install-openclaw.hook.chroot` hook, so the binary is present on first boot. The historical gate failure from 2026-05-16 (no packageable OpenClaw binary in the repo) no longer applies.
+
+Mode resolution in `auto` (see `components/installer-ui/src/bun/agent/worker/index.ts`):
+
+1. `openclaw-process` when the `openclaw` binary resolves — supervises `openclaw gateway` on `127.0.0.1:18789` and routes tasks through `/v1/chat/completions`.
+2. `agenos-bun-worker` (bundled daemon) when OpenClaw is missing but the bundled worker exists.
+3. `local-simulated` otherwise.
+
+Onboarding is automatic and opinionated: the Pi tool `openclaw_setup` (backed by `/api/agent/setup/*`) installs/configures the runtime without questions. The only user-supplied secrets are the Codex OAuth device login (`codex_login` / `/api/agent/auth/codex/start`) and, optionally, a Telegram bot token (`/api/agent/channels/telegram/*`).
 
 ## Broker Boundary
 
@@ -64,7 +74,10 @@ The admin interface is a tab in `components/ui`. A separate Electron app is reje
 
 ## Out of Scope
 
-- Real STT.
-- Real WhatsApp, Telegram, or email sends.
+- Real WhatsApp or email sends (Telegram is configurable through `/api/agent/channels/telegram/*`).
 - Final sandboxing.
-- Rust rewrite.
+
+No longer out of scope:
+
+- Local STT exists for foreground push-to-talk (whisper.cpp behind `/api/speech/*`; see `components/protocols/agent-api.md`).
+- The shell helpers were rewritten in Rust (`tools/agenos-shell-rust`); the binaries are built during the ISO build and are not committed.

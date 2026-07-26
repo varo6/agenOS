@@ -15,6 +15,7 @@ import type {
   PiPendingAttempt,
   PiStartAuthRequest,
   PiStatusResponse,
+  PiTurnState,
 } from "../lib/pi-types";
 
 type IpcEnvelope<T> =
@@ -123,6 +124,18 @@ contextBridge.exposeInMainWorld("agenosPi", {
   },
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse> {
     return invokePi<PiChatResponse>(PI_IPC_CHANNELS.sendMessage, { message, source });
+  },
+  startTurn(message: string, source: "text" | "voice"): Promise<PiTurnState> {
+    return invokePi<PiTurnState>(PI_IPC_CHANNELS.startTurn, { message, source });
+  },
+  getTurn(turnId: string): Promise<PiTurnState> {
+    return invokePi<PiTurnState>(PI_IPC_CHANNELS.getTurn, { turnId });
+  },
+  getLatestTurn(): Promise<PiTurnState | null> {
+    return invokePi<PiTurnState | null>(PI_IPC_CHANNELS.getLatestTurn);
+  },
+  listTurns(limit?: number): Promise<PiTurnState[]> {
+    return invokePi<PiTurnState[]>(PI_IPC_CHANNELS.listTurns, { limit });
   },
   isAvailable,
 });

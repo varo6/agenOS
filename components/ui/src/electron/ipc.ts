@@ -13,6 +13,10 @@ export const PI_IPC_CHANNELS = {
   submitManualCode: "agenos-pi:submit-manual-code",
   logout: "agenos-pi:logout",
   sendMessage: "agenos-pi:send-message",
+  startTurn: "agenos-pi:start-turn",
+  getTurn: "agenos-pi:get-turn",
+  getLatestTurn: "agenos-pi:get-latest-turn",
+  listTurns: "agenos-pi:list-turns",
 } as const;
 
 export const SPEECH_IPC_CHANNELS = {

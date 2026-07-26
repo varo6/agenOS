@@ -31,6 +31,7 @@ import { createTaskQueue } from "./agent/tasks";
 import { createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createSupportBundle } from "./diagnostics/support-bundle";
+import { createSttService, type SttService } from "./speech/stt";
 import { switchMode } from "../shared/system-services/switch-mode";
 import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
 import { discoverDisks } from "./installer/disks";
@@ -39,25 +40,32 @@ import { readPreflightPayload } from "./installer/preflight";
 import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
-import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "./pi-harness";
+import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
+import type { AgentTaskClient } from "../../../agent/agent-task-tool";
 import type {
   PiAuthAttemptResponse,
+  PiAuthMethod,
   PiChatRequest,
   PiChatResponse,
   PiPendingAttempt,
   PiStatusResponse,
+  PiTurnState,
 } from "../../../ui/src/lib/pi-types";
 import { createNetworkManagerService, type NetworkManagerService } from "../../../network/node/network-manager";
 import type { ConnectWifiRequest } from "../../../network/types";
 
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
-  startAuth(): Promise<PiPendingAttempt>;
+  startAuth(method?: PiAuthMethod): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
+  startChat(request: PiChatRequest): PiTurnState;
+  getTurn(turnId: string): PiTurnState;
+  getLatestTurn(): PiTurnState | null;
+  listTurns(limit?: number): PiTurnState[];
 };
 
 export type InstallerApiDependencies = {
@@ -85,7 +93,10 @@ export type InstallerApiDependencies = {
   setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
   network: NetworkManagerService;
+  speech: SttService;
 };
+
+const MAX_SPEECH_AUDIO_BYTES = 25 * 1024 * 1024;
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
   const result = validateProfile(payload);
@@ -273,8 +284,8 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
         };
       }
     },
-    startAuth() {
-      return getHarness().startAuth();
+    startAuth(method?: PiAuthMethod) {
+      return getHarness().startAuth(method);
     },
     cancelAuth(attemptId?: string) {
       return getHarness().cancelAuth(attemptId);
@@ -290,6 +301,18 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     },
     chat(request: PiChatRequest) {
       return getHarness().chat(request);
+    },
+    startChat(request: PiChatRequest) {
+      return getHarness().startChat(request);
+    },
+    getTurn(turnId: string) {
+      return getHarness().getTurn(turnId);
+    },
+    getLatestTurn() {
+      return getHarness().getLatestTurn();
+    },
+    listTurns(limit?: number) {
+      return getHarness().listTurns(limit);
     },
   };
 }
@@ -311,6 +334,29 @@ export function createInstallerApiHandler(
     }),
   });
   const setup = dependencies.setup ?? createOpenClawSetupService();
+  // Direct task client for the embedded Pi harness: same policy gate as the
+  // HTTP endpoint, without depending on the broker's own port being reachable.
+  const piAgentTaskClient: AgentTaskClient = {
+    async enqueue(message) {
+      const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
+      if (policy.decision !== "allow") {
+        return { ok: false, message: policy.reason };
+      }
+      return taskQueue.enqueue({ message, source: "ui" });
+    },
+    async status(taskId) {
+      return taskQueue.status(taskId);
+    },
+    async events(taskId) {
+      return taskQueue.events(taskId);
+    },
+    async list(limit) {
+      return taskQueue.list(limit);
+    },
+    async health() {
+      return taskQueue.health();
+    },
+  };
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
     taskQueue,
@@ -329,7 +375,7 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup })),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup, agentTaskClient: piAgentTaskClient })),
     memoryStore,
     taskQueue,
     appTool: dependencies.appTool ?? createAppTool(),
@@ -341,6 +387,7 @@ export function createInstallerApiHandler(
     setup,
     supportBundle,
     network: dependencies.network ?? createNetworkManagerService(),
+    speech: dependencies.speech ?? createSttService(),
     toolRunner,
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
@@ -559,7 +606,9 @@ export function createInstallerApiHandler(
           }
 
           try {
-            return json(await deps.piHarness.startAuth());
+            const payload = await readJsonBody(request) as { method?: unknown };
+            const method: PiAuthMethod = payload.method === "browser" ? "browser" : "device";
+            return json(await deps.piHarness.startAuth(method));
           } catch (error) {
             return piErrorResponse(error);
           }
@@ -654,6 +703,103 @@ export function createInstallerApiHandler(
           } catch (error) {
             return piErrorResponse(error);
           }
+        }
+
+        if (url.pathname === "/api/pi/turns") {
+          if (request.method === "GET") {
+            try {
+              const limit = Number(url.searchParams.get("limit") ?? "20");
+              return json(deps.piHarness.listTurns(Number.isFinite(limit) ? limit : undefined));
+            } catch (error) {
+              return piErrorResponse(error);
+            }
+          }
+
+          if (request.method !== "POST") {
+            return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
+            const source = typeof payload.source === "string" ? payload.source : "";
+            if (source !== "text" && source !== "voice") {
+              return json(
+                {
+                  ok: false,
+                  message: "El origen debe ser text o voice.",
+                },
+                {
+                  status: 400,
+                },
+              );
+            }
+
+            return json(deps.piHarness.startChat({
+              message: typeof payload.message === "string" ? payload.message : "",
+              source,
+            }), { status: 202 });
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/turns/latest") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getLatestTurn());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        const turnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)$/);
+        if (turnMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getTurn(decodeURIComponent(turnMatch[1] ?? "")));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/speech/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.speech.status());
+        }
+
+        if (url.pathname === "/api/speech/transcribe") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const audio = new Uint8Array(await request.arrayBuffer());
+          if (audio.byteLength === 0) {
+            return json({ ok: false, message: "El body debe contener audio." }, { status: 400 });
+          }
+          if (audio.byteLength > MAX_SPEECH_AUDIO_BYTES) {
+            return json({ ok: false, message: "El audio supera el tamano maximo permitido." }, { status: 413 });
+          }
+
+          const result = await deps.speech.transcribe({
+            audio,
+            contentType: request.headers.get("content-type") ?? "",
+            lang: url.searchParams.get("lang") ?? undefined,
+          });
+
+          if (result.ok === false) {
+            const speechStatus = result.code === "unavailable" ? 503 : result.code === "unsupported-media" ? 400 : 500;
+            return json(result, { status: speechStatus });
+          }
+
+          return json(result);
         }
 
         if (url.pathname === "/api/agent/memory/events") {
@@ -1087,6 +1233,9 @@ export function startInstallerApiServer(
   const server = Bun.serve({
     hostname: options.hostname ?? INSTALLER_API_HOST,
     port: options.port ?? INSTALLER_API_PORT,
+    // Pi chat turns hold the request open while the agent runs tools, so the
+    // default 10s idle timeout would kill them mid-turn. 0 disables it.
+    idleTimeout: 0,
     fetch: handler.fetch,
   });
 

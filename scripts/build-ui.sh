@@ -64,7 +64,7 @@ install_whisper_cpp() {
 
   local work_dir
   work_dir="$(mktemp -d)"
-  trap 'rm -rf "${work_dir}"' EXIT
+  trap 'rm -rf "${work_dir:-}"' EXIT
 
   echo "Building whisper.cpp ${WHISPER_CPP_REF} and installing multilingual base model..."
   mkdir -p "${WHISPER_OUTPUT_DIR}/models" "${WHISPER_OUTPUT_DIR}/lib"
@@ -248,15 +248,10 @@ printf '%s\n' \
   'export ELECTRON_OZONE_PLATFORM_HINT=auto' \
   'export TMPDIR="${RUNTIME_DIR}"' \
   '' \
-  'ensure_api() {' \
-  '  attempts=0' \
-  '  while [ "${attempts}" -lt 20 ]; do' \
-  '    if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
-  '      return 0' \
-  '    fi' \
-  '    attempts=$((attempts + 1))' \
-  '    sleep 0.25' \
-  '  done' \
+  'start_api() {' \
+  '  if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
+  '    return 0' \
+  '  fi' \
   '' \
   '  if [ ! -x "${INSTALLER_BIN}" ]; then' \
   '    echo "No se encontró el broker empaquetado en ${INSTALLER_BIN}." >&2' \
@@ -276,21 +271,9 @@ printf '%s\n' \
   '    "${INSTALLER_BIN}" server >>"${API_LOG}" 2>&1 &' \
   '    echo "$!" > "${API_PID_FILE}"' \
   '  fi' \
-  '' \
-  '  attempts=0' \
-  '  while [ "${attempts}" -lt 40 ]; do' \
-  '    if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
-  '      return 0' \
-  '    fi' \
-  '    attempts=$((attempts + 1))' \
-  '    sleep 0.25' \
-  '  done' \
-  '' \
-  '  echo "El API local no respondió en ${API_URL}. Revisa ${API_LOG}." >&2' \
-  '  return 1' \
   '}' \
   '' \
-  'ensure_api || true' \
+  'start_api || true' \
   'exec flock -n "${LOCK_FILE}" "${ELECTRON_BIN}" "${ELECTRON_APP}" \' \
   '  --no-sandbox \' \
   '  --disable-dev-shm-usage \' \

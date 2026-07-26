@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
     submitManualCode: vi.fn(),
     logout: vi.fn(),
     sendMessage: vi.fn(),
+    startTurn: vi.fn(),
+    getTurn: vi.fn(),
+    getLatestTurn: vi.fn(),
+    listTurns: vi.fn(),
   },
   networkClient: {
     getStatus: vi.fn(),
@@ -69,6 +73,11 @@ vi.mock("../../network/client", () => ({
 
 vi.mock("./lib/speech-recognition", () => ({
   createSpeechRecognitionController: () => ({
+    supported: false,
+    start: vi.fn(),
+    dispose: vi.fn(),
+  }),
+  createPreferredSpeechRecognitionController: async () => ({
     supported: false,
     start: vi.fn(),
     dispose: vi.fn(),
@@ -144,6 +153,8 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  mocks.piClient.getLatestTurn.mockResolvedValue(null);
+  mocks.piClient.listTurns.mockResolvedValue([]);
   mocks.networkClient.getStatus.mockResolvedValue(onlineNetworkStatus);
   mocks.networkClient.listAccessPoints.mockResolvedValue({ ok: true, accessPoints: [] });
   mocks.networkClient.scanWifi.mockResolvedValue({ ok: true });
@@ -251,16 +262,31 @@ describe("App chat recovery", () => {
     expect(screen.getByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeDisabled();
   });
 
-  test("sends app launch requests to the foreground model", async () => {
+  test("sends app launch requests to the foreground model as async turns", async () => {
+    const baseTurn = {
+      turnId: "turn_1",
+      source: "text" as const,
+      input: "abre Chrome",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "",
+        currentTool: null,
+        completedTools: [],
+      },
+    };
+
     mocks.piClient.getStatus.mockResolvedValue({
       ...disconnectedStatus,
       authState: "connected",
     });
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
-    mocks.piClient.sendMessage.mockResolvedValue({
-      ok: true,
+    mocks.piClient.startTurn.mockResolvedValue({ ...baseTurn, status: "processing" });
+    mocks.piClient.getTurn.mockResolvedValue({
+      ...baseTurn,
+      status: "succeeded",
+      finishedAt: "2026-07-03T12:00:05.000Z",
       reply: "Abriendo Chrome.",
-      provider: "openai-codex",
       modelId: "gpt-5.4-mini",
     });
 
@@ -271,10 +297,45 @@ describe("App chat recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
     await waitFor(() => {
-      expect(mocks.piClient.sendMessage).toHaveBeenCalledWith("abre Chrome", "text");
+      expect(mocks.piClient.startTurn).toHaveBeenCalledWith("abre Chrome", "text");
+    });
+    await waitFor(() => {
+      expect(mocks.piClient.getTurn).toHaveBeenCalledWith("turn_1");
     });
     expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
     expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
+  });
+
+  test("resumes a processing turn after the renderer reloads", async () => {
+    const processingTurn = {
+      turnId: "turn_resume",
+      status: "processing" as const,
+      source: "text" as const,
+      input: "configura openclaw",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "Voy a configurar OpenClaw.",
+        currentTool: "openclaw_setup",
+        completedTools: [],
+      },
+    };
+
+    mocks.piClient.getStatus.mockResolvedValue({
+      ...disconnectedStatus,
+      authState: "connected",
+    });
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.piClient.listTurns.mockResolvedValue([processingTurn]);
+    mocks.piClient.getTurn.mockResolvedValue(processingTurn);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mocks.piClient.getTurn).toHaveBeenCalledWith("turn_resume");
+    });
+    expect(await screen.findByText("Voy a configurar OpenClaw.")).toBeInTheDocument();
+    expect(screen.getByText("configura openclaw")).toBeInTheDocument();
   });
 
   test("shows the workspace system bar and focuses workspace clicks", async () => {

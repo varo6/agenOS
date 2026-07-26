@@ -197,6 +197,14 @@ function normalizeSetup(setup: Partial<OpenClawSetupState>): OpenClawSetupState 
       profile: null,
       loginAvailable: false,
       lastError: null,
+      login: {
+        status: "idle",
+        url: null,
+        userCode: null,
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+      },
     },
     telegram: setup.telegram ?? {
       enabled: false,

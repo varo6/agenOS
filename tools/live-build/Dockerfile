@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
     dosfstools \
     file \
     gdisk \
+    git \
     gnupg \
     grub-efi-amd64-bin \
     grub-pc-bin \

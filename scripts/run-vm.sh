@@ -113,7 +113,13 @@ resolve_ovmf() {
     return 1
   fi
 
-  vars_copy="${STATE_DIR}/${VM_NAME}.ovmf-vars.fd"
+  if [[ "${MODE}" == "live" ]]; then
+    vars_copy="${STATE_DIR}/${VM_NAME}-live.ovmf-vars.fd"
+    cp "${vars_template}" "${vars_copy}"
+  else
+    vars_copy="${STATE_DIR}/${VM_NAME}.ovmf-vars.fd"
+  fi
+
   if [[ ! -f "${vars_copy}" ]]; then
     cp "${vars_template}" "${vars_copy}"
   fi
@@ -125,12 +131,14 @@ resolve_ovmf() {
 
 reset_vm_state() {
   local vars_copy="${STATE_DIR}/${VM_NAME}.ovmf-vars.fd"
+  local live_vars_copy="${STATE_DIR}/${VM_NAME}-live.ovmf-vars.fd"
 
-  rm -f "${VM_DISK}" "${VM_PERSIST_DISK}" "${vars_copy}"
+  rm -f "${VM_DISK}" "${VM_PERSIST_DISK}" "${vars_copy}" "${live_vars_copy}"
   echo "Estado de la VM eliminado:"
   echo "  - disco: ${VM_DISK}"
   echo "  - persistencia live: ${VM_PERSIST_DISK}"
   echo "  - nvram: ${vars_copy}"
+  echo "  - nvram live: ${live_vars_copy}"
 }
 
 prepare_disk() {
@@ -263,7 +271,7 @@ build_qemu_args() {
 
   if [[ "${MODE}" == "live" ]]; then
     QEMU_ARGS+=(
-      -boot order=d,menu=on
+      -boot order=d,once=d,menu=on
       -drive "file=${ISO_PATH},media=cdrom,if=ide"
     )
     if [[ "${VM_LIVE_PERSISTENCE}" == "1" || "${VM_LIVE_PERSISTENCE}" == "true" || "${VM_LIVE_PERSISTENCE}" == "yes" ]]; then

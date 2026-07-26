@@ -132,6 +132,16 @@ async function runAgentWorkerLoop(): Promise<void> {
   const health = await adapter.health();
   console.log(`[agenos-openclaw-worker] mode=${health.mode} active=${health.serviceActive} stateDir=${health.stateDir}`);
 
+  let gateway: { stop: () => void } | null = null;
+  if (health.mode === "openclaw-process" && hasGatewaySupervisor(adapter)) {
+    try {
+      gateway = adapter.superviseGateway();
+      console.log("[agenos-openclaw-worker] supervisando gateway de OpenClaw");
+    } catch (error) {
+      console.error(`[agenos-openclaw-worker] no se pudo iniciar el gateway: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const interval = setInterval(async () => {
     try {
       await adapter.health();
@@ -143,12 +153,17 @@ async function runAgentWorkerLoop(): Promise<void> {
   await new Promise<void>((resolve) => {
     const stop = () => {
       clearInterval(interval);
+      gateway?.stop();
       resolve();
     };
 
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
   });
+}
+
+function hasGatewaySupervisor(adapter: unknown): adapter is { superviseGateway: () => { stop: () => void } } {
+  return typeof (adapter as { superviseGateway?: unknown }).superviseGateway === "function";
 }
 
 async function main(): Promise<void> {

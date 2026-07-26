@@ -35,14 +35,9 @@ type CommandResult = {
 };
 
 let mainWindow: BrowserWindow | null = null;
-const piHarness = createPiHarness(undefined, {
-  onAuth: (info, attempt) => {
-    if (attempt.method === "browser") {
-      openExternalUrl(info.url);
-    }
-  },
-});
 const networkService = createNetworkManagerService();
+type PiHarnessInstance = ReturnType<typeof createPiHarness>;
+let piHarness: PiHarnessInstance | null = null;
 
 function configureCommandLine(): void {
   if (GPU_MODE === "off") {
@@ -195,6 +190,20 @@ function openExternalUrl(url: string): void {
     console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
     void shell.openExternal(url);
   }
+}
+
+function getPiHarness(): PiHarnessInstance {
+  if (!piHarness) {
+    piHarness = createPiHarness(undefined, {
+      onAuth: (info, attempt) => {
+        if (attempt.method === "browser") {
+          openExternalUrl(info.url);
+        }
+      },
+    });
+  }
+
+  return piHarness;
 }
 
 function isHttpUrl(input: string): boolean {
@@ -471,26 +480,26 @@ function registerIpcHandlers(): void {
     version: app.getVersion(),
   }));
 
-  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => piHarness.getStatus()));
+  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiHarness().getStatus()));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(() => {
     const method = String(payload?.method ?? "device");
     if (method !== "device" && method !== "browser") {
       throw new PiHarnessError(400, "El metodo de login debe ser device o browser.");
     }
 
-    return piHarness.startAuth(method);
+    return getPiHarness().startAuth(method);
   }));
   ipcMain.handle(PI_IPC_CHANNELS.cancelAuth, (_event, payload: { attemptId?: unknown }) => wrapPi(() => {
-    piHarness.cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
+    getPiHarness().cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
   }));
   ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(() => (
-    piHarness.getAuthAttempt(String(payload.attemptId ?? ""))
+    getPiHarness().getAuthAttempt(String(payload.attemptId ?? ""))
   )));
   ipcMain.handle(PI_IPC_CHANNELS.submitManualCode, (_event, payload: { attemptId?: unknown; input?: unknown }) => wrapPi(() => (
-    piHarness.submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
+    getPiHarness().submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
   )));
   ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(() => {
-    piHarness.logout();
+    getPiHarness().logout();
   }));
   ipcMain.handle(PI_IPC_CHANNELS.sendMessage, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(() => {
     const source = String(payload.source ?? "");
@@ -498,11 +507,29 @@ function registerIpcHandlers(): void {
       throw new PiHarnessError(400, "El origen debe ser text o voice.");
     }
 
-    return piHarness.chat({
+    return getPiHarness().chat({
       message: String(payload.message ?? ""),
       source: source as PiChatSource,
     });
   }));
+  ipcMain.handle(PI_IPC_CHANNELS.startTurn, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(() => {
+    const source = String(payload.source ?? "");
+    if (source !== "text" && source !== "voice") {
+      throw new PiHarnessError(400, "El origen debe ser text o voice.");
+    }
+
+    return getPiHarness().startChat({
+      message: String(payload.message ?? ""),
+      source: source as PiChatSource,
+    });
+  }));
+  ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
+    getPiHarness().getTurn(String(payload.turnId ?? ""))
+  )));
+  ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(() => getPiHarness().getLatestTurn()));
+  ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(() => (
+    getPiHarness().listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
+  )));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
 
@@ -546,7 +573,7 @@ function createMainWindow(): void {
 
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    show: false,
+    show: true,
     backgroundColor: "#090b12",
     autoHideMenuBar: true,
     fullscreen: true,

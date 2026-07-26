@@ -14,11 +14,10 @@ input * {
 
 output * bg #14100d solid_color
 
+# Los workspaces en sway se crean bajo demanda; un "workspace N" suelto aqui
+# cambiaria el workspace activo durante el arranque y dejaria la pantalla en
+# un workspace vacio (color solido). Solo fijamos el inicial.
 workspace 1:home
-workspace 2:app
-workspace 3:web
-workspace 4:media
-workspace 5:work
 
 for_window [workspace="2:app"] fullscreen enable
 for_window [workspace="3:web"] fullscreen enable
@@ -29,6 +28,9 @@ for_window [class="^(Chromium|Google-chrome|Google-chrome-stable)$"] move to wor
 for_window [app_id="^foot$"] move to workspace "5:work", focus
 for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
 for_window [title="AgenOS Installer"] move to workspace "1:home"
+for_window [app_id="^(electron|Electron|agenos-system-ui)$"] move to workspace "1:home"
+for_window [title="^AgenOS$"] move to workspace "1:home"
+for_window [title="^AgenOS Live System$"] move to workspace "1:home"
 
 bindsym Ctrl+Alt+1 workspace 1:home
 bindsym Ctrl+Alt+2 workspace 2:app
