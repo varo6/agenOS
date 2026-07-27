@@ -53,6 +53,29 @@ describe("workspace service", () => {
     });
   });
 
+  test("waits for a detached launcher focus command before returning", () => {
+    const calls: Array<[string, string[]]> = [];
+    let reads = 0;
+    const service = createWorkspaceService({
+      env: { SWAYSOCK: "/run/user/1000/sway.sock" },
+      commandExists: (command) => command === "swaymsg",
+      spawnCommand: (command, args) => calls.push([command, args]),
+      queryCommandSync: () => {
+        reads += 1;
+        return reads < 3
+          ? '[{"name":"1:home","focused":true}]'
+          : '[{"name":"5:work","focused":true}]';
+      },
+    });
+
+    expect(service.focusWorkspaceSync({ workspace: 5, source: "system" })).toMatchObject({
+      ok: true,
+      activeWorkspace: 5,
+    });
+    expect(calls).toEqual([["swaymsg", ["workspace", "5:work"]]]);
+    expect(reads).toBe(3);
+  });
+
   test("returns a structured failure outside Sway", async () => {
     const service = createWorkspaceService({ env: {}, commandExists: () => true });
     await expect(service.focusWorkspace({ workspace: 2 })).resolves.toEqual({

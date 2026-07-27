@@ -39,11 +39,15 @@ type SpawnOptions = {
 type WorkspaceStateListener = (state: WorkspaceStateChange) => void;
 type SubscribeCommand = (onLine: (line: string) => void, onExit: () => void) => () => void;
 
+const ASYNC_FOCUS_CONFIRM_ATTEMPTS = 8;
+const ASYNC_FOCUS_CONFIRM_INTERVAL_MS = 20;
+
 export type WorkspaceServiceOptions = {
   env?: NodeJS.ProcessEnv;
   commandExists?: (command: string) => boolean;
   spawnCommand?: (command: string, args: string[], options: SpawnOptions) => void;
   runCommandSync?: (command: string, args: string[], options: SpawnOptions) => string;
+  queryCommandSync?: (command: string, args: string[], options: SpawnOptions) => string;
   subscribeCommand?: SubscribeCommand;
 };
 
@@ -204,6 +208,7 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
   const env = resolveGraphicalSessionEnv(options.env ?? process.env);
   const commandExists = options.commandExists ?? defaultCommandExists;
   const runCommandSync = options.runCommandSync ?? defaultRunCommandSync;
+  const queryCommandSync = options.queryCommandSync ?? runCommandSync;
   const subscribeCommand = options.subscribeCommand ?? createSwaySubscription(env);
   const listeners = new Set<WorkspaceStateListener>();
   let stopSubscription: (() => void) | undefined;
@@ -215,12 +220,31 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
     }
 
     try {
-      const output = runCommandSync("swaymsg", ["-t", "get_workspaces"], { env });
+      const output = queryCommandSync("swaymsg", ["-t", "get_workspaces"], { env });
       const workspaces = JSON.parse(output) as Array<{ name?: string; focused?: boolean }>;
       return parseWorkspaceName(workspaces.find((workspace) => workspace.focused)?.name);
     } catch {
       return undefined;
     }
+  }
+
+  function confirmActiveWorkspace(workspace: WorkspaceNumber, attempts: number): WorkspaceNumber | undefined {
+    let activeWorkspace: WorkspaceNumber | undefined;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      activeWorkspace = readActiveWorkspace();
+      if (activeWorkspace === workspace) {
+        return activeWorkspace;
+      }
+      if (attempt + 1 < attempts) {
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+          0,
+          0,
+          ASYNC_FOCUS_CONFIRM_INTERVAL_MS,
+        );
+      }
+    }
+    return activeWorkspace;
   }
 
   function listWorkspaces(activeWorkspace: WorkspaceNumber | undefined = readActiveWorkspace()): WorkspaceListResponse {
@@ -299,7 +323,10 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
       };
     }
 
-    const activeWorkspace = readActiveWorkspace();
+    const activeWorkspace = confirmActiveWorkspace(
+      workspace,
+      options.spawnCommand && !options.runCommandSync ? ASYNC_FOCUS_CONFIRM_ATTEMPTS : 1,
+    );
     if (activeWorkspace !== workspace) {
       return {
         ok: false,
