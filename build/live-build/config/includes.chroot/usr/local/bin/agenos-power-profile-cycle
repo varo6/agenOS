@@ -1,0 +1,35 @@
+#!/bin/sh
+set -eu
+
+current="$(powerprofilesctl get)"
+available="$(LC_ALL=C powerprofilesctl list)"
+
+profile_available() {
+    printf '%s\n' "${available}" | grep -Eq "^[*[:space:]]*${1}:"
+}
+
+case "${current}" in
+    balanced)
+        if profile_available power-saver; then
+            next="power-saver"
+        elif profile_available performance; then
+            next="performance"
+        else
+            next="balanced"
+        fi
+        ;;
+    power-saver)
+        if profile_available performance; then
+            next="performance"
+        else
+            next="balanced"
+        fi
+        ;;
+    *)
+        next="balanced"
+        ;;
+esac
+
+powerprofilesctl set "${next}"
+logger -t agenos-power-profile "Perfil de energía: ${next}"
+notify-send --app-name="AgenOS" --expire-time=2500 "Perfil de energía" "${next}" 2>/dev/null || true

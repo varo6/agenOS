@@ -5,6 +5,17 @@ INSTALLER_APP="/usr/local/bin/agenos-installer-app"
 SYSTEM_APP="/usr/local/bin/agenos-system-app"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-installer"
 MODE_FILE="${RUNTIME_DIR}/shell-mode"
+SESSION_HELPER_LOG="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/agenos-session-helpers.log"
+
+start_session_helpers() {
+  if command -v mako >/dev/null 2>&1; then
+    mako >>"${SESSION_HELPER_LOG}" 2>&1 &
+  fi
+
+  if command -v agenos-battery-monitor >/dev/null 2>&1; then
+    agenos-battery-monitor >>"${SESSION_HELPER_LOG}" 2>&1 &
+  fi
+}
 
 is_live_session() {
   if [ -e /run/live/medium ]; then
@@ -43,6 +54,8 @@ launch_system() {
   swaymsg workspace "1:home" >/dev/null 2>&1 || true
   "${SYSTEM_APP}"
 }
+
+start_session_helpers
 
 while true; do
   mode="$(resolve_mode)"
