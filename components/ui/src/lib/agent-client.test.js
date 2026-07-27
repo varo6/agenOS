@@ -141,6 +141,35 @@ describe("agent client", () => {
     expect(JSON.parse(payload)).toEqual({ workspace: 2, source: "ui" });
   });
 
+  test("subscribes to pushed workspace state and closes the stream", () => {
+    let requestedUrl = "";
+    let closed = false;
+    const eventSource = {
+      onmessage: null,
+      close() {
+        closed = true;
+      },
+    };
+    const client = createAgentClient({
+      baseUrl: "http://agent.test",
+      eventSourceFactory: (url) => {
+        requestedUrl = url;
+        return eventSource;
+      },
+    });
+    const states = [];
+
+    const unsubscribe = client.subscribeWorkspaceChanges((state) => states.push(state));
+    eventSource.onmessage({
+      data: JSON.stringify({ ok: true, activeWorkspace: 5, workspaces: [] }),
+    });
+
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces/events");
+    expect(states).toEqual([{ ok: true, activeWorkspace: 5, workspaces: [] }]);
+    unsubscribe();
+    expect(closed).toBe(true);
+  });
+
   test("uses the real packaged broker from file and Vite dev origins", async () => {
     const requests = [];
     globalThis.fetch = async (input) => {
