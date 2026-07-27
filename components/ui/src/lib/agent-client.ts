@@ -18,6 +18,7 @@ type ErrorPayload = {
 
 export type AgentClientOptions = {
   baseUrl?: string;
+  eventSourceFactory?: (url: string) => EventSource;
 };
 
 function isViteDevOrigin(location: Location): boolean {
@@ -108,6 +109,25 @@ export function createAgentClient(options: AgentClientOptions = {}) {
     },
     listWorkspaces(): Promise<AgentWorkspaceListResponse> {
       return requestJson<AgentWorkspaceListResponse>(baseUrl, "/api/agent/workspaces");
+    },
+    subscribeWorkspaceChanges(onChange: (state: AgentWorkspaceListResponse) => void): () => void {
+      const createEventSource = options.eventSourceFactory
+        ?? ((url: string) => new EventSource(url));
+      const eventSource = createEventSource(new URL("/api/agent/workspaces/events", `${baseUrl}/`).toString());
+      eventSource.onmessage = (event) => {
+        try {
+          const state = JSON.parse(event.data) as AgentWorkspaceListResponse;
+          if (state.ok === true && Array.isArray(state.workspaces)) {
+            onChange(state);
+          }
+        } catch {
+          // EventSource reconnects automatically; ignore malformed individual frames.
+        }
+      };
+
+      return () => {
+        eventSource.close();
+      };
     },
     focusWorkspace(workspace: AgentWorkspaceNumber): Promise<AgentWorkspaceFocusResponse> {
       return requestJson<AgentWorkspaceFocusResponse>(baseUrl, "/api/agent/workspaces/focus", {

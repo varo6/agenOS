@@ -14,6 +14,27 @@ input * {
 
 output * bg #14100d solid_color
 
+# Swaybar es una superficie nativa y sigue visible cuando un workspace esta
+# vacio. Asi el fondo solido nunca se puede confundir con un bloqueo del sistema.
+bar {
+  position top
+  mode dock
+  workspace_buttons yes
+  binding_mode_indicator no
+  status_command /usr/local/bin/agenos-workspace-watch --status
+  font pango:monospace 11
+
+  colors {
+    background #0d0b0a
+    statusline #f5eee8
+    separator #6f625b
+    focused_workspace #d68c45 #d68c45 #14100d
+    active_workspace #51443d #51443d #f5eee8
+    inactive_workspace #241e1a #241e1a #a99b92
+    urgent_workspace #b91c1c #b91c1c #ffffff
+  }
+}
+
 # Los workspaces en sway se crean bajo demanda; un "workspace N" suelto aqui
 # cambiaria el workspace activo durante el arranque y dejaria la pantalla en
 # un workspace vacio (color solido). Solo fijamos el inicial.
@@ -40,5 +61,6 @@ bindsym Ctrl+Alt+5 workspace 5:work
 bindsym Ctrl+Alt+Return exec /usr/local/bin/agenos-shell-helper terminal
 bindsym Ctrl+Alt+r exec /usr/local/bin/agenos-shell-helper reload-shell
 
-exec_always --no-startup-id /usr/local/bin/agenos-workspace-watch
+# Solo una suscripcion por sesion; exec_always duplicaba el watcher en cada reload.
+exec --no-startup-id /usr/local/bin/agenos-workspace-watch
 exec_always --no-startup-id sh /usr/local/bin/agenos-shell-runner

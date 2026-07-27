@@ -444,6 +444,15 @@ export default function App() {
     };
   }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
 
+  useEffect(() => agentClient.subscribeWorkspaceChanges((state) => {
+    if (state.workspaces.length > 0) {
+      setWorkspaces(state.workspaces);
+    }
+    if (state.activeWorkspace) {
+      setActiveWorkspace(state.activeWorkspace);
+    }
+  }), []);
+
   useEffect(() => {
     if (!pendingAttempt) {
       return;
@@ -612,8 +621,6 @@ export default function App() {
   }
 
   async function handleWorkspaceFocus(workspace: AgentWorkspaceNumber) {
-    const previousWorkspace = activeWorkspace;
-    setActiveWorkspace(workspace);
     setGlobalError(null);
 
     try {
@@ -623,15 +630,11 @@ export default function App() {
       }
       if (response.activeWorkspace) {
         setActiveWorkspace(response.activeWorkspace);
-      } else if (response.ok) {
-        setActiveWorkspace(workspace);
       }
       if (!response.ok) {
-        setActiveWorkspace(previousWorkspace);
         setGlobalError(response.message ?? "No se pudo cambiar de workspace.");
       }
     } catch (error) {
-      setActiveWorkspace(previousWorkspace);
       setGlobalError(describeClientError(error));
     }
   }
@@ -696,6 +699,7 @@ export default function App() {
             {workspaces.map((workspace) => (
               <button
                 aria-label={`Workspace ${workspace.number} ${workspace.label}`}
+                aria-current={activeWorkspace === workspace.number ? "page" : undefined}
                 className={[
                   "grid h-8 w-8 place-items-center rounded text-sm font-medium transition-colors",
                   activeWorkspace === workspace.number

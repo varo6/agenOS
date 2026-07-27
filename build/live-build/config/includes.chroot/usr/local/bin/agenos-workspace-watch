@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
 import json
+import queue
 import subprocess
+import sys
+import threading
 import time
+from dataclasses import dataclass, replace
+from typing import Any, Mapping
 
 
 HOME_WORKSPACE = "1:home"
 APP_WORKSPACES = {"2:app", "3:web", "4:media", "5:work"}
+EMPTY_CHECK_DELAY_SECONDS = 0.075
+TREE_REFRESH_DELAY_SECONDS = 0.025
+RESTART_DELAY_SECONDS = 1.0
+
+ACTION_RECORD_FOCUS = "record-focus"
+ACTION_CANCEL_EMPTY_CHECK = "cancel-empty-check"
+ACTION_REFRESH_TREE = "refresh-tree"
+ACTION_SCHEDULE_EMPTY_CHECK = "schedule-empty-check"
+ACTION_RETURN_HOME = "return-home"
+
+
+@dataclass(frozen=True)
+class WorkspaceSnapshot:
+    focused_workspace: str | None
+    workspaces_with_views: frozenset[str]
+    window_workspaces: Mapping[int, str]
 
 
 def run_swaymsg(*args: str) -> str:
@@ -37,70 +58,252 @@ def focused_workspace(tree):
     return None
 
 
+def is_view(node) -> bool:
+    return (
+        node.get("type") in ("con", "floating_con")
+        and bool(node.get("app_id") or node.get("window") or node.get("pid"))
+    )
+
+
 def workspace_has_views(workspace) -> bool:
     if not workspace:
         return False
 
-    for node in walk(workspace):
-        if node is workspace:
-            continue
-        if node.get("type") not in ("con", "floating_con"):
-            continue
-        if node.get("app_id") or node.get("window") or node.get("pid"):
-            return True
-
-    return False
+    return any(node is not workspace and is_view(node) for node in walk(workspace))
 
 
-def empty_focused_app_workspace():
-    tree = get_tree()
-    focused = focused_workspace(tree)
-    if focused not in APP_WORKSPACES:
-        return None
+def snapshot_from_tree(tree) -> WorkspaceSnapshot:
+    workspaces_with_views: set[str] = set()
+    window_workspaces: dict[int, str] = {}
 
-    if workspace_has_views(workspace_named(tree, focused)):
-        return None
+    def visit(node, workspace: str | None = None) -> None:
+        current_workspace = workspace
+        if node.get("type") == "workspace" and isinstance(node.get("name"), str):
+            current_workspace = node["name"]
 
-    return focused
+        if current_workspace is not None and is_view(node):
+            workspaces_with_views.add(current_workspace)
+            container_id = node.get("id")
+            if isinstance(container_id, int):
+                window_workspaces[container_id] = current_workspace
+
+        for key in ("nodes", "floating_nodes"):
+            for child in node.get(key, []):
+                visit(child, current_workspace)
+
+    visit(tree)
+    return WorkspaceSnapshot(
+        focused_workspace=focused_workspace(tree),
+        workspaces_with_views=frozenset(workspaces_with_views),
+        window_workspaces=window_workspaces,
+    )
 
 
-def return_home_if_app_workspace_is_empty() -> None:
-    # Let Sway finish processing close/move/focus batches before inspecting the tree.
-    time.sleep(0.15)
-    focused = empty_focused_app_workspace()
-    if focused is None:
-        return
+def get_snapshot() -> WorkspaceSnapshot:
+    return snapshot_from_tree(get_tree())
 
-    # Grace period: an AI/app launch focuses the target workspace before the
-    # window maps, so wait and confirm the workspace is still focused and empty
-    # before bouncing back home.
-    time.sleep(2.0)
-    if empty_focused_app_workspace() != focused:
-        return
 
-    subprocess.run(["swaymsg", "workspace", HOME_WORKSPACE], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def decide_actions(event: Mapping[str, Any], snapshot: WorkspaceSnapshot) -> tuple[dict[str, str], ...]:
+    """Return watcher actions without performing IPC or mutating state."""
+    change = event.get("change")
+    current = event.get("current")
+    container = event.get("container")
+
+    if change == "focus" and isinstance(current, Mapping):
+        workspace = current.get("name")
+        if isinstance(workspace, str):
+            return (
+                {"type": ACTION_RECORD_FOCUS, "workspace": workspace},
+                {"type": ACTION_CANCEL_EMPTY_CHECK},
+            )
+
+    if isinstance(container, Mapping):
+        if change in ("new", "move"):
+            return ({"type": ACTION_REFRESH_TREE},)
+
+        if change == "close":
+            container_id = container.get("id")
+            closed_workspace = (
+                snapshot.window_workspaces.get(container_id)
+                if isinstance(container_id, int)
+                else None
+            )
+            if closed_workspace is None and container.get("focused") is True:
+                closed_workspace = snapshot.focused_workspace
+
+            if (
+                closed_workspace in APP_WORKSPACES
+                and closed_workspace == snapshot.focused_workspace
+            ):
+                return ({"type": ACTION_SCHEDULE_EMPTY_CHECK, "workspace": closed_workspace},)
+
+        return ()
+
+    if change == "empty-check":
+        workspace = event.get("workspace")
+        if (
+            isinstance(workspace, str)
+            and workspace in APP_WORKSPACES
+            and workspace == snapshot.focused_workspace
+            and workspace not in snapshot.workspaces_with_views
+        ):
+            return ({"type": ACTION_RETURN_HOME},)
+
+    return ()
+
+
+def workspace_status_text(workspace: str | None) -> str:
+    labels = {
+        "1:home": "Home · voz y agente",
+        "2:app": "Apps · vacio hasta que abras una aplicacion · Ctrl+Alt+1: Home",
+        "3:web": "Web · vacio hasta que abras el navegador · Ctrl+Alt+1: Home",
+        "4:media": "Media · vacio hasta que abras contenido · Ctrl+Alt+1: Home",
+        "5:work": "Work · vacio hasta que abras una herramienta · Ctrl+Alt+1: Home",
+    }
+    return labels.get(workspace, f"{workspace or 'AgenOS'} · Ctrl+Alt+1: Home")
+
+
+def start_subscription(events: list[str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        ["swaymsg", "-t", "subscribe", json.dumps(events)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    )
+
+
+def read_events(process: subprocess.Popen, output: queue.Queue) -> None:
+    assert process.stdout is not None
+    try:
+        for line in process.stdout:
+            if not line.strip():
+                continue
+            try:
+                output.put(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    finally:
+        output.put(None)
+
+
+def return_home() -> None:
+    subprocess.Popen(
+        ["swaymsg", "workspace", HOME_WORKSPACE],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def run_watch_subscription() -> None:
+    process = start_subscription(["window", "workspace"])
+    event_queue: queue.Queue = queue.Queue()
+    reader = threading.Thread(target=read_events, args=(process, event_queue), daemon=True)
+    reader.start()
+
+    snapshot = get_snapshot()
+    pending_workspace: str | None = None
+    pending_deadline: float | None = None
+    refresh_deadline: float | None = None
+
+    try:
+        while True:
+            deadlines = [deadline for deadline in (pending_deadline, refresh_deadline) if deadline is not None]
+            timeout = max(0.0, min(deadlines) - time.monotonic()) if deadlines else None
+
+            try:
+                event = event_queue.get(timeout=timeout)
+            except queue.Empty:
+                event = ...
+
+            if event is None:
+                return
+
+            if event is not ...:
+                actions = decide_actions(event, snapshot)
+                for action in actions:
+                    action_type = action["type"]
+                    if action_type == ACTION_RECORD_FOCUS:
+                        snapshot = replace(snapshot, focused_workspace=action["workspace"])
+                    elif action_type == ACTION_CANCEL_EMPTY_CHECK:
+                        pending_workspace = None
+                        pending_deadline = None
+                    elif action_type == ACTION_REFRESH_TREE:
+                        refresh_deadline = time.monotonic() + TREE_REFRESH_DELAY_SECONDS
+                    elif action_type == ACTION_SCHEDULE_EMPTY_CHECK:
+                        pending_workspace = action["workspace"]
+                        pending_deadline = time.monotonic() + EMPTY_CHECK_DELAY_SECONDS
+
+                if event.get("change") in ("close", "move") and isinstance(event.get("container"), Mapping):
+                    container_id = event["container"].get("id")
+                    if isinstance(container_id, int):
+                        remaining_windows = dict(snapshot.window_workspaces)
+                        remaining_windows.pop(container_id, None)
+                        snapshot = replace(snapshot, window_workspaces=remaining_windows)
+
+            now = time.monotonic()
+            if refresh_deadline is not None and now >= refresh_deadline:
+                snapshot = get_snapshot()
+                refresh_deadline = None
+
+            if pending_deadline is not None and now >= pending_deadline:
+                workspace = pending_workspace
+                pending_workspace = None
+                pending_deadline = None
+                snapshot = get_snapshot()
+                if workspace is not None:
+                    for action in decide_actions({"change": "empty-check", "workspace": workspace}, snapshot):
+                        if action["type"] == ACTION_RETURN_HOME:
+                            return_home()
+    finally:
+        if process.poll() is None:
+            process.terminate()
 
 
 def subscribe_forever() -> None:
     while True:
         try:
-            return_home_if_app_workspace_is_empty()
-            process = subprocess.Popen(
-                ["swaymsg", "-t", "subscribe", '["window", "workspace"]'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-
-            assert process.stdout is not None
-            for line in process.stdout:
-                if line.strip():
-                    return_home_if_app_workspace_is_empty()
-
-            process.wait(timeout=1)
+            run_watch_subscription()
         except Exception:
-            time.sleep(1)
+            pass
+        threading.Event().wait(RESTART_DELAY_SECONDS)
+
+
+def emit_status(workspace: str | None) -> None:
+    print(workspace_status_text(workspace), flush=True)
+
+
+def run_status_subscription() -> None:
+    emit_status(get_snapshot().focused_workspace)
+    process = start_subscription(["workspace"])
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("change") != "focus" or not isinstance(event.get("current"), Mapping):
+                continue
+            workspace = event["current"].get("name")
+            if isinstance(workspace, str):
+                emit_status(workspace)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+
+
+def status_forever() -> None:
+    while True:
+        try:
+            run_status_subscription()
+        except Exception:
+            pass
+        threading.Event().wait(RESTART_DELAY_SECONDS)
 
 
 if __name__ == "__main__":
-    subscribe_forever()
+    if sys.argv[1:] == ["--status"]:
+        status_forever()
+    else:
+        subscribe_forever()

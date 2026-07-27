@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import App from "./App";
 
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     delegateBackgroundTask: vi.fn(),
     openApp: vi.fn(),
     listWorkspaces: vi.fn(),
+    subscribeWorkspaceChanges: vi.fn(),
     focusWorkspace: vi.fn(),
   },
   piClient: {
@@ -172,6 +173,7 @@ beforeEach(() => {
       { number: 5, name: "5:work", label: "Work" },
     ],
   });
+  mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(vi.fn());
 });
 
 describe("App chat recovery", () => {
@@ -341,19 +343,59 @@ describe("App chat recovery", () => {
   test("shows the workspace system bar and focuses workspace clicks", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
-    mocks.agentClient.focusWorkspace.mockResolvedValue({
-      ok: true,
-      activeWorkspace: 2,
-      workspaces: [],
-    });
+    let resolveFocus!: (response: { ok: boolean; activeWorkspace: number; workspaces: never[] }) => void;
+    mocks.agentClient.focusWorkspace.mockReturnValue(new Promise((resolve) => {
+      resolveFocus = resolve;
+    }));
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace 2 Apps" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workspace 1 Home" })).toHaveAttribute("aria-current", "page");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Workspace 2 Apps" }));
 
     await waitFor(() => {
       expect(mocks.agentClient.focusWorkspace).toHaveBeenCalledWith(2);
     });
+    expect(screen.getByRole("button", { name: "Workspace 1 Home" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Workspace 2 Apps" })).not.toHaveAttribute("aria-current");
+
+    await act(async () => {
+      resolveFocus({ ok: true, activeWorkspace: 2, workspaces: [] });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workspace 2 Apps" })).toHaveAttribute("aria-current", "page");
+    });
+  });
+
+  test("tracks keyboard and agent workspace changes from the Sway event stream", async () => {
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    const unsubscribe = vi.fn();
+    mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(unsubscribe);
+
+    const view = render(<App />);
+    await screen.findByRole("button", { name: "Workspace 1 Home" });
+    const listener = mocks.agentClient.subscribeWorkspaceChanges.mock.calls[0]?.[0];
+    act(() => {
+      listener?.({
+        ok: true,
+        activeWorkspace: 4,
+        workspaces: [
+          { number: 1, name: "1:home", label: "Home" },
+          { number: 4, name: "4:media", label: "Media" },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Workspace 4 Media" })).toHaveAttribute("aria-current", "page");
+    });
+    view.unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
 });

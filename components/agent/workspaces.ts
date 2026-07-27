@@ -30,14 +30,25 @@ export type WorkspaceFocusResponse = {
   activeWorkspace?: WorkspaceNumber;
 };
 
+export type WorkspaceStateChange = WorkspaceListResponse;
+
 type SpawnOptions = {
   env: NodeJS.ProcessEnv;
 };
+
+type WorkspaceStateListener = (state: WorkspaceStateChange) => void;
+type SubscribeCommand = (onLine: (line: string) => void, onExit: () => void) => () => void;
+
+const ASYNC_FOCUS_CONFIRM_ATTEMPTS = 8;
+const ASYNC_FOCUS_CONFIRM_INTERVAL_MS = 20;
 
 export type WorkspaceServiceOptions = {
   env?: NodeJS.ProcessEnv;
   commandExists?: (command: string) => boolean;
   spawnCommand?: (command: string, args: string[], options: SpawnOptions) => void;
+  runCommandSync?: (command: string, args: string[], options: SpawnOptions) => string;
+  queryCommandSync?: (command: string, args: string[], options: SpawnOptions) => string;
+  subscribeCommand?: SubscribeCommand;
 };
 
 export const WORKSPACES: WorkspaceDefinition[] = [
@@ -71,13 +82,56 @@ function defaultCommandExists(command: string): boolean {
     });
 }
 
-function defaultSpawnCommand(command: string, args: string[], options: SpawnOptions): void {
-  const child = spawn(command, args, {
-    detached: true,
+function defaultRunCommandSync(command: string, args: string[], options: SpawnOptions): string {
+  return execFileSync(command, args, {
     env: options.env,
-    stdio: "ignore",
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 1000,
   });
-  child.unref();
+}
+
+function createSwaySubscription(env: NodeJS.ProcessEnv): SubscribeCommand {
+  return (onLine, onExit) => {
+    const child = spawn("swaymsg", ["-t", "subscribe", '["workspace"]'], {
+      env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let buffer = "";
+    let exited = false;
+
+    const finish = () => {
+      if (exited) {
+        return;
+      }
+      exited = true;
+      onExit();
+    };
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffer += chunk;
+      while (true) {
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) {
+          break;
+        }
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) {
+          onLine(line);
+        }
+      }
+    });
+    child.once("error", finish);
+    child.once("close", finish);
+
+    return () => {
+      if (!child.killed) {
+        child.kill();
+      }
+    };
+  };
 }
 
 export function normalizeWorkspaceNumber(input: unknown): WorkspaceNumber {
@@ -129,10 +183,37 @@ function parseWorkspaceName(name: string | undefined): WorkspaceNumber | undefin
   return normalizeWorkspaceNumber(Number(match[1]));
 }
 
+export function parseWorkspaceFocusEvent(line: string): WorkspaceNumber | undefined {
+  try {
+    const event = JSON.parse(line) as { change?: unknown; current?: { name?: unknown } };
+    if (event.change !== "focus" || typeof event.current?.name !== "string") {
+      return undefined;
+    }
+    return parseWorkspaceName(event.current.name);
+  } catch {
+    return undefined;
+  }
+}
+
+function commandSucceeded(output: string): boolean {
+  try {
+    const results = JSON.parse(output) as Array<{ success?: unknown }>;
+    return Array.isArray(results) && results.length > 0 && results.every((result) => result.success === true);
+  } catch {
+    return false;
+  }
+}
+
 export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
   const env = resolveGraphicalSessionEnv(options.env ?? process.env);
   const commandExists = options.commandExists ?? defaultCommandExists;
-  const spawnCommand = options.spawnCommand ?? defaultSpawnCommand;
+  const runCommandSync = options.runCommandSync ?? defaultRunCommandSync;
+  const queryCommandSync = options.queryCommandSync ?? runCommandSync;
+  const subscribeCommand = options.subscribeCommand ?? createSwaySubscription(env);
+  const listeners = new Set<WorkspaceStateListener>();
+  let stopSubscription: (() => void) | undefined;
+  let activeSubscription: object | undefined;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function readActiveWorkspace(): WorkspaceNumber | undefined {
     if (!canUseSway(env, commandExists)) {
@@ -140,17 +221,31 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
     }
 
     try {
-      const output = execFileSync("swaymsg", ["-t", "get_workspaces"], {
-        env,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 1000,
-      });
+      const output = queryCommandSync("swaymsg", ["-t", "get_workspaces"], { env });
       const workspaces = JSON.parse(output) as Array<{ name?: string; focused?: boolean }>;
       return parseWorkspaceName(workspaces.find((workspace) => workspace.focused)?.name);
     } catch {
       return undefined;
     }
+  }
+
+  function confirmActiveWorkspace(workspace: WorkspaceNumber, attempts: number): WorkspaceNumber | undefined {
+    let activeWorkspace: WorkspaceNumber | undefined;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      activeWorkspace = readActiveWorkspace();
+      if (activeWorkspace === workspace) {
+        return activeWorkspace;
+      }
+      if (attempt + 1 < attempts) {
+        Atomics.wait(
+          new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)),
+          0,
+          0,
+          ASYNC_FOCUS_CONFIRM_INTERVAL_MS,
+        );
+      }
+    }
+    return activeWorkspace;
   }
 
   function listWorkspaces(activeWorkspace: WorkspaceNumber | undefined = readActiveWorkspace()): WorkspaceListResponse {
@@ -159,6 +254,43 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
       workspaces: WORKSPACES,
       activeWorkspace,
     };
+  }
+
+  function publishActiveWorkspace(activeWorkspace: WorkspaceNumber): void {
+    const state = listWorkspaces(activeWorkspace);
+    for (const listener of listeners) {
+      listener(state);
+    }
+  }
+
+  function startWorkspaceSubscription(): void {
+    if (stopSubscription || listeners.size === 0 || !canUseSway(env, commandExists)) {
+      return;
+    }
+
+    const subscription = {};
+    activeSubscription = subscription;
+    stopSubscription = subscribeCommand(
+      (line) => {
+        const activeWorkspace = parseWorkspaceFocusEvent(line);
+        if (activeWorkspace) {
+          publishActiveWorkspace(activeWorkspace);
+        }
+      },
+      () => {
+        if (activeSubscription !== subscription) {
+          return;
+        }
+        activeSubscription = undefined;
+        stopSubscription = undefined;
+        if (listeners.size > 0 && !reconnectTimer) {
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = undefined;
+            startWorkspaceSubscription();
+          }, 500);
+        }
+      },
+    );
   }
 
   function focusWorkspaceSync(request: WorkspaceFocusRequest): WorkspaceFocusResponse {
@@ -171,18 +303,78 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
       };
     }
 
-    spawnCommand("swaymsg", ["workspace", workspaceNameFor(workspace)], { env });
+    try {
+      let output: string;
+      if (options.spawnCommand && !options.runCommandSync) {
+        // Compatibility for launchers that inject their existing process spawner.
+        options.spawnCommand("swaymsg", ["workspace", workspaceNameFor(workspace)], { env });
+        output = '[{"success":true}]';
+      } else {
+        output = runCommandSync("swaymsg", ["workspace", workspaceNameFor(workspace)], { env });
+      }
+
+      if (!commandSucceeded(output)) {
+        return {
+          ok: false,
+          message: `Sway rechazo el cambio al workspace ${workspace}.`,
+          workspaces: WORKSPACES,
+          activeWorkspace: readActiveWorkspace(),
+        };
+      }
+    } catch {
+      return {
+        ok: false,
+        message: `No se pudo solicitar el workspace ${workspace} a Sway.`,
+        workspaces: WORKSPACES,
+        activeWorkspace: readActiveWorkspace(),
+      };
+    }
+
+    const activeWorkspace = confirmActiveWorkspace(
+      workspace,
+      options.spawnCommand && !options.runCommandSync ? ASYNC_FOCUS_CONFIRM_ATTEMPTS : 1,
+    );
+    if (activeWorkspace !== workspace) {
+      return {
+        ok: false,
+        message: `Sway no confirmo el cambio al workspace ${workspace}.`,
+        workspaces: WORKSPACES,
+        activeWorkspace,
+      };
+    }
+
     return {
       ok: true,
       message: `Workspace ${workspace} activo.`,
       workspaces: WORKSPACES,
-      activeWorkspace: workspace,
+      activeWorkspace,
+    };
+  }
+
+  function subscribeWorkspaceChanges(listener: WorkspaceStateListener): () => void {
+    listeners.add(listener);
+    listener(listWorkspaces());
+    startWorkspaceSubscription();
+
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size > 0) {
+        return;
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
+      activeSubscription = undefined;
+      stopSubscription?.();
+      stopSubscription = undefined;
     };
   }
 
   return {
     listWorkspaces,
     focusWorkspaceSync,
+    subscribeWorkspaceChanges,
     async focusWorkspace(request: WorkspaceFocusRequest): Promise<WorkspaceFocusResponse> {
       return focusWorkspaceSync(request);
     },
