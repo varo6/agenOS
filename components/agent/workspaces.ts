@@ -212,6 +212,7 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
   const subscribeCommand = options.subscribeCommand ?? createSwaySubscription(env);
   const listeners = new Set<WorkspaceStateListener>();
   let stopSubscription: (() => void) | undefined;
+  let activeSubscription: object | undefined;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function readActiveWorkspace(): WorkspaceNumber | undefined {
@@ -267,6 +268,8 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
       return;
     }
 
+    const subscription = {};
+    activeSubscription = subscription;
     stopSubscription = subscribeCommand(
       (line) => {
         const activeWorkspace = parseWorkspaceFocusEvent(line);
@@ -275,6 +278,10 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
         }
       },
       () => {
+        if (activeSubscription !== subscription) {
+          return;
+        }
+        activeSubscription = undefined;
         stopSubscription = undefined;
         if (listeners.size > 0 && !reconnectTimer) {
           reconnectTimer = setTimeout(() => {
@@ -358,6 +365,7 @@ export function createWorkspaceService(options: WorkspaceServiceOptions = {}) {
         clearTimeout(reconnectTimer);
         reconnectTimer = undefined;
       }
+      activeSubscription = undefined;
       stopSubscription?.();
       stopSubscription = undefined;
     };

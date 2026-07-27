@@ -123,4 +123,30 @@ describe("workspace service", () => {
     unsubscribe();
     expect(stopped).toBe(true);
   });
+
+  test("does not let an old subscription exit replace a newer subscription", () => {
+    const exits: Array<() => void> = [];
+    const stops: boolean[] = [];
+    const service = createWorkspaceService({
+      env: { SWAYSOCK: "/run/user/1000/sway.sock" },
+      commandExists: (command) => command === "swaymsg",
+      runCommandSync: () => '[{"name":"1:home","focused":true}]',
+      subscribeCommand: (_onLine, onExit) => {
+        const index = stops.length;
+        stops.push(false);
+        exits.push(onExit);
+        return () => {
+          stops[index] = true;
+        };
+      },
+    });
+
+    const unsubscribeFirst = service.subscribeWorkspaceChanges(() => {});
+    unsubscribeFirst();
+    const unsubscribeSecond = service.subscribeWorkspaceChanges(() => {});
+    exits[0]?.();
+    unsubscribeSecond();
+
+    expect(stops).toEqual([true, true]);
+  });
 });

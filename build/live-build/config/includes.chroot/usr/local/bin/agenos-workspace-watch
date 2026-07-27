@@ -234,7 +234,7 @@ def run_watch_subscription() -> None:
                         pending_workspace = action["workspace"]
                         pending_deadline = time.monotonic() + EMPTY_CHECK_DELAY_SECONDS
 
-                if event.get("change") == "close" and isinstance(event.get("container"), Mapping):
+                if event.get("change") in ("close", "move") and isinstance(event.get("container"), Mapping):
                     container_id = event["container"].get("id")
                     if isinstance(container_id, int):
                         remaining_windows = dict(snapshot.window_workspaces)
