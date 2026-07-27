@@ -1145,6 +1145,43 @@ export function createInstallerApiHandler(
           return json(deps.workspaceService.listWorkspaces());
         }
 
+        if (url.pathname === "/api/agent/workspaces/events") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const encoder = new TextEncoder();
+          let unsubscribe = () => {};
+          let stopped = false;
+          const stop = () => {
+            if (stopped) {
+              return;
+            }
+            stopped = true;
+            unsubscribe();
+          };
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              unsubscribe = deps.workspaceService.subscribeWorkspaceChanges((state) => {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(state)}\n\n`));
+              });
+              request.signal.addEventListener("abort", stop, { once: true });
+              if (request.signal.aborted) {
+                stop();
+              }
+            },
+            cancel: stop,
+          });
+
+          return new Response(stream, {
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "no-cache",
+              "Content-Type": "text/event-stream; charset=utf-8",
+            },
+          });
+        }
+
         if (url.pathname === "/api/agent/workspaces/focus") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);

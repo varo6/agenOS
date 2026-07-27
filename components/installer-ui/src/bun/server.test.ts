@@ -877,6 +877,35 @@ describe("createInstallerApiHandler", () => {
     expect(focused).toEqual([{ workspace: 2, source: "ui" }]);
   });
 
+  test("agent workspace event route streams real state changes", async () => {
+    let listener: ((state: unknown) => void) | undefined;
+    let unsubscribed = false;
+    const workspaceService = {
+      listWorkspaces: () => ({ ok: true, activeWorkspace: 1, workspaces: [] }),
+      focusWorkspace: async () => ({ ok: true, activeWorkspace: 1, workspaces: [] }),
+      subscribeWorkspaceChanges: (next: (state: unknown) => void) => {
+        listener = next;
+        return () => {
+          unsubscribed = true;
+        };
+      },
+    };
+    const handler = createHandler({ workspaceService: workspaceService as never });
+    const response = await handler.fetch(new Request("http://localhost/api/agent/workspaces/events"));
+    const reader = response.body?.getReader();
+
+    listener?.({ ok: true, activeWorkspace: 4, workspaces: [] });
+    const chunk = await reader?.read();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+    expect(new TextDecoder().decode(chunk?.value)).toBe(
+      'data: {"ok":true,"activeWorkspace":4,"workspaces":[]}\n\n',
+    );
+    await reader?.cancel();
+    expect(unsubscribed).toBe(true);
+  });
+
   test("agent shell route executes explicit frontend commands", async () => {
     const commands: string[] = [];
     const shellTool = async (input: { command: string; cwd?: string; timeoutMs?: number }) => {
