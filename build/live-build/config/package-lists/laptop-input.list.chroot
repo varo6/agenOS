@@ -1,0 +1,6 @@
+# brightness-udev grants active-seat users access; systemd-backlight restores it.
+brightnessctl
+brightness-udev
+
+# Lightweight MPRIS control for the standard laptop media keys.
+playerctl
