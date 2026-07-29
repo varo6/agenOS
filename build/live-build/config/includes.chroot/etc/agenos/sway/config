@@ -12,6 +12,14 @@ input * {
   xkb_model pc105
 }
 
+# Touchpad de portatil: mas especifico que "input *", que solo fija el teclado.
+input type:touchpad {
+  tap enabled
+  natural_scroll enabled
+  dwt enabled
+  scroll_method two_finger
+}
+
 output * bg #14100d solid_color
 
 # Swaybar es una superficie nativa y sigue visible cuando un workspace esta
@@ -60,6 +68,29 @@ bindsym Ctrl+Alt+4 workspace 4:media
 bindsym Ctrl+Alt+5 workspace 5:work
 bindsym Ctrl+Alt+Return exec /usr/local/bin/agenos-shell-helper terminal
 bindsym Ctrl+Alt+r exec /usr/local/bin/agenos-shell-helper reload-shell
+
+# Teclas de portatil. --locked las mantiene vivas si mas adelante hay un locker.
+# XF86Sleep se deja sin enlazar a proposito: logind ya la consume a nivel de
+# sistema y un segundo handler pediria suspender dos veces.
+bindsym --locked XF86MonBrightnessDown exec brightnessctl --quiet set 5%-
+bindsym --locked XF86MonBrightnessUp exec brightnessctl --quiet set +5%
+bindsym --locked XF86KbdBrightnessDown exec brightnessctl --quiet --device='*::kbd_backlight' set 10%-
+bindsym --locked XF86KbdBrightnessUp exec brightnessctl --quiet --device='*::kbd_backlight' set +10%
+
+bindsym --locked XF86AudioLowerVolume exec wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+bindsym --locked XF86AudioRaiseVolume exec wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+
+bindsym --locked XF86AudioMute exec wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+bindsym --locked XF86AudioMicMute exec wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+
+bindsym --locked XF86AudioPlay exec playerctl play-pause
+bindsym --locked XF86AudioPause exec playerctl play-pause
+bindsym --locked XF86AudioPrev exec playerctl previous
+bindsym --locked XF86AudioNext exec playerctl next
+bindsym --locked XF86AudioStop exec playerctl stop
+
+# Energia: ciclo de perfil y estado de bateria hablado por notificacion.
+bindsym --locked $mod+p exec /usr/local/bin/agenos-power-profile-cycle
+bindsym --locked $mod+b exec /usr/local/bin/agenos-power-status --notify
 
 # Solo una suscripcion por sesion; exec_always duplicaba el watcher en cada reload.
 exec --no-startup-id /usr/local/bin/agenos-workspace-watch
