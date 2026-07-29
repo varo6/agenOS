@@ -15,6 +15,10 @@ start_session_helpers() {
   if command -v agenos-battery-monitor >/dev/null 2>&1; then
     agenos-battery-monitor >>"${SESSION_HELPER_LOG}" 2>&1 &
   fi
+
+  if command -v agenos-output-autoscale >/dev/null 2>&1; then
+    agenos-output-autoscale >>"${SESSION_HELPER_LOG}" 2>&1 &
+  fi
 }
 
 is_live_session() {
