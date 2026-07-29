@@ -1,0 +1,9 @@
+#!/bin/sh
+
+case "${1:-}" in
+    post)
+        systemctl --no-block start agenos-resume-health.service
+        ;;
+esac
+
+exit 0

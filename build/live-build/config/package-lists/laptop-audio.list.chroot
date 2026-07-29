@@ -1,0 +1,11 @@
+# Modern internal microphones need both DSP firmware and ALSA routing profiles.
+firmware-sof-signed
+firmware-intel-sound
+alsa-ucm-conf
+alsa-topology-conf
+
+# Keep the complete Debian PipeWire desktop set explicit. The base list already
+# names its core services; this also guarantees the Bluetooth SPA plugin.
+pipewire-audio
+rtkit
+bluez

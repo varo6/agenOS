@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+display_device="/org/freedesktop/UPower/devices/DisplayDevice"
+info="$(LC_ALL=C upower --show-info "${display_device}")"
+state="$(printf '%s\n' "${info}" | awk -F: '/^[[:space:]]*state:/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }')"
+percentage="$(printf '%s\n' "${info}" | awk -F: '/^[[:space:]]*percentage:/ { gsub(/[%[:space:]]/, "", $2); printf "%d", $2; exit }')"
+
+if [ -z "${state}" ] || [ -z "${percentage}" ]; then
+    echo "No se detectó una batería de sistema." >&2
+    exit 1
+fi
+
+case "${state}" in
+    charging) state_label="cargando" ;;
+    discharging) state_label="descargando" ;;
+    fully-charged) state_label="cargada" ;;
+    pending-charge) state_label="pendiente de carga" ;;
+    pending-discharge) state_label="pendiente de descarga" ;;
+    *) state_label="${state}" ;;
+esac
+
+message="${percentage} % — ${state_label}"
+
+case "${1:-}" in
+    --notify)
+        notify-send --app-name="AgenOS" --expire-time=4000 "Batería" "${message}"
+        ;;
+    --json)
+        printf '{"percentage":%s,"state":"%s"}\n' "${percentage}" "${state}"
+        ;;
+    "")
+        printf '%s\n' "${message}"
+        ;;
+    *)
+        echo "Uso: agenos-power-status [--notify|--json]" >&2
+        exit 2
+        ;;
+esac

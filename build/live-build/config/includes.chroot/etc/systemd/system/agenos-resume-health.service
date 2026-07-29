@@ -1,0 +1,8 @@
+[Unit]
+Description=AgenOS post-resume local service health check
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agenos-resume-health
+TimeoutStartSec=45s

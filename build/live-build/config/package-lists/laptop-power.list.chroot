@@ -1,0 +1,5 @@
+upower
+power-profiles-daemon
+thermald
+mako-notifier
+libnotify-bin

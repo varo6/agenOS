@@ -1,0 +1,16 @@
+# Kernel firmware and CPU microcode materially improve graphics, power and
+# suspend reliability on real Intel/AMD laptops.
+firmware-amd-graphics
+intel-microcode
+amd64-microcode
+
+# Mesa covers Intel, AMD and the Nouveau fallback under native Wayland.
+libgl1-mesa-dri
+mesa-vulkan-drivers
+mesa-va-drivers
+intel-media-va-driver
+i965-va-driver
+
+# Expose integrated/discrete GPU selection on hybrid laptops without pulling
+# a proprietary, kernel-coupled NVIDIA stack into the live image.
+switcheroo-control

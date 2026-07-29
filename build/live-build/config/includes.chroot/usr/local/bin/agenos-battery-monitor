@@ -1,0 +1,58 @@
+#!/bin/sh
+set -u
+
+display_device="/org/freedesktop/UPower/devices/DisplayDevice"
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
+lock_dir="${runtime_dir}/agenos-battery-monitor.lock"
+
+if ! mkdir "${lock_dir}" 2>/dev/null; then
+    exit 0
+fi
+trap 'rmdir "${lock_dir}" 2>/dev/null || true' EXIT HUP INT TERM
+
+last_alert="normal"
+
+notify_battery() {
+    urgency="$1"
+    title="$2"
+    message="$3"
+
+    logger -t agenos-battery "${title}: ${message}"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send \
+            --app-name="AgenOS" \
+            --urgency="${urgency}" \
+            --expire-time=0 \
+            "${title}" \
+            "${message}" 2>/dev/null || true
+    fi
+}
+
+while true; do
+    info="$(LC_ALL=C upower --show-info "${display_device}" 2>/dev/null || true)"
+    state="$(printf '%s\n' "${info}" | awk -F: '/^[[:space:]]*state:/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }')"
+    percentage="$(printf '%s\n' "${info}" | awk -F: '/^[[:space:]]*percentage:/ { gsub(/[%[:space:]]/, "", $2); printf "%d", $2; exit }')"
+
+    case "${state}" in
+        discharging|pending-discharge)
+            if [ -n "${percentage}" ] && [ "${percentage}" -le 7 ] 2>/dev/null; then
+                if [ "${last_alert}" != "critical" ]; then
+                    notify_battery critical "Batería crítica" "Queda ${percentage} %. Conecta el cargador; AgenOS se apagará al 3 %."
+                    last_alert="critical"
+                fi
+            elif [ -n "${percentage}" ] && [ "${percentage}" -le 20 ] 2>/dev/null; then
+                if [ "${last_alert}" = "normal" ]; then
+                    notify_battery normal "Batería baja" "Queda ${percentage} %. Conecta el cargador."
+                    last_alert="low"
+                fi
+            else
+                last_alert="normal"
+            fi
+            ;;
+        *)
+            last_alert="normal"
+            ;;
+    esac
+
+    sleep 30
+done
