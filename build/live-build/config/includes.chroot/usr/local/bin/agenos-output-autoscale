@@ -58,6 +58,16 @@ def main() -> int:
         if not (name.startswith("eDP-") or name.startswith("LVDS-")):
             continue
 
+        current_scale = output.get("scale")
+        if isinstance(current_scale, (int, float)) and not math.isclose(
+            float(current_scale), 1.0, abs_tol=0.01
+        ):
+            print(
+                f"agenos-output-autoscale: preserving configured scale "
+                f"{float(current_scale):g}x on {name}"
+            )
+            continue
+
         scale = recommended_scale(output)
         if scale is None:
             continue
