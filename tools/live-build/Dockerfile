@@ -2,6 +2,10 @@ FROM debian:bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_MAJOR=22
+# Fijada a proposito: sin version, cada build de ISO instala el Bun que sea
+# ultimo ese dia y deja de ser reproducible. Debe coincidir con la version que
+# genero los bun.lock del repo, o `bun install --frozen-lockfile` puede fallar.
+ENV BUN_VERSION=1.4.0
 ENV BUN_INSTALL=/usr/local/bun
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
@@ -46,7 +50,7 @@ RUN apt-get update && apt-get install -y \
   && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
   && apt-get update && apt-get install -y nodejs \
-  && curl -fsSL https://bun.sh/install | bash \
+  && curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
   && mkdir -p "${CARGO_HOME}" "${RUSTUP_HOME}" \
   && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal \
   && ln -sf /usr/local/bun/bin/bun /usr/local/bin/bun \
