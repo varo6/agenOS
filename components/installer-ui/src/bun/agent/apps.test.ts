@@ -30,6 +30,7 @@ describe("app tool", () => {
     const tool = createAppTool({
       commandExists: (command) => command === "/usr/bin/chromium",
       env: { WAYLAND_DISPLAY: "wayland-1" },
+      homeDir: mkdtempSync(join(tmpdir(), "agenos-browser-home-")),
       spawnCommand: (command, args) => {
         calls.push([command, args]);
       },
@@ -39,7 +40,8 @@ describe("app tool", () => {
       ok: true,
       appId: "browser",
       displayName: "Chrome",
-      message: "Abriendo Chrome.",
+      status: "unverified",
+      message: "Inicié Chromium, pero esta sesión no expone Sway; no puedo confirmar ni ubicar su ventana.",
     });
     expect(calls[0]?.[0]).toBe("/usr/bin/chromium");
     expect(calls[0]?.[1]).toContain("https://www.google.com/");
@@ -73,7 +75,7 @@ describe("app tool", () => {
     expect(calls).toEqual([["gtk-launch", ["org.videolan.VLC"]]]);
   });
 
-  test("focuses explicit workspace before opening apps", async () => {
+  test("does not focus an empty workspace when an app never maps", async () => {
     const calls: Array<[string, string[]]> = [];
     const tool = createAppTool({
       env: { SWAYSOCK: "/tmp/sway.sock" },
@@ -87,15 +89,53 @@ describe("app tool", () => {
       spawnCommand: (command, args) => {
         calls.push([command, args]);
       },
+      windowTimeoutMs: 5,
+      pollIntervalMs: 1,
     });
 
-    await expect(tool.openApp({ app: "terminal", workspace: 5, focus: true })).resolves.toMatchObject({ ok: true });
-    expect(calls[0]).toEqual(["swaymsg", ["workspace", "5:work"]]);
-    expect(calls[1]).toEqual(["foot", []]);
+    await expect(tool.openApp({ app: "terminal", workspace: 5, focus: true })).resolves.toMatchObject({
+      ok: false,
+      status: "timed-out",
+    });
+    expect(calls).toEqual([["foot", []]]);
   });
 
-  test("uses app default workspace when none is provided", async () => {
+  test("uses the app default workspace after its window maps", async () => {
     const calls: Array<[string, string[]]> = [];
+    let treeReads = 0;
+    const tool = createAppTool({
+      env: { SWAYSOCK: "/tmp/sway.sock" },
+      commandExists: (command) => command === "foot" || command === "swaymsg",
+      runCommand: async (command, args) => {
+        calls.push([command, args]);
+        if (args[0] === "-t") {
+          treeReads += 1;
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: treeReads === 1
+              ? JSON.stringify({ nodes: [] })
+              : JSON.stringify({ nodes: [{ id: 12, app_id: "foot", pid: 55 }] }),
+            stderr: "",
+          };
+        }
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+        };
+      },
+      spawnCommand: (command, args) => {
+        calls.push([command, args]);
+      },
+    });
+
+    await expect(tool.openApp("terminal")).resolves.toMatchObject({ ok: true, status: "mapped" });
+    expect(calls.at(-1)).toEqual(["swaymsg", ['[con_id=12] move to workspace "5:work", fullscreen enable, focus']]);
+  });
+
+  test("reports the process diagnostic when a mapped app cannot be queried", async () => {
     const tool = createAppTool({
       env: { SWAYSOCK: "/tmp/sway.sock" },
       commandExists: (command) => command === "foot" || command === "swaymsg",
@@ -105,13 +145,16 @@ describe("app tool", () => {
         stdout: "",
         stderr: "no tree",
       }),
-      spawnCommand: (command, args) => {
-        calls.push([command, args]);
-      },
+      spawnCommand: () => undefined,
+      windowTimeoutMs: 5,
+      pollIntervalMs: 1,
     });
 
-    await tool.openApp("terminal");
-    expect(calls[0]).toEqual(["swaymsg", ["workspace", "5:work"]]);
+    await expect(tool.openApp("terminal")).resolves.toMatchObject({
+      ok: false,
+      status: "timed-out",
+      message: expect.stringContaining("no tree"),
+    });
   });
 
   test("moves and focuses a discovered app window after desktop launch", async () => {
@@ -126,6 +169,7 @@ describe("app tool", () => {
 
     const spawned: Array<[string, string[]]> = [];
     const swayCommands: Array<[string, string[]]> = [];
+    let treeReads = 0;
     const tool = createAppTool({
       desktopDirs: [desktopDir],
       env: { SWAYSOCK: "/tmp/sway.sock" },
@@ -136,10 +180,11 @@ describe("app tool", () => {
       runCommand: async (command, args) => {
         swayCommands.push([command, args]);
         if (args[0] === "-t") {
+          treeReads += 1;
           return {
             exitCode: 0,
             signal: null,
-            stdout: JSON.stringify({
+            stdout: treeReads === 1 ? JSON.stringify({ nodes: [] }) : JSON.stringify({
               nodes: [{
                 type: "workspace",
                 name: "3:web",
@@ -166,15 +211,15 @@ describe("app tool", () => {
 
     await expect(tool.openApp({ app: "Firefox", workspace: 3, focus: true })).resolves.toMatchObject({
       ok: true,
-      message: "Abriendo Firefox.",
+      status: "mapped",
+      message: "Firefox ya está visible en el workspace 3:web.",
     });
     expect(spawned).toEqual([
-      ["swaymsg", ["workspace", "3:web"]],
       ["gtk-launch", ["org.mozilla.firefox"]],
     ]);
     expect(swayCommands.at(-1)).toEqual([
       "swaymsg",
-      ['[con_id=42] move to workspace "3:web", focus'],
+      ['[con_id=42] move to workspace "3:web", fullscreen enable, focus'],
     ]);
   });
 
