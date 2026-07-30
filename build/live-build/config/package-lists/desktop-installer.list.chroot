@@ -13,3 +13,8 @@ libnspr4
 libnss3
 python3
 plymouth
+
+# xhost lo invoca el arranque de Calamares
+# (components/installer-ui/src/bun/installer/calamares.ts) para autorizar a root
+# sobre la sesion. Sin el paquete, la instalacion falla sin mensaje util.
+x11-xserver-utils
