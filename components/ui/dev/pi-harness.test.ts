@@ -115,6 +115,18 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     }
   }
 
+  function emitToolUpdate(toolName: string, text: string) {
+    for (const listener of listeners) {
+      listener({
+        type: "tool_execution_update",
+        toolName,
+        partialResult: {
+          content: [{ type: "text", text }],
+        },
+      });
+    }
+  }
+
   const harness = createPiHarness({
     authStorage: {
       get(provider) {
@@ -222,6 +234,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     emitAssistantReply,
     emitToolResult,
     emitToolStart,
+    emitToolUpdate,
     getLoginCalls: () => loginCalls,
     getDeviceLoginCalls: () => deviceLoginCalls,
     getLoginOptions: () => loginOptions,
@@ -253,6 +266,7 @@ async function settleTurn() {
 describe("PiHarness", () => {
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
+    expect(PI_SYSTEM_PROMPT).toContain("browser_open");
     expect(PI_SYSTEM_PROMPT).toContain("apps_open");
     expect(PI_SYSTEM_PROMPT).toContain("apps_install");
     expect(PI_SYSTEM_PROMPT).toContain("files_open");
@@ -492,7 +506,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
+    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -551,7 +565,7 @@ describe("PiHarness", () => {
       customTools?: Array<{ name: string }>;
     };
     const names = options.customTools?.map((tool) => tool.name) ?? [];
-    expect(names).toEqual(["apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
+    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
   });
 
   test("registers an agent_task tool that delegates to the OpenClaw broker", async () => {
@@ -602,7 +616,7 @@ describe("PiHarness", () => {
   });
 
   test("exposes turn progress while a chat is running and clears it afterwards", async () => {
-    const { harness, authData, emitAssistantReply, emitToolStart, emitToolResult, setPromptImpl } = createHarnessFixture();
+    const { harness, authData, emitAssistantReply, emitToolStart, emitToolUpdate, emitToolResult, setPromptImpl } = createHarnessFixture();
     authData.set("openai-codex", {
       type: "oauth",
       access: "access-token",
@@ -617,6 +631,8 @@ describe("PiHarness", () => {
       observed.push(harness.getStatus());
       emitToolStart("openclaw_setup");
       observed.push(harness.getStatus());
+      emitToolUpdate("openclaw_setup", "Esperando a que aparezca la ventana…");
+      observed.push(harness.getStatus());
       emitToolResult("openclaw_setup", "Estado del setup: fase=needs_auth");
       observed.push(harness.getStatus());
     });
@@ -629,8 +645,10 @@ describe("PiHarness", () => {
     expect(observed[0]?.busy).toBe(true);
     expect(observed[0]?.turn?.streamedText).toContain("Voy a configurar OpenClaw.");
     expect(observed[1]?.turn?.currentTool).toBe("openclaw_setup");
-    expect(observed[2]?.turn?.currentTool).toBeNull();
-    expect(observed[2]?.turn?.completedTools).toEqual(["openclaw_setup"]);
+    expect(observed[2]?.turn?.currentToolMessage).toBe("Esperando a que aparezca la ventana…");
+    expect(observed[3]?.turn?.currentTool).toBeNull();
+    expect(observed[3]?.turn?.currentToolMessage).toBeUndefined();
+    expect(observed[3]?.turn?.completedTools).toEqual(["openclaw_setup"]);
 
     const finalStatus = harness.getStatus();
     expect(finalStatus.busy).toBe(false);

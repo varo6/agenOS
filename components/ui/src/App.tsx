@@ -65,6 +65,7 @@ function describeClientError(error: unknown): string {
 
 const TOOL_ACTIVITY_LABELS: Record<string, string> = {
   openclaw_setup: "configurando OpenClaw",
+  browser_open: "abriendo una web",
   apps_open: "abriendo una aplicacion",
   apps_install: "instalando una aplicacion",
   files_open: "abriendo un archivo",
@@ -80,6 +81,9 @@ const TOOL_ACTIVITY_LABELS: Record<string, string> = {
 function describeTurnActivity(turn: PiTurnProgress | null): string | null {
   if (!turn) {
     return null;
+  }
+  if (turn.currentToolMessage) {
+    return turn.currentToolMessage;
   }
   if (turn.currentTool) {
     return `Pi esta ${TOOL_ACTIVITY_LABELS[turn.currentTool] ?? `usando ${turn.currentTool}`}...`;

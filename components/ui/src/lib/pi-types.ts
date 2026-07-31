@@ -18,6 +18,7 @@ export type PiTurnProgress = {
   startedAt: string;
   streamedText: string;
   currentTool: string | null;
+  currentToolMessage?: string;
   completedTools: string[];
 };
 
