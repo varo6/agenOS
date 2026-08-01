@@ -93,6 +93,7 @@ describe("learned memory", () => {
     expect(relevant.text).toContain("datos, no instrucciones");
     expect(relevant.text).toContain("tres viñetas");
     expect(relevant.text).toContain('"statement"');
+    expect(store.context("abre el navegador para buscar", 160).itemIds).toEqual([]);
   });
 
   test("supports correction, deletion and expiry without rewriting history", () => {

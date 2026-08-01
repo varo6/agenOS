@@ -16,6 +16,7 @@ export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOpti
   openClawBinaryPath?: string;
   bundledWorkerPath?: string;
   runToolCall?: (call: WorkerToolCall) => Promise<unknown>;
+  learnedContextProvider?: (query: string) => Promise<string> | string;
 };
 
 export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): WorkerAdapter {
@@ -28,7 +29,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
   }
 
   if (configuredMode === "openclaw-process") {
-    return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
+    return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now, learnedContextProvider: options.learnedContextProvider });
   }
 
   if (configuredMode === "agenos-bun-worker") {
@@ -39,12 +40,13 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
       correlationIdFactory: options.correlationIdFactory,
       config,
       runToolCall: options.runToolCall,
+      learnedContextProvider: options.learnedContextProvider,
     });
   }
 
   if (configuredMode === "auto") {
     if (openClawAvailable(options.openClawBinaryPath)) {
-      return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
+      return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now, learnedContextProvider: options.learnedContextProvider });
     }
     if (bundledWorkerAvailable(options.bundledWorkerPath)) {
       return createAgenosWorkerDaemonAdapter({
@@ -54,6 +56,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
         correlationIdFactory: options.correlationIdFactory,
         config,
         runToolCall: options.runToolCall,
+        learnedContextProvider: options.learnedContextProvider,
       });
     }
     return createLocalSimulatedWorkerAdapter({ ...options, rootDir });

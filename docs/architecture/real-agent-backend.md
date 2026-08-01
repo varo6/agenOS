@@ -36,6 +36,24 @@ The broker on `127.0.0.1:4173` is the authority for policy, memory, outbound-sen
 
 The public task API remains a broker facade. `POST /api/agent/tasks` enqueues work, `GET /api/agent/tasks/:taskId` returns status, and `GET /api/agent/tasks/:taskId/events` returns progress events. Worker tool calls use `/api/agent/worker/tool-call` and are rejected without the local `worker-token`.
 
+## Confirmed Self-Improvement Loop
+
+The broker also owns Pi's learned-memory loop. Foreground harness traces, failed background tasks,
+retries, denied confirmations, and tool outcomes become redacted append-only signals under
+`~/.agenos/memory/learned/`. Deterministic distillation only proposes durable preferences,
+repeated tool failures, and denied-action avoidances; it does not let model output rewrite prompts.
+
+Every automatic proposal goes through the existing `memory.write` policy as source `system` and
+therefore remains inactive until the user confirms it. Confirmed records have visible IDs,
+confidence, source-signal IDs, expiry, and append-only correction/deletion history. The user can
+audit and control them through `/api/agent/learning/*` or Pi's `learning_memory` tool.
+
+For each request the broker ranks active, non-expired records by query overlap, kind, confidence,
+and recency. At most 512 estimated tokens are emitted (256 by default). The foreground harness
+appends that block to Pi's system prompt and recreates its session only when the selected context
+changes; OpenClaw receives the same broker-selected block as system context. Trace metadata records
+the selected item IDs and token count so injection is measurable without duplicating memory text.
+
 ## Protocol and State
 
 Every persisted record and broker/worker envelope uses `schemaVersion: 1`, a `correlationId`, and an ISO timestamp. Reads go through migration helpers so future state changes can degrade cleanly instead of breaking boot.

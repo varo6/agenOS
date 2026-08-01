@@ -116,6 +116,10 @@ function estimateTokens(value: string): number {
   return Math.max(1, Math.ceil(value.length / 4));
 }
 
+function tokenMatches(left: string, right: string): boolean {
+  return left === right || (left.length >= 5 && right.length >= 5 && (left.startsWith(right) || right.startsWith(left)));
+}
+
 function readLines<T>(path: string): T[] {
   if (!existsSync(path)) {
     return [];
@@ -143,6 +147,22 @@ export function extractDurablePreference(input: string): string | null {
     return null;
   }
   return statement;
+}
+
+export function isLearnedMemoryCandidate(value: unknown): value is LearnedMemoryCandidate {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as Partial<LearnedMemoryCandidate>;
+  return (candidate.namespace === "preferences" || candidate.namespace === "facts")
+    && (candidate.kind === "preference" || candidate.kind === "procedure" || candidate.kind === "avoidance")
+    && typeof candidate.statement === "string"
+    && typeof candidate.confidence === "number"
+    && Array.isArray(candidate.sourceSignalIds)
+    && candidate.sourceSignalIds.every((id) => typeof id === "string")
+    && typeof candidate.expiresAt === "string"
+    && Array.isArray(candidate.keywords)
+    && candidate.keywords.every((keyword) => typeof keyword === "string");
 }
 
 export function createLearnedMemoryStore(options: LearnedMemoryStoreOptions = {}) {
@@ -333,14 +353,14 @@ export function createLearnedMemoryStore(options: LearnedMemoryStoreOptions = {}
       const candidates = latestItems()
         .filter((item) => item.status === "active" && Date.parse(item.expiresAt) > nowMs)
         .map((item) => {
-          const overlap = item.keywords.filter((keyword) => queryTokens.includes(keyword)).length;
+          const overlap = item.keywords.filter((keyword) => queryTokens.some((queryToken) => tokenMatches(keyword, queryToken))).length;
           const relevance = queryTokens.length > 0 ? overlap / queryTokens.length : 0;
-          const preferencePrior = item.kind === "preference" ? 0.22 : 0;
+          const preferencePrior = item.kind === "preference" ? 0.06 : 0;
           const ageDays = Math.max(0, (nowMs - Date.parse(item.updatedAt)) / (24 * 60 * 60 * 1_000));
-          const recency = Math.max(0, 1 - ageDays / 90) * 0.12;
-          return { item, score: relevance * 0.55 + preferencePrior + item.confidence * 0.11 + recency };
+          const recency = Math.max(0, 1 - ageDays / 90) * 0.04;
+          return { item, score: relevance * 0.7 + preferencePrior + item.confidence * 0.05 + recency };
         })
-        .filter(({ score }) => score >= 0.18)
+        .filter(({ score }) => score >= 0.16)
         .sort((left, right) => right.score - left.score || right.item.updatedAt.localeCompare(left.item.updatedAt));
 
       const header = [

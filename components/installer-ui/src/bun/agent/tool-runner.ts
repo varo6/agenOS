@@ -1,5 +1,6 @@
 import { decidePolicy, type AgentSource, type PolicyDecision } from "./policy";
 import { isMemoryNamespace, type createMemoryStore } from "./memory";
+import { isLearnedMemoryCandidate, type createLearnedMemoryStore, type LearnedMemoryWriteMetadata } from "./learned-memory";
 import { runShellCommand, type ShellExecResult } from "../../../../agent/shell";
 
 export type ConfirmationRequestInput = {
@@ -35,6 +36,7 @@ export type ToolRunResult = {
 export type ToolRunnerOptions = {
   confirmations?: ConfirmationStoreLike;
   memoryStore?: ReturnType<typeof createMemoryStore>;
+  learnedMemory?: ReturnType<typeof createLearnedMemoryStore>;
   shellTool?: typeof runShellCommand;
   correlationIdFactory?: () => string;
 };
@@ -83,17 +85,12 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
       }
 
       if (input.tool === "memory.write" && input.input && typeof input.input === "object") {
-        const record = input.input as { namespace?: unknown; content?: unknown };
-        if (options.memoryStore && isMemoryNamespace(record.namespace)) {
-          const response = options.memoryStore.append(
-            record.namespace,
-            typeof record.content === "string" ? record.content : "",
-            {
-              source: input.source,
-              taskId: input.taskId,
-              correlationId,
-            },
-          );
+        const response = applyMemoryWrite(options, input.input, {
+          source: input.source,
+          taskId: input.taskId,
+          correlationId,
+        });
+        if (response) {
           return {
             ok: response.ok,
             decision: "allow",
@@ -127,6 +124,29 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
       };
     },
   };
+}
+
+export function applyMemoryWrite(
+  stores: Pick<ToolRunnerOptions, "memoryStore" | "learnedMemory">,
+  input: unknown,
+  metadata: LearnedMemoryWriteMetadata & { taskId?: string },
+): { ok: boolean; message: string } | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const record = input as { namespace?: unknown; content?: unknown; learned?: unknown };
+  if (stores.learnedMemory && isLearnedMemoryCandidate(record.learned)) {
+    stores.learnedMemory.add(record.learned, metadata);
+    return { ok: true, message: "Memoria aprendida activada." };
+  }
+  if (stores.memoryStore && isMemoryNamespace(record.namespace)) {
+    return stores.memoryStore.append(
+      record.namespace,
+      typeof record.content === "string" ? record.content : "",
+      metadata,
+    );
+  }
+  return null;
 }
 
 function summarizeToolCall(tool: string, input: unknown): string {

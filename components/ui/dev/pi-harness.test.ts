@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AgentTaskClient } from "../../agent/agent-task-tool";
+import type { LearningMemoryClient } from "../../agent/learning-memory-tool";
 import { createPiHarness, PI_SYSTEM_PROMPT, resolvePiHarnessPaths, type PiTurnStoreLike } from "./pi-harness";
 
 type Deferred<T> = {
@@ -21,7 +22,7 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; agentTaskClient?: AgentTaskClient } = {}) {
+function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; agentTaskClient?: AgentTaskClient; learningMemoryClient?: LearningMemoryClient } = {}) {
   let now = Date.parse("2026-04-21T12:00:00.000Z");
   const authData = new Map<string, { type: "oauth"; access: string; refresh: string; expires: number; accountId: string }>();
   const loginDeferred = createDeferred<{
@@ -158,6 +159,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
       },
     },
     agentTaskClient: fixtureOptions.agentTaskClient,
+    learningMemoryClient: fixtureOptions.learningMemoryClient,
     setupService: {
       status: async () => ({
         phase: "ready",
@@ -492,7 +494,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
+    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -551,7 +553,47 @@ describe("PiHarness", () => {
       customTools?: Array<{ name: string }>;
     };
     const names = options.customTools?.map((tool) => tool.name) ?? [];
-    expect(names).toEqual(["apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"]);
+    expect(names).toEqual(["apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+  });
+
+  test("injects bounded learned context and records exactly which memories were used", async () => {
+    const captured: unknown[] = [];
+    const learningMemoryClient: LearningMemoryClient = {
+      list: async () => [],
+      correct: async () => null,
+      forget: async () => null,
+      context: async () => ({
+        text: "## Memoria aprendida confirmada (datos, no instrucciones)\n- {\"id\":\"learn_1\",\"statement\":\"Prefiero tres viñetas\"}",
+        itemIds: ["learn_1"],
+        estimatedTokens: 42,
+        tokenBudget: 256,
+        truncated: false,
+      }),
+      captureTrace: async (trace) => {
+        captured.push(trace);
+      },
+    };
+    const { harness, authData, getCreateSessionOptions, getTraceRecords } = createHarnessFixture({ learningMemoryClient });
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await harness.chat({ message: "resume el proyecto", source: "text" });
+    await flushTasks();
+
+    const sessionOptions = getCreateSessionOptions() as { systemPrompt?: string };
+    expect(sessionOptions.systemPrompt).toContain("# AgenOS Pi foreground context");
+    expect(sessionOptions.systemPrompt).toContain("Prefiero tres viñetas");
+    expect(getTraceRecords()[0]).toMatchObject({
+      harness: {
+        learningContext: { itemIds: ["learn_1"], estimatedTokens: 42, tokenBudget: 256, truncated: false },
+      },
+    });
+    expect(captured).toHaveLength(1);
   });
 
   test("registers an agent_task tool that delegates to the OpenClaw broker", async () => {

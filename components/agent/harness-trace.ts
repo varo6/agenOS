@@ -32,6 +32,12 @@ export type HarnessTraceRecord = {
   harness: {
     promptHash: string;
     tools: string[];
+    learningContext?: {
+      itemIds: string[];
+      estimatedTokens: number;
+      tokenBudget: number;
+      truncated: boolean;
+    };
   };
   input: HarnessTraceTextPreview;
   output?: HarnessTraceTextPreview;

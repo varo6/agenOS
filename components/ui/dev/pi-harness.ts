@@ -22,11 +22,18 @@ import {
   previewHarnessTraceText,
   redactHarnessTraceText,
   type HarnessTraceRecorder,
+  type HarnessTraceRecord,
   type HarnessTraceStatus,
   type HarnessTraceToolEvent,
 } from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
 import { createAgentTaskModelTool, createHttpAgentTaskClient, type AgentTaskClient } from "../../agent/agent-task-tool";
+import {
+  createHttpLearningMemoryClient,
+  createLearningMemoryModelTool,
+  type LearnedContextResponse,
+  type LearningMemoryClient,
+} from "../../agent/learning-memory-tool";
 import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
 import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
@@ -84,14 +91,21 @@ const PI_TRACE_PATH = PI_PATHS.tracePath;
 const PI_TURNS_PATH = PI_PATHS.turnsPath;
 const PI_SESSIONS_DIR = PI_PATHS.sessionsDir;
 export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
-const PI_SYSTEM_PROMPT_HASH = hashHarnessPrompt(PI_SYSTEM_PROMPT);
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"];
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+
+function emptyLearningContext(): LearnedContextResponse {
+  return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
+}
+
+export function composePiSystemPrompt(learningContext: string): string {
+  return learningContext.trim() ? `${PI_SYSTEM_PROMPT}\n\n${learningContext.trim()}` : PI_SYSTEM_PROMPT;
+}
 
 type PiModelLike = {
   id: string;
@@ -192,10 +206,12 @@ type PiHarnessDependencies = {
     sessionManager: PiSessionManagerLike;
     tools?: string[];
     customTools?: PiCustomToolLike[];
+    systemPrompt?: string;
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
   setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "codexLoginStatus" | "configureTelegram" | "testTelegram" | "enableTelegram">;
   agentTaskClient?: AgentTaskClient;
+  learningMemoryClient?: LearningMemoryClient;
   traceRecorder?: HarnessTraceRecorder;
   modelPreference?: string[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
@@ -624,6 +640,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const appTool = createAppTool();
   const setupService = createOpenClawSetupService();
   const agentTaskClient = createHttpAgentTaskClient();
+  const learningMemoryClient = createHttpLearningMemoryClient();
   const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
@@ -641,7 +658,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
       }
     },
     turnStore: createFileTurnStore(PI_TURNS_PATH),
-    createAgentSession: async ({ model, sessionManager, tools, customTools }) => {
+    createAgentSession: async ({ model, sessionManager, tools, customTools, systemPrompt }) => {
       const settingsManager = SettingsManager.inMemory();
       const resourceLoader = new DefaultResourceLoader({
         cwd: process.cwd(),
@@ -652,7 +669,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
-        systemPromptOverride: () => PI_SYSTEM_PROMPT,
+        systemPromptOverride: () => systemPrompt ?? PI_SYSTEM_PROMPT,
         appendSystemPromptOverride: () => [],
       });
 
@@ -672,6 +689,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
           createOpenFileModelTool(),
           createOpenClawSetupModelTool(setupService),
           createAgentTaskModelTool(agentTaskClient),
+          createLearningMemoryModelTool(learningMemoryClient),
         ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
@@ -683,6 +701,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
     appTool,
     setupService,
     agentTaskClient,
+    learningMemoryClient,
     traceRecorder,
     modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,
@@ -700,6 +719,7 @@ export class PiHarness {
   private sessionManager: PiSessionManagerLike;
   private session: PiAgentSessionLike | undefined;
   private sessionModelId: string | undefined;
+  private sessionContextKey: string | undefined;
   private pendingAttemptId: string | undefined;
   private busy = false;
   private lastError: string | undefined;
@@ -979,11 +999,13 @@ export class PiHarness {
     const traceId = createHarnessTraceId(() => this.deps.now());
     const toolEvents: HarnessTraceToolEvent[] = [];
     let model: PiModelLike | undefined;
+    let learningContext = emptyLearningContext();
     let unsubscribe = () => {};
 
     try {
       model = this.selectModel();
-      const session = await this.ensureSession(model);
+      learningContext = await this.resolveLearningContext(turn.input);
+      const session = await this.ensureSession(model, learningContext);
       let streamedReply = "";
       let completedReply = "";
       let toolReply = "";
@@ -1037,6 +1059,7 @@ export class PiHarness {
         message: turn.input,
         reply,
         toolEvents,
+        learningContext,
       });
 
       turn.status = "succeeded";
@@ -1063,6 +1086,7 @@ export class PiHarness {
         message: turn.input,
         error: message,
         toolEvents,
+        learningContext,
       });
 
       const harnessError = this.isAuthenticationFailure(message)
@@ -1104,9 +1128,11 @@ export class PiHarness {
     reply?: string;
     error?: string;
     toolEvents: HarnessTraceToolEvent[];
+    learningContext: LearnedContextResponse;
   }): void {
     try {
-      this.deps.traceRecorder?.record({
+      const systemPrompt = composePiSystemPrompt(input.learningContext.text);
+      const record: HarnessTraceRecord = {
         schemaVersion: 1,
         traceId: input.traceId,
         timestamp: new Date(input.startedAtMs).toISOString(),
@@ -1117,13 +1143,23 @@ export class PiHarness {
         modelId: input.model?.id,
         durationMs: Math.max(0, this.deps.now() - input.startedAtMs),
         harness: {
-          promptHash: PI_SYSTEM_PROMPT_HASH,
+          promptHash: hashHarnessPrompt(systemPrompt),
           tools: [...FOREGROUND_MODEL_TOOLS],
+          learningContext: {
+            itemIds: [...input.learningContext.itemIds],
+            estimatedTokens: input.learningContext.estimatedTokens,
+            tokenBudget: input.learningContext.tokenBudget,
+            truncated: input.learningContext.truncated,
+          },
         },
         input: previewHarnessTraceText(input.message),
         output: input.reply ? previewHarnessTraceText(input.reply) : undefined,
         error: input.error ? redactHarnessTraceText(input.error) : undefined,
         toolEvents: input.toolEvents,
+      };
+      this.deps.traceRecorder?.record(record);
+      void this.deps.learningMemoryClient?.captureTrace(record).catch(() => {
+        // Learning is best-effort and must never block the foreground response.
       });
     } catch {
       // Trace persistence must never block the foreground assistant.
@@ -1226,8 +1262,9 @@ export class PiHarness {
     return preferred;
   }
 
-  private async ensureSession(model: PiModelLike): Promise<PiAgentSessionLike> {
-    if (this.session && this.sessionModelId === model.id) {
+  private async ensureSession(model: PiModelLike, learningContext: LearnedContextResponse): Promise<PiAgentSessionLike> {
+    const contextKey = hashHarnessPrompt(learningContext.text);
+    if (this.session && this.sessionModelId === model.id && this.sessionContextKey === contextKey) {
       return this.session;
     }
 
@@ -1243,11 +1280,14 @@ export class PiHarness {
         createOpenFileModelTool(),
         createOpenClawSetupModelTool(this.deps.setupService),
         createAgentTaskModelTool(this.deps.agentTaskClient),
+        createLearningMemoryModelTool(this.deps.learningMemoryClient),
       ],
+      systemPrompt: composePiSystemPrompt(learningContext.text),
     });
 
     this.session = created.session;
     this.sessionModelId = model.id;
+    this.sessionContextKey = contextKey;
     return created.session;
   }
 
@@ -1255,7 +1295,16 @@ export class PiHarness {
     this.session?.dispose?.();
     this.session = undefined;
     this.sessionModelId = undefined;
+    this.sessionContextKey = undefined;
     this.sessionManager = this.deps.createSessionManager("fresh");
+  }
+
+  private async resolveLearningContext(query: string): Promise<LearnedContextResponse> {
+    try {
+      return await this.deps.learningMemoryClient?.context(query, 256) ?? emptyLearningContext();
+    } catch {
+      return emptyLearningContext();
+    }
   }
 
   private getLastAssistantReply(session: PiAgentSessionLike): string {

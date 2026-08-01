@@ -17,6 +17,10 @@ describe("agent policy", () => {
       decision: "confirm",
       ruleId: "agent.memory.background.confirm",
     });
+    expect(decidePolicy({ tool: "memory.write", source: "system", explicitUserIntent: false })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.memory.learning.confirm",
+    });
   });
 
   test("requires confirmation for outbound sends and allows ordinary local shell", () => {
