@@ -97,7 +97,7 @@ describe("app tool", () => {
       ok: false,
       status: "timed-out",
     });
-    expect(calls).toEqual([["foot", []]]);
+    expect(calls).toEqual([["foot", ["--app-id=agenos-terminal"]]]);
   });
 
   test("uses the app default workspace after its window maps", async () => {

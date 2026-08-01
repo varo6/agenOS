@@ -52,9 +52,15 @@ for_window [workspace="2:app"] fullscreen enable
 for_window [workspace="3:web"] fullscreen enable
 for_window [workspace="4:media"] fullscreen enable
 for_window [workspace="5:work"] fullscreen enable
-for_window [app_id="^(chromium|chromium-browser|google-chrome|google-chrome-stable)$"] move to workspace "3:web", focus
-for_window [class="^(Chromium|Google-chrome|Google-chrome-stable)$"] move to workspace "3:web", focus
-for_window [app_id="^foot$"] move to workspace "5:work", focus
+# El routing de las apps que abre Pi lo decide agenos-graphical-launcher, que
+# espera a que la ventana mapee y despues la mueve y enfoca. Aqui ya no hay
+# reglas de Chromium: dos autoridades compitiendo por el mismo foco era una de
+# las causas de que el navegador apareciera en el workspace equivocado.
+#
+# Foot conserva routing declarativo porque el atajo Ctrl+Alt+Return no pasa por
+# el launcher. Va sin "focus" para no disputarselo, y solo matchea el app_id por
+# defecto: las terminales que abre Pi usan --app-id=agenos-terminal.
+for_window [app_id="^foot$"] move to workspace "5:work"
 for_window [app_id="^(agenos-installer|agenos-installer-ui|com\\.agenos\\.installer)$"] move to workspace "1:home"
 for_window [title="AgenOS Installer"] move to workspace "1:home"
 for_window [app_id="^(electron|Electron|agenos-system-ui)$"] move to workspace "1:home"

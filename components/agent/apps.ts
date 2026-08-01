@@ -105,7 +105,11 @@ const KNOWN_APPS: AppDefinition[] = [
     displayName: "Terminal",
     aliases: ["terminal", "consola", "shell"],
     commands: [
-      { command: "foot" },
+      // app-id propio: la regla for_window de Sway para "foot" enruta el atajo
+      // Ctrl+Alt+Return, que no pasa por este launcher. Al distinguirlos, el
+      // launcher decide el workspace de las terminales que abre Pi sin que la
+      // regla declarativa se lo sobreescriba.
+      { command: "foot", args: ["--app-id=agenos-terminal"] },
       { command: "x-terminal-emulator" },
       { command: "gnome-terminal" },
       { command: "konsole" },
