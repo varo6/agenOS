@@ -1,9 +1,14 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import {
+  executableExists,
+  launchGraphicalApplication,
+  type GraphicalLaunchStatus,
+  type RunCommand,
+  type SpawnGraphicalCommand,
+} from "./graphical-launcher";
 import { resolveGraphicalSessionEnv } from "./session-env";
-import { createWorkspaceService } from "./workspaces";
 
 export type FileOpenInput = string | {
   path?: unknown;
@@ -15,12 +20,24 @@ export type FileOpenResponse = {
   ok: boolean;
   path?: string;
   message?: string;
+  status?: GraphicalLaunchStatus;
 };
 
 export type FileToolOptions = {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
-  spawnCommand?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv }) => void;
+  commandExists?: (command: string) => boolean;
+  spawnCommand?: SpawnGraphicalCommand;
+  runCommand?: RunCommand;
+  windowTimeoutMs?: number;
+  pollIntervalMs?: number;
+  coldStartMs?: number;
+  existingWindowGraceMs?: number;
+};
+
+export type FileLaunchOptions = {
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
 };
 
 const MEDIA_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".mkv", ".mp3", ".wav", ".flac"]);
@@ -28,10 +45,10 @@ const MEDIA_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp
 export function createFileTool(options: FileToolOptions = {}) {
   const env = resolveGraphicalSessionEnv(options.env ?? process.env);
   const homeDir = options.homeDir ?? homedir();
-  const spawnCommand = options.spawnCommand ?? defaultSpawnCommand;
+  const commandExists = options.commandExists ?? ((command: string) => executableExists(command, env));
 
   return {
-    async openPath(input: FileOpenInput): Promise<FileOpenResponse> {
+    async openPath(input: FileOpenInput, launchOptions: FileLaunchOptions = {}): Promise<FileOpenResponse> {
       const parsed = parseFileOpenInput(input, homeDir);
       if (!parsed.path) {
         return { ok: false, message: "La ruta del archivo es obligatoria." };
@@ -45,13 +62,43 @@ export function createFileTool(options: FileToolOptions = {}) {
         return { ok: false, path: parsed.path, message: "No hay una sesion grafica disponible para abrir archivos." };
       }
 
-      if (parsed.focus !== false) {
-        const workspace = parsed.workspace ?? defaultWorkspaceForPath(parsed.path);
-        createWorkspaceService({ env }).focusWorkspaceSync({ workspace, source: "system" });
+      const opener = commandExists("xdg-open")
+        ? { command: "xdg-open", args: [parsed.path] }
+        : commandExists("gio")
+          ? { command: "gio", args: ["open", parsed.path] }
+          : undefined;
+      if (!opener) {
+        return {
+          ok: false,
+          path: parsed.path,
+          message: "No encontré xdg-open ni gio para abrir el archivo. Instala xdg-utils o libglib2.0-bin.",
+        };
       }
 
-      spawnCommand("xdg-open", [parsed.path], { env });
-      return { ok: true, path: parsed.path, message: `Abriendo ${parsed.path}.` };
+      const workspace = parsed.workspace ?? defaultWorkspaceForPath(parsed.path);
+      const result = await launchGraphicalApplication({
+        ...opener,
+        env,
+        label: parsed.path,
+        workspace,
+        focus: parsed.focus !== false,
+        acceptAnyNewWindow: true,
+        commandExists,
+        spawnCommand: options.spawnCommand,
+        runCommand: options.runCommand,
+        windowTimeoutMs: options.windowTimeoutMs,
+        pollIntervalMs: options.pollIntervalMs,
+        coldStartMs: options.coldStartMs,
+        existingWindowGraceMs: options.existingWindowGraceMs,
+        signal: launchOptions.signal,
+        onProgress: launchOptions.onProgress,
+      });
+      return {
+        ok: result.ok,
+        path: parsed.path,
+        status: result.status,
+        message: result.message,
+      };
     },
   };
 }
@@ -82,13 +129,4 @@ function normalizePath(path: string, homeDir: string): string {
 
 function defaultWorkspaceForPath(path: string): 2 | 4 {
   return MEDIA_EXTENSIONS.has(extname(path).toLowerCase()) ? 4 : 2;
-}
-
-function defaultSpawnCommand(command: string, args: string[], options: { env: NodeJS.ProcessEnv }): void {
-  const child = spawn(command, args, {
-    detached: true,
-    env: options.env,
-    stdio: "ignore",
-  });
-  child.unref();
 }

@@ -6,6 +6,12 @@ seatd
 sway
 foot
 chromium
+chromium-sandbox
+xdg-utils
+libglib2.0-bin
+libgtk-3-bin
+desktop-file-utils
+shared-mime-info
 calamares
 calamares-settings-debian
 libgtk-3-0

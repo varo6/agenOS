@@ -11,6 +11,7 @@ import type {
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
 const REQUEST_TIMEOUT_MS = 8_000;
+const GRAPHICAL_LAUNCH_TIMEOUT_MS = 20_000;
 
 type ErrorPayload = {
   message?: unknown;
@@ -41,9 +42,9 @@ function resolveHttpBase(options: AgentClientOptions = {}): string {
   return AGENT_API_BASE_DEFAULT;
 }
 
-async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(new URL(path, `${baseUrl}/`).toString(), {
@@ -98,14 +99,14 @@ export function createAgentClient(options: AgentClientOptions = {}) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
-      });
+      }, GRAPHICAL_LAUNCH_TIMEOUT_MS);
     },
     openApp(app: string, options: { workspace?: AgentWorkspaceNumber; focus?: boolean } = {}): Promise<AgentActionResponse> {
       return requestJson<AgentActionResponse>(baseUrl, "/api/agent/apps/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app, ...options }),
-      });
+      }, GRAPHICAL_LAUNCH_TIMEOUT_MS);
     },
     listWorkspaces(): Promise<AgentWorkspaceListResponse> {
       return requestJson<AgentWorkspaceListResponse>(baseUrl, "/api/agent/workspaces");

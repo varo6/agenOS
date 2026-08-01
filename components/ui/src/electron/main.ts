@@ -184,12 +184,18 @@ function openExternalUrl(url: string): void {
     return;
   }
 
-  try {
-    launchBrowserUrl(url);
-  } catch (error) {
-    console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
-    void shell.openExternal(url);
-  }
+  void launchBrowserUrl(url)
+    .then((result) => {
+      if (!result.ok) {
+        console.warn(`No se pudo confirmar Chromium: ${result.message}`);
+        return result.status === "failed" ? shell.openExternal(url) : undefined;
+      }
+      return undefined;
+    })
+    .catch((error) => {
+      console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
+      return shell.openExternal(url);
+    });
 }
 
 function getPiHarness(): PiHarnessInstance {

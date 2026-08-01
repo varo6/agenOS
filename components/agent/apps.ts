@@ -1,13 +1,25 @@
-import { accessSync, constants, existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, isAbsolute, join } from "node:path";
-import { spawn } from "node:child_process";
-import { launchBrowserUrl, type BrowserLauncherOptions } from "./browser-launcher";
+import { basename, join } from "node:path";
+import {
+  launchBrowserUrl,
+  type BrowserLauncherOptions,
+  type BrowserLaunchResult,
+} from "./browser-launcher";
+import {
+  defaultRunCommand,
+  executableExists,
+  launchGraphicalApplication,
+  type CommandRunOptions,
+  type CommandRunResult,
+  type GraphicalLaunchStatus,
+  type RunCommand,
+  type SpawnGraphicalCommand,
+} from "./graphical-launcher";
 import { resolveGraphicalSessionEnv } from "./session-env";
-import { createWorkspaceService, resolveDefaultWorkspaceForApp, workspaceNameFor } from "./workspaces";
+import { resolveDefaultWorkspaceForApp } from "./workspaces";
 
 const DESKTOP_FIELD_CODE_RE = /%[fFuUdDnNickvm]/g;
-const MAX_COMMAND_OUTPUT_BYTES = 24_000;
 
 type AppCommand = {
   command: string;
@@ -28,6 +40,7 @@ export type AppOpenResponse = {
   appId?: string;
   displayName?: string;
   message?: string;
+  status?: GraphicalLaunchStatus;
 };
 
 export type AppOpenInput = string | {
@@ -54,44 +67,30 @@ export type AppListResponse = {
   }>;
 };
 
-export type CommandRunResult = {
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-  error?: string;
-};
+export type { CommandRunOptions, CommandRunResult } from "./graphical-launcher";
 
-export type CommandRunOptions = {
-  env?: NodeJS.ProcessEnv;
-  timeoutMs?: number;
-};
-
-type SwayNode = {
-  id?: number;
-  name?: string;
-  app_id?: string | null;
-  pid?: number | null;
-  window?: number | null;
-  window_properties?: {
-    class?: string;
-    instance?: string;
-    title?: string;
-  };
-  nodes?: SwayNode[];
-  floating_nodes?: SwayNode[];
+export type AppLaunchOptions = {
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
 };
 
 export type AppToolOptions = {
   commandExists?: (command: string) => boolean;
-  spawnCommand?: (command: string, args: string[]) => void;
-  runCommand?: (command: string, args: string[], options?: CommandRunOptions) => Promise<CommandRunResult>;
-  browserLauncher?: (url: string, options?: BrowserLauncherOptions) => void;
+  spawnCommand?: SpawnGraphicalCommand;
+  runCommand?: RunCommand;
+  browserLauncher?: (
+    url: string,
+    options?: BrowserLauncherOptions,
+  ) => BrowserLaunchResult | Promise<BrowserLaunchResult> | void;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   desktopDirs?: string[];
   installTimeoutMs?: number;
   skipAptUpdate?: boolean;
+  windowTimeoutMs?: number;
+  pollIntervalMs?: number;
+  coldStartMs?: number;
+  existingWindowGraceMs?: number;
 };
 
 const KNOWN_APPS: AppDefinition[] = [
@@ -297,90 +296,6 @@ export function normalizeAppName(input: string): string {
     .replace(/\s+/g, " ");
 }
 
-function defaultCommandExists(command: string): boolean {
-  if (isAbsolute(command)) {
-    try {
-      accessSync(command, constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  return (process.env.PATH ?? "")
-    .split(delimiter)
-    .filter(Boolean)
-    .some((pathEntry) => {
-      try {
-        accessSync(join(pathEntry, command), constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-}
-
-function defaultRunCommand(command: string, args: string[], options: CommandRunOptions = {}): Promise<CommandRunResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-
-    const append = (current: string, chunk: Buffer) => (
-      current + chunk.toString("utf8")
-    ).slice(-MAX_COMMAND_OUTPUT_BYTES);
-
-    const settle = (result: CommandRunResult) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      resolve(result);
-    };
-
-    if (options.timeoutMs && options.timeoutMs > 0) {
-      timeout = setTimeout(() => {
-        child.kill("SIGTERM");
-        settle({
-          exitCode: null,
-          signal: "SIGTERM",
-          stdout,
-          stderr,
-          error: "Comando agotado por timeout.",
-        });
-      }, options.timeoutMs);
-    }
-
-    child.stdout?.on("data", (chunk) => {
-      stdout = append(stdout, chunk);
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr = append(stderr, chunk);
-    });
-    child.on("error", (error) => {
-      settle({
-        exitCode: null,
-        signal: null,
-        stdout,
-        stderr,
-        error: error.message,
-      });
-    });
-    child.on("exit", (exitCode, signal) => {
-      settle({ exitCode, signal, stdout, stderr });
-    });
-  });
-}
-
 function resolveApp(input: string, apps: AppDefinition[]): AppDefinition | null {
   const normalized = normalizeAppName(input);
   const exact = apps.find((app) => app.aliases.some((alias) => normalizeAppName(alias) === normalized));
@@ -461,10 +376,6 @@ function conciseCommandFailure(result: CommandRunResult): string {
   return (result.stderr || result.stdout || result.error || "El comando no devolvio detalles.").trim();
 }
 
-function canUseSway(env: NodeJS.ProcessEnv, commandExists: (command: string) => boolean): boolean {
-  return Boolean(env.SWAYSOCK) && commandExists("swaymsg");
-}
-
 function normalizeWindowToken(input: string | undefined): string {
   return normalizeAppName(input ?? "").replace(/\.desktop$/i, "");
 }
@@ -481,94 +392,6 @@ function appWindowCandidates(app: AppDefinition): Set<string> {
     ...app.aliases,
     ...commandNames,
   ].map(normalizeWindowToken).filter(Boolean));
-}
-
-function walkSwayTree(node: SwayNode | undefined): SwayNode[] {
-  if (!node) {
-    return [];
-  }
-
-  return [
-    node,
-    ...(node.nodes ?? []).flatMap(walkSwayTree),
-    ...(node.floating_nodes ?? []).flatMap(walkSwayTree),
-  ];
-}
-
-function nodeTokens(node: SwayNode): string[] {
-  return [
-    node.app_id ?? undefined,
-    node.name,
-    node.window_properties?.class,
-    node.window_properties?.instance,
-    node.window_properties?.title,
-  ].map(normalizeWindowToken).filter(Boolean);
-}
-
-function findMatchingWindow(tree: SwayNode, app: AppDefinition): SwayNode | null {
-  const candidates = appWindowCandidates(app);
-  for (const node of walkSwayTree(tree)) {
-    if (!node.id || (!node.app_id && !node.window && !node.pid)) {
-      continue;
-    }
-
-    const tokens = nodeTokens(node);
-    if (tokens.some((token) => candidates.has(token))) {
-      return node;
-    }
-
-    if (tokens.some((token) => [...candidates].some((candidate) => token.includes(candidate) || candidate.includes(token)))) {
-      return node;
-    }
-  }
-
-  return null;
-}
-
-async function settleLaunchedWindow(input: {
-  app: AppDefinition;
-  workspace: unknown;
-  focus: boolean;
-  env: NodeJS.ProcessEnv;
-  commandExists: (command: string) => boolean;
-  runCommand: (command: string, args: string[], options?: CommandRunOptions) => Promise<CommandRunResult>;
-}): Promise<"confirmed" | "unsupported" | "not-found"> {
-  if (!canUseSway(input.env, input.commandExists)) {
-    return "unsupported";
-  }
-
-  const workspaceName = workspaceNameFor(input.workspace);
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const treeResult = await input.runCommand("swaymsg", ["-t", "get_tree"], {
-      env: input.env,
-      timeoutMs: 1000,
-    });
-    if (treeResult.exitCode !== 0 || !treeResult.stdout.trim()) {
-      return "not-found";
-    }
-
-    if (treeResult.exitCode === 0 && treeResult.stdout.trim()) {
-      try {
-        const tree = JSON.parse(treeResult.stdout) as SwayNode;
-        const window = findMatchingWindow(tree, input.app);
-        if (window?.id) {
-          const focusSuffix = input.focus ? ", focus" : "";
-          const command = `[con_id=${window.id}] move to workspace "${workspaceName}"${focusSuffix}`;
-          const moveResult = await input.runCommand("swaymsg", [command], {
-            env: input.env,
-            timeoutMs: 1000,
-          });
-          return moveResult.exitCode === 0 ? "confirmed" : "not-found";
-        }
-      } catch {
-        return "not-found";
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-
-  return "not-found";
 }
 
 async function runPrivilegedCommand(
@@ -600,33 +423,43 @@ async function runPrivilegedCommand(
 }
 
 export function createAppTool(options: AppToolOptions = {}) {
-  const commandExists = options.commandExists ?? defaultCommandExists;
-  const spawnCommand = options.spawnCommand ?? ((command: string, args: string[]) => {
-    const child = spawn(command, args, {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-  });
+  const env = resolveGraphicalSessionEnv(options.env ?? process.env);
+  const commandExists = options.commandExists ?? ((command: string) => executableExists(command, env));
+  const spawnCommand = options.spawnCommand;
   const runCommand = options.runCommand ?? defaultRunCommand;
-  const env = options.env ?? process.env;
 
-  async function completeLaunch(app: AppDefinition, workspace: unknown, focus: boolean): Promise<AppOpenResponse> {
-    const status = await settleLaunchedWindow({
-      app,
+  async function launchCommand(
+    app: AppDefinition,
+    command: string,
+    args: string[],
+    workspace: unknown,
+    focus: boolean,
+    launchOptions: AppLaunchOptions,
+  ): Promise<AppOpenResponse> {
+    const result = await launchGraphicalApplication({
+      command,
+      args,
+      label: app.displayName,
       workspace,
       focus,
       env,
+      windowTokens: [...appWindowCandidates(app)],
       commandExists,
+      spawnCommand,
       runCommand,
+      windowTimeoutMs: options.windowTimeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      coldStartMs: options.coldStartMs,
+      existingWindowGraceMs: options.existingWindowGraceMs,
+      signal: launchOptions.signal,
+      onProgress: launchOptions.onProgress,
     });
     return {
-      ok: true,
+      ok: result.ok,
       appId: app.appId,
       displayName: app.displayName,
-      message: status === "not-found"
-        ? `Lance ${app.displayName}, pero no pude confirmar ni enfocar su ventana.`
-        : `Abriendo ${app.displayName}.`,
+      status: result.status,
+      message: result.message,
     };
   }
 
@@ -643,7 +476,7 @@ export function createAppTool(options: AppToolOptions = {}) {
       };
     },
 
-    async openApp(input: AppOpenInput): Promise<AppOpenResponse> {
+    async openApp(input: AppOpenInput, launchOptions: AppLaunchOptions = {}): Promise<AppOpenResponse> {
       const launchInput = parseAppOpenInput(input);
       const apps = [...KNOWN_APPS, ...discoverDesktopApps(options, commandExists)];
       const app = resolveApp(launchInput.app, apps);
@@ -655,30 +488,34 @@ export function createAppTool(options: AppToolOptions = {}) {
       }
 
       const workspace = launchInput.workspace ?? resolveDefaultWorkspaceForApp(app.appId);
-      const focusWorkspace = () => {
-        if (!launchInput.focus) {
-          return;
-        }
-
-        createWorkspaceService({
-          commandExists,
-          env,
-          spawnCommand: (command, args) => spawnCommand(command, args),
-        }).focusWorkspaceSync({ workspace, source: "system" });
-      };
 
       if (app.appId === "browser") {
         try {
-          const browserLauncher = options.browserLauncher ?? ((url: string, browserOptions?: BrowserLauncherOptions) => {
-            launchBrowserUrl(url, browserOptions);
-          });
-          browserLauncher("https://www.google.com", {
+          const browserLauncher = options.browserLauncher ?? launchBrowserUrl;
+          const result = await browserLauncher("https://www.google.com", {
             commandExists,
             env,
+            homeDir: options.homeDir,
             workspace,
             focus: launchInput.focus,
-            spawnCommand: (command, args) => spawnCommand(command, args),
+            spawnCommand,
+            runCommand,
+            windowTimeoutMs: options.windowTimeoutMs,
+            pollIntervalMs: options.pollIntervalMs,
+            coldStartMs: options.coldStartMs,
+            existingWindowGraceMs: options.existingWindowGraceMs,
+            signal: launchOptions.signal,
+            onProgress: launchOptions.onProgress,
           });
+          if (result) {
+            return {
+              ok: result.ok,
+              appId: app.appId,
+              displayName: app.displayName,
+              status: result.status,
+              message: result.message,
+            };
+          }
           return {
             ok: true,
             appId: app.appId,
@@ -696,15 +533,25 @@ export function createAppTool(options: AppToolOptions = {}) {
       }
 
       if (app.desktopId && commandExists("gtk-launch")) {
-        focusWorkspace();
-        spawnCommand("gtk-launch", [app.desktopId.replace(/\.desktop$/i, "")]);
-        return completeLaunch(app, workspace, launchInput.focus);
+        return launchCommand(
+          app,
+          "gtk-launch",
+          [app.desktopId.replace(/\.desktop$/i, "")],
+          workspace,
+          launchInput.focus,
+          launchOptions,
+        );
       }
 
       if (app.desktopPath && commandExists("gio")) {
-        focusWorkspace();
-        spawnCommand("gio", ["launch", app.desktopPath]);
-        return completeLaunch(app, workspace, launchInput.focus);
+        return launchCommand(
+          app,
+          "gio",
+          ["launch", app.desktopPath],
+          workspace,
+          launchInput.focus,
+          launchOptions,
+        );
       }
 
       const command = app.commands.find((candidate) => commandExists(candidate.command));
@@ -717,9 +564,14 @@ export function createAppTool(options: AppToolOptions = {}) {
         };
       }
 
-      focusWorkspace();
-      spawnCommand(command.command, command.args ?? []);
-      return completeLaunch(app, workspace, launchInput.focus);
+      return launchCommand(
+        app,
+        command.command,
+        command.args ?? [],
+        workspace,
+        launchInput.focus,
+        launchOptions,
+      );
     },
 
     async installApp(input: string, installOptions: { openAfterInstall?: boolean; openAs?: string } = {}): Promise<AppInstallResponse> {

@@ -1,8 +1,16 @@
-import { createFileTool, type FileOpenResponse } from "./files";
+import { createFileTool, type FileLaunchOptions, type FileOpenResponse } from "./files";
 
 type FileToolLike = {
-  openPath(input: string | { path?: unknown; workspace?: unknown; focus?: unknown }): Promise<FileOpenResponse>;
+  openPath(
+    input: string | { path?: unknown; workspace?: unknown; focus?: unknown },
+    options?: FileLaunchOptions,
+  ): Promise<FileOpenResponse>;
 };
+
+type ToolUpdateCallback = (update: {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown;
+}) => void;
 
 type PiCustomToolLike = {
   name: string;
@@ -15,7 +23,7 @@ type PiCustomToolLike = {
     toolCallId: string,
     params: Record<string, unknown>,
     signal?: AbortSignal,
-    onUpdate?: unknown,
+    onUpdate?: ToolUpdateCallback,
     ctx?: unknown,
   ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
 };
@@ -52,11 +60,17 @@ export function createOpenFileModelTool(fileTool: FileToolLike = createFileTool(
       "Si el usuario menciona un workspace, pasa ese numero en workspace.",
     ],
     parameters: OPEN_FILE_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal, onUpdate) {
       const response = await fileTool.openPath({
         path: params.path,
         workspace: params.workspace,
         focus: typeof params.focus === "boolean" ? params.focus : true,
+      }, {
+        signal,
+        onProgress: (message) => onUpdate?.({
+          content: [{ type: "text", text: message }],
+          details: { ok: true, status: "starting", message },
+        }),
       });
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],

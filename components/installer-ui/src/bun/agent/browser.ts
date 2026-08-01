@@ -8,7 +8,10 @@ import {
 export { normalizeBrowserUrl };
 
 export type BrowserToolOptions = {
-  browserLauncher?: (url: string, options?: BrowserLauncherOptions) => BrowserLaunchResult;
+  browserLauncher?: (
+    url: string,
+    options?: BrowserLauncherOptions,
+  ) => BrowserLaunchResult | Promise<BrowserLaunchResult>;
   launcherOptions?: BrowserLauncherOptions;
 };
 
@@ -17,11 +20,19 @@ export function createBrowserTool(options: BrowserToolOptions = {}) {
 
   return {
     async openUrl(input: string) {
-      const result = browserLauncher(input, options.launcherOptions);
-      return {
-        ok: true,
-        message: `Abriendo ${result.url}.`,
-      };
+      try {
+        const result = await browserLauncher(input, options.launcherOptions);
+        return {
+          ok: result.ok,
+          status: result.status,
+          message: result.message,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : "No pude abrir Chromium.",
+        };
+      }
     },
   };
 }

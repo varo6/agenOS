@@ -27,7 +27,8 @@ import {
 } from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
 import { createAgentTaskModelTool, createHttpAgentTaskClient, type AgentTaskClient } from "../../agent/agent-task-tool";
-import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
+import { createAppTool, type AppInstallResponse, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
+import { createOpenBrowserModelTool } from "../../agent/browser-open-tool";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
 import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
 import { createOpenClawSetupService, type OpenClawSetupService } from "../../installer-ui/src/bun/agent/setup";
@@ -89,7 +90,7 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"];
+const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task"];
 const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
@@ -108,6 +109,7 @@ type PiAgentEventLike = {
   message?: PiMessageLike;
   toolName?: string;
   result?: unknown;
+  partialResult?: { content?: unknown };
   isError?: boolean;
   assistantMessageEvent?: {
     type?: string;
@@ -157,9 +159,17 @@ type CodexDeviceAuthOptions = {
 };
 
 type AppToolLike = {
-  openApp(input: string | { app?: unknown; workspace?: unknown; focus?: unknown }): Promise<AppOpenResponse>;
+  openApp(
+    input: string | { app?: unknown; workspace?: unknown; focus?: unknown },
+    options?: AppLaunchOptions,
+  ): Promise<AppOpenResponse>;
   installApp(input: string, options?: { openAfterInstall?: boolean; openAs?: string }): Promise<AppInstallResponse>;
 };
+
+type PiToolUpdateCallback = (update: {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown;
+}) => void;
 
 type PiCustomToolLike = {
   name: string;
@@ -172,7 +182,7 @@ type PiCustomToolLike = {
     toolCallId: string,
     params: Record<string, unknown>,
     signal?: AbortSignal,
-    onUpdate?: unknown,
+    onUpdate?: PiToolUpdateCallback,
     ctx?: unknown,
   ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
 };
@@ -367,11 +377,17 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
       "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
     ],
     parameters: OPEN_APP_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, signal, onUpdate) {
       const response = await appTool.openApp({
         app: typeof params.app === "string" ? params.app : "",
         workspace: params.workspace,
         focus: typeof params.focus === "boolean" ? params.focus : true,
+      }, {
+        signal,
+        onProgress: (message) => onUpdate?.({
+          content: [{ type: "text", text: message }],
+          details: { ok: true, status: "starting", message },
+        }),
       });
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
@@ -667,6 +683,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         thinkingLevel: "minimal",
         tools: tools ?? FOREGROUND_MODEL_TOOLS,
         customTools: (customTools ?? [
+          createOpenBrowserModelTool(),
           createOpenAppModelTool(appTool),
           createInstallAppModelTool(appTool),
           createOpenFileModelTool(),
@@ -999,6 +1016,15 @@ export class PiHarness {
 
         if (event.type === "tool_execution_start" && event.toolName) {
           turn.progress.currentTool = event.toolName;
+          delete turn.progress.currentToolMessage;
+        }
+
+        if (event.type === "tool_execution_update" && event.toolName) {
+          const update = extractTextContent(event.partialResult?.content).trim();
+          if (update) {
+            turn.progress.currentTool = event.toolName;
+            turn.progress.currentToolMessage = truncateTurnText(update);
+          }
         }
 
         if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName)) {
@@ -1017,6 +1043,7 @@ export class PiHarness {
         if (event.type === "tool_execution_end" && event.toolName) {
           turn.progress.completedTools.push(event.toolName);
           turn.progress.currentTool = null;
+          delete turn.progress.currentToolMessage;
         }
       });
 
@@ -1238,6 +1265,7 @@ export class PiHarness {
       sessionManager: this.sessionManager,
       tools: FOREGROUND_MODEL_TOOLS,
       customTools: [
+        createOpenBrowserModelTool(),
         createOpenAppModelTool(this.deps.appTool),
         createInstallAppModelTool(this.deps.appTool),
         createOpenFileModelTool(),

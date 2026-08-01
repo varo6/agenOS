@@ -1,39 +1,65 @@
-import { accessSync, constants, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
-import { spawn } from "node:child_process";
-import { createWorkspaceService } from "./workspaces";
+import { join } from "node:path";
+import {
+  launchGraphicalApplication,
+  resolveExecutable,
+  type GraphicalLaunchResult,
+  type RunCommand,
+  type SpawnGraphicalCommand,
+} from "./graphical-launcher";
 import { resolveGraphicalSessionEnv } from "./session-env";
 
-type SpawnOptions = {
-  env: NodeJS.ProcessEnv;
-};
+export type BrowserPlatform = "wayland" | "x11";
 
 export type BrowserLauncherOptions = {
   commandExists?: (command: string) => boolean;
-  spawnCommand?: (command: string, args: string[], options: SpawnOptions) => void;
+  spawnCommand?: SpawnGraphicalCommand;
+  runCommand?: RunCommand;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   profileDir?: string;
   skipGraphicalSessionCheck?: boolean;
   workspace?: unknown;
   focus?: boolean;
+  windowTimeoutMs?: number;
+  pollIntervalMs?: number;
+  coldStartMs?: number;
+  existingWindowGraceMs?: number;
+  disableGpu?: boolean;
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
+  uid?: number;
+  logger?: Pick<Console, "warn">;
 };
 
-export type BrowserLaunchResult = {
-  command: string;
-  args: string[];
+export type BrowserLaunchResult = GraphicalLaunchResult & {
   url: string;
+  platform: BrowserPlatform;
+  profileDir: string;
+  profileCreated: boolean;
+  securityDegraded: boolean;
+  graphicsDegraded: boolean;
 };
 
 const BROWSER_COMMANDS = [
-  "google-chrome",
-  "google-chrome-stable",
   "/usr/bin/chromium",
+  "chromium",
   "/usr/bin/chromium-browser",
+  "chromium-browser",
+  "google-chrome-stable",
+  "google-chrome",
+  "/snap/bin/chromium",
+];
+
+const BROWSER_WINDOW_TOKENS = [
   "chromium",
   "chromium-browser",
-  "/snap/bin/chromium",
+  "google-chrome",
+  "google-chrome-stable",
+  "Chromium",
+  "Google-chrome",
+  "Google-chrome-stable",
 ];
 
 export function normalizeBrowserUrl(input: string): string {
@@ -49,38 +75,6 @@ export function normalizeBrowserUrl(input: string): string {
   }
 
   return url.toString();
-}
-
-function defaultCommandExists(command: string): boolean {
-  if (isAbsolute(command)) {
-    try {
-      accessSync(command, constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  return (process.env.PATH ?? "")
-    .split(delimiter)
-    .filter(Boolean)
-    .some((pathEntry) => {
-      try {
-        accessSync(join(pathEntry, command), constants.X_OK);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-}
-
-function defaultSpawnCommand(command: string, args: string[], options: SpawnOptions): void {
-  const child = spawn(command, args, {
-    detached: true,
-    env: options.env,
-    stdio: "ignore",
-  });
-  child.unref();
 }
 
 function hasGraphicalSession(env: NodeJS.ProcessEnv): boolean {
@@ -106,48 +100,160 @@ function browserEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     MOZ_ENABLE_WAYLAND: env.MOZ_ENABLE_WAYLAND || "1",
     XDG_CURRENT_DESKTOP: env.XDG_CURRENT_DESKTOP || "AgenOS",
     XDG_SESSION_DESKTOP: env.XDG_SESSION_DESKTOP || "agenos",
-    XDG_SESSION_TYPE: env.XDG_SESSION_TYPE || "wayland",
   };
 }
 
-function buildChromiumArgs(url: string, profileDir: string): string[] {
+export function resolveBrowserPlatform(env: NodeJS.ProcessEnv): BrowserPlatform {
+  const configured = env.AGENOS_BROWSER_OZONE_PLATFORM?.trim().toLowerCase();
+  if (configured && configured !== "auto" && configured !== "wayland" && configured !== "x11") {
+    throw new Error("AGENOS_BROWSER_OZONE_PLATFORM debe ser auto, wayland o x11.");
+  }
+
+  if (configured === "wayland") {
+    if (!env.WAYLAND_DISPLAY) {
+      throw new Error("Se pidió Chromium sobre Wayland, pero WAYLAND_DISPLAY no está disponible.");
+    }
+    return "wayland";
+  }
+
+  if (configured === "x11") {
+    if (!env.DISPLAY) {
+      throw new Error("Se pidió Chromium sobre X11/XWayland, pero DISPLAY no está disponible.");
+    }
+    return "x11";
+  }
+
+  return env.WAYLAND_DISPLAY ? "wayland" : "x11";
+}
+
+export function buildChromiumArgs(input: {
+  url: string;
+  profileDir: string;
+  platform: BrowserPlatform;
+  disableSandbox: boolean;
+  disableGpu?: boolean;
+}): string[] {
   return [
     "--new-window",
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
-    "--ozone-platform-hint=auto",
-    `--user-data-dir=${profileDir}`,
-    url,
+    `--ozone-platform=${input.platform}`,
+    `--user-data-dir=${input.profileDir}`,
+    ...(input.disableSandbox ? ["--no-sandbox"] : []),
+    ...(input.disableGpu ? ["--disable-gpu"] : []),
+    input.url,
   ];
 }
 
-export function launchBrowserUrl(input: string, options: BrowserLauncherOptions = {}): BrowserLaunchResult {
+export async function launchBrowserUrl(
+  input: string,
+  options: BrowserLauncherOptions = {},
+): Promise<BrowserLaunchResult> {
   const env = browserEnv(resolveGraphicalSessionEnv(options.env ?? process.env));
   if (!options.skipGraphicalSessionCheck && !hasGraphicalSession(env)) {
-    throw new Error("No hay una sesion grafica Wayland/X11 disponible para abrir el navegador.");
+    throw new Error("No hay una sesión gráfica Wayland/X11 disponible para abrir el navegador.");
   }
 
-  const commandExists = options.commandExists ?? defaultCommandExists;
-  const spawnCommand = options.spawnCommand ?? defaultSpawnCommand;
-  const command = BROWSER_COMMANDS.find((candidate) => commandExists(candidate));
+  const command = resolveExecutable(BROWSER_COMMANDS, env, options.commandExists);
   if (!command) {
-    throw new Error("No encontre Chromium/Chrome instalado para abrir el navegador.");
+    throw new Error("No encontré Chromium/Chrome instalado. Instala el paquete chromium y vuelve a intentarlo.");
   }
 
   const url = normalizeBrowserUrl(input);
+  const platform = resolveBrowserPlatform(env);
   const profileDir = resolveProfileDir(options, env);
-  mkdirSync(profileDir, { recursive: true });
-
-  if (options.focus !== false) {
-    createWorkspaceService({ commandExists, spawnCommand, env }).focusWorkspaceSync({
-      workspace: options.workspace ?? 3,
-      source: "system",
-    });
+  const profileCreated = !existsSync(profileDir);
+  if (profileCreated) {
+    options.onProgress?.("Preparando el perfil persistente de Chromium para el primer arranque…");
+  }
+  try {
+    mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+    chmodSync(profileDir, 0o700);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`No pude preparar el perfil de Chromium en ${profileDir}: ${detail}`);
   }
 
-  const args = buildChromiumArgs(url, profileDir);
-  spawnCommand(command, args, { env });
+  const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
+  const securityDegraded = uid === 0;
+  if (securityDegraded) {
+    const warning = "Chromium se iniciará con --no-sandbox porque la sesión se está ejecutando como root. Usa el usuario agenos para recuperar el aislamiento.";
+    (options.logger ?? console).warn(`[browser-launcher] ${warning}`);
+    options.onProgress?.(`Advertencia de seguridad: ${warning}`);
+  }
 
-  return { command, args, url };
+  const graphicsDegraded = options.disableGpu
+    ?? (env.AGENOS_BROWSER_DISABLE_GPU === "1" || env.WLR_RENDERER === "pixman");
+  if (graphicsDegraded) {
+    options.onProgress?.("Chromium usará renderizado por software para evitar una ventana negra en esta sesión.");
+  }
+
+  const launchOnPlatform = async (targetPlatform: BrowserPlatform) => {
+    const args = buildChromiumArgs({
+      url,
+      profileDir,
+      platform: targetPlatform,
+      disableSandbox: securityDegraded,
+      disableGpu: graphicsDegraded,
+    });
+    const launch = await launchGraphicalApplication({
+      command,
+      args,
+      env,
+      label: "Chromium",
+      workspace: options.workspace ?? 3,
+      focus: options.focus !== false,
+      windowTokens: BROWSER_WINDOW_TOKENS,
+      commandExists: options.commandExists,
+      spawnCommand: options.spawnCommand,
+      runCommand: options.runCommand,
+      windowTimeoutMs: options.windowTimeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+      coldStartMs: options.coldStartMs,
+      existingWindowGraceMs: options.existingWindowGraceMs,
+      signal: options.signal,
+      onProgress: options.onProgress,
+    });
+    return { args, launch };
+  };
+
+  let actualPlatform = platform;
+  let { args, launch } = await launchOnPlatform(platform);
+  const configuredPlatform = env.AGENOS_BROWSER_OZONE_PLATFORM?.trim().toLowerCase();
+  const canFallbackToX11 = platform === "wayland"
+    && Boolean(env.DISPLAY)
+    && (!configuredPlatform || configuredPlatform === "auto")
+    && launch.status === "failed";
+  if (canFallbackToX11) {
+    options.onProgress?.("Chromium falló sobre Wayland; reintentando mediante XWayland…");
+    actualPlatform = "x11";
+    const fallback = await launchOnPlatform(actualPlatform);
+    args = fallback.args;
+    launch = {
+      ...fallback.launch,
+      message: fallback.launch.ok
+        ? `El arranque Wayland falló; ${fallback.launch.message} Se usó XWayland como respaldo.`
+        : `Chromium falló sobre Wayland y también sobre XWayland. ${fallback.launch.message}`,
+    };
+  }
+
+  return {
+    ...launch,
+    message: [
+      launch.message,
+      ...(securityDegraded
+        ? ["Advertencia: Chromium se ejecutó sin sandbox porque el proceso de AgenOS es root."]
+        : []),
+      ...(graphicsDegraded
+        ? ["Se desactivó la aceleración GPU porque Sway usa pixman o así lo pidió la configuración."]
+        : []),
+    ].join(" "),
+    url,
+    platform: actualPlatform,
+    profileDir,
+    profileCreated,
+    securityDegraded,
+    graphicsDegraded,
+  };
 }
