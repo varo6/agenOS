@@ -59,3 +59,21 @@ Each scenario matches one trace by prompt text, then checks stable fields:
 - max duration
 
 Use this to test harness behavior after manually driving Pi through the prompts in `scenarios/pi-smoke.json`.
+
+## Confirmed-memory comparison
+
+`src/learning-live.ts` drives the real foreground harness once in an isolated temporary agent
+directory. It copies OAuth credentials into that directory, deletes the copy afterwards, and
+writes only the redacted harness trace. Run baseline and learned variants separately so their
+session histories cannot contaminate each other:
+
+```bash
+bun run learning:live -- --mode baseline --auth ~/.codex/auth.json --out .out/self-improvement/baseline.ndjson
+bun run learning:live -- --mode learned --auth ~/.codex/auth.json --out .out/self-improvement/learned.ndjson
+cd ../..
+make pi-harness-eval ARGS="--suite scenarios/pi-learning.json --trace .out/self-improvement/learned.ndjson --out .out/self-improvement/learned-report"
+```
+
+The learning suite checks both user-visible recall and trace evidence: selected learned-memory
+IDs, the context token budget, final status, output, and latency. A selected memory is not counted
+as behavioral improvement unless the complete scenario passes.

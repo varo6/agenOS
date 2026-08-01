@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { evaluateSuite } from "./evaluate";
-import type { EvalSuite, HarnessTraceRecord } from "./types";
+import { evaluateScenario, evaluateSuite } from "./evaluate";
+import type { EvalScenario, EvalSuite, HarnessTraceRecord } from "./types";
 
 const suite: EvalSuite = {
   schemaVersion: 1,
@@ -124,5 +124,31 @@ describe("evaluateSuite", () => {
 
     expect(result.total.failed).toBe(3);
     expect(result.results[0].failureCodes).toEqual(["missing_trace"]);
+  });
+
+  test("scores learned-memory selection and token budget from trace metadata", () => {
+    const scenario: EvalScenario = {
+      id: "learning",
+      split: "held-out",
+      category: "learning",
+      prompt: "resume el proyecto",
+      expect: {
+        status: "succeeded",
+        learningContextIncludes: ["learn_summary"],
+        learningContextExcludes: ["learn_browser"],
+        maxLearningContextTokens: 128,
+      },
+    };
+    const result = evaluateScenario(scenario, [{
+      ...traces[0]!,
+      input: { text: scenario.prompt },
+      harness: {
+        promptHash: "learned",
+        tools: [],
+        learningContext: { itemIds: ["learn_summary"], estimatedTokens: 80, tokenBudget: 128, truncated: false },
+      },
+    }]);
+
+    expect(result.passed).toBe(true);
   });
 });

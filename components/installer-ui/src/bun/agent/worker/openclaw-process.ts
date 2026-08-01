@@ -12,6 +12,7 @@ export type OpenClawProcessAdapterOptions = {
   runtime?: OpenClawRuntime;
   idFactory?: () => string;
   correlationIdFactory?: () => string;
+  learnedContextProvider?: (query: string) => Promise<string> | string;
 };
 
 export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOptions): WorkerAdapter & { superviseGateway: () => { stop: () => void } } {
@@ -47,7 +48,8 @@ export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOpti
 
   async function runTask(task: WorkerTask): Promise<void> {
     appendTaskEvent(task, "started", "OpenClaw esta procesando la tarea.", "running", 10);
-    const result = await runtime.chat(task.message);
+    const learnedContext = await options.learnedContextProvider?.(task.message) ?? "";
+    const result = await runtime.chat(task.message, { systemContext: learnedContext });
     if (result.ok) {
       appendTaskEvent(task, "completed", result.content ?? "Tarea completada.", "succeeded", 100);
       observability.increment("confirmed");

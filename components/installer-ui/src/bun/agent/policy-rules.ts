@@ -55,6 +55,14 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: all(toolIs("memory.write"), sourceIs("openclaw")),
   },
   {
+    ruleId: "agent.memory.learning.confirm",
+    tool: "memory.write",
+    source: "system",
+    decision: "confirm",
+    reason: "Activar conocimiento destilado automaticamente requiere confirmacion del usuario.",
+    matches: all(toolIs("memory.write"), sourceIs("system")),
+  },
+  {
     ruleId: "agent.outbound.background.confirm",
     tool: "outbound.send",
     source: "openclaw",

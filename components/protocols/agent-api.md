@@ -11,6 +11,8 @@ Convenciones:
 - Los endpoints worker-only exigen bearer token de `~/.agenos/broker/worker-token` (modo 0600).
 - Errores: `400` validación, `403` denegado por política, `405` método, `409` pendiente de
   confirmación, `503` subsistema no disponible.
+- Las señales de aprendizaje se pueden registrar sin confirmación, pero activar una memoria
+  destilada usa `memory.write` con origen `system` y siempre crea una confirmación pendiente.
 
 ## Salud y diagnóstico
 
@@ -95,6 +97,12 @@ Herramientas mediadas por política (`decidePolicy`):
 GET  /api/agent/memory/events
 GET  /api/agent/memory/:namespace                    namespace: contacts | preferences | facts
 POST /api/agent/memory/:namespace                    { content, source?, explicitUserIntent? }
+GET  /api/agent/learning/signals                     señales redactadas y auditables
+POST /api/agent/learning/signals/harness             ingesta local de una traza redactada de Pi
+GET  /api/agent/learning/memories                    memorias confirmadas activas (`?includeDeleted=true` para historial)
+POST /api/agent/learning/memories/:itemId             corrige una entrada por intención explícita del usuario
+DELETE /api/agent/learning/memories/:itemId           olvida una entrada por intención explícita del usuario
+GET  /api/agent/learning/context                      selección auditable (`query`, `tokenBudget`; máximo 512)
 POST /api/agent/apps/open                            { app, workspace?, focus? }
 POST /api/agent/browser/open-url                     { url }
 POST /api/agent/shell/exec                           { command, cwd?, timeoutMs? }
@@ -103,6 +111,11 @@ POST /api/agent/workspaces/focus                     { workspace, source? }
 POST /api/agent/worker/tool-call                     worker-only (bearer token)
 GET  /api/agent/worker/health
 ```
+
+Las memorias aprendidas son registros estructurados append-only con `kind` (`preference`,
+`procedure`, `avoidance`), confianza, señales fuente, caducidad e ID visible. Corregir o borrar
+no reescribe el historial. Las trazas del harness incluyen `harness.learningContext` con los IDs
+y el presupuesto realmente inyectados; el texto de memoria no se copia a esa metadata.
 
 ## Sistema e instalador
 

@@ -121,6 +121,30 @@ export function evaluateScenario(scenario: EvalScenario, traces: HarnessTraceRec
     });
   }
 
+  const learningContext = trace.harness?.learningContext;
+  for (const itemId of scenario.expect.learningContextIncludes ?? []) {
+    assertions.push({
+      ok: learningContext?.itemIds?.includes(itemId) === true,
+      code: "learning_context_missing",
+      message: `Expected learned memory ${itemId} in the injected context.`,
+    });
+  }
+  for (const itemId of scenario.expect.learningContextExcludes ?? []) {
+    assertions.push({
+      ok: learningContext?.itemIds?.includes(itemId) !== true,
+      code: "learning_context_irrelevant",
+      message: `Expected learned memory ${itemId} to stay out of the injected context.`,
+    });
+  }
+  if (typeof scenario.expect.maxLearningContextTokens === "number") {
+    const actual = learningContext?.estimatedTokens ?? 0;
+    assertions.push({
+      ok: actual <= scenario.expect.maxLearningContextTokens,
+      code: "learning_context_budget_exceeded",
+      message: `Expected learned context <= ${scenario.expect.maxLearningContextTokens} tokens, got ${actual}.`,
+    });
+  }
+
   return finish(scenario, trace, assertions);
 }
 

@@ -13,6 +13,7 @@ import type {
 import type { NetworkStatusResponse } from "../../../network/types";
 import { createInstallerApiHandler } from "./server";
 import { createConfirmationStore } from "./agent/confirmations";
+import { createLearnedMemoryStore } from "./agent/learned-memory";
 
 const validProfile: InstallerProfilePayload = {
   schemaVersion: 1,
@@ -737,6 +738,74 @@ describe("createInstallerApiHandler", () => {
       },
     ]);
     expect(JSON.stringify(payload)).not.toContain("Pablo Lopez es mi profesor");
+  });
+
+  test("learning proposals require confirmation and remain user-correctable and deletable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-learning-api-"));
+    const confirmations = createConfirmationStore({
+      rootDir: join(root, "confirmations"),
+      idFactory: () => "conf_learning",
+      now: () => new Date("2026-08-13T10:00:00.000Z"),
+    });
+    const learnedMemory = createLearnedMemoryStore({
+      rootDir: join(root, "memory"),
+      itemIdFactory: () => "learn_1",
+      now: () => new Date("2026-08-13T10:00:00.000Z"),
+    });
+    const handler = createInstallerApiHandler({ confirmations, learnedMemory });
+    const trace = {
+      schemaVersion: 1,
+      traceId: "trace_learning",
+      timestamp: "2026-08-13T10:00:00.000Z",
+      source: "pi-chat",
+      channel: "text",
+      status: "succeeded",
+      durationMs: 20,
+      harness: { promptHash: "hash", tools: [] },
+      input: { text: "Prefiero respuestas en tres viñetas", length: 35, truncated: false },
+      output: { text: "Entendido", length: 9, truncated: false },
+      toolEvents: [],
+    };
+
+    const capture = await handler.fetch(new Request("http://localhost/api/agent/learning/signals/harness", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(trace),
+    }));
+    expect(capture.status).toBe(202);
+    expect(await jsonPayload(capture)).toMatchObject({ ok: true, proposals: 1 });
+
+    expect(await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/memories")))).toEqual([]);
+    expect(confirmations.get("conf_learning")).toMatchObject({
+      status: "pending",
+      source: "system",
+      tool: "memory.write",
+      input: { learned: { statement: "Prefiero respuestas en tres viñetas" } },
+    });
+
+    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_learning/confirm", { method: "POST" }));
+    expect(confirmed.status).toBe(202);
+    const active = await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/memories")));
+    expect(active).toEqual([expect.objectContaining({ itemId: "learn_1", statement: "Prefiero respuestas en tres viñetas", confirmationId: "conf_learning" })]);
+
+    const context = await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/context?query=respuestas&tokenBudget=160")));
+    expect(context).toMatchObject({ itemIds: ["learn_1"], tokenBudget: 160 });
+
+    const corrected = await handler.fetch(new Request("http://localhost/api/agent/learning/memories/learn_1", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statement: "Prefiero respuestas en dos viñetas", explicitUserIntent: true }),
+    }));
+    expect(corrected.status).toBe(202);
+    expect(await jsonPayload(corrected)).toMatchObject({ statement: "Prefiero respuestas en dos viñetas", userEdited: true });
+
+    const forgotten = await handler.fetch(new Request("http://localhost/api/agent/learning/memories/learn_1", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ explicitUserIntent: true }),
+    }));
+    expect(forgotten.status).toBe(202);
+    expect(await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/memories")))).toEqual([]);
   });
 
   test("agent task route enqueues background work", async () => {

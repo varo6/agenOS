@@ -26,6 +26,12 @@ export type HarnessTraceRecord = {
   harness?: {
     promptHash?: string;
     tools?: string[];
+    learningContext?: {
+      itemIds?: string[];
+      estimatedTokens?: number;
+      tokenBudget?: number;
+      truncated?: boolean;
+    };
   };
   input: TextPreview;
   output?: TextPreview;
@@ -43,6 +49,9 @@ export type ScenarioExpectation = {
   outputIncludesAny?: string[];
   outputExcludes?: string[];
   maxDurationMs?: number;
+  learningContextIncludes?: string[];
+  learningContextExcludes?: string[];
+  maxLearningContextTokens?: number;
 };
 
 export type EvalScenario = {

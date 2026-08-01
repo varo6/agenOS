@@ -25,10 +25,12 @@ import { runShellCommand } from "../../../agent/shell";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
+import { createLearnedMemoryStore } from "./agent/learned-memory";
+import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
 import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
-import { createToolRunner } from "./agent/tool-runner";
+import { applyMemoryWrite, createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createSupportBundle } from "./diagnostics/support-bundle";
 import { createSttService, type SttService } from "./speech/stt";
@@ -42,6 +44,8 @@ import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
 import type { AgentTaskClient } from "../../../agent/agent-task-tool";
+import type { LearningMemoryClient } from "../../../agent/learning-memory-tool";
+import type { HarnessTraceRecord } from "../../../agent/harness-trace";
 import type {
   PiAuthAttemptResponse,
   PiAuthMethod,
@@ -81,6 +85,8 @@ export type InstallerApiDependencies = {
   piHarness: PiHarnessApi;
   createPiHarness?: () => PiHarnessApi;
   memoryStore: ReturnType<typeof createMemoryStore>;
+  learnedMemory: ReturnType<typeof createLearnedMemoryStore>;
+  selfImprovement: ReturnType<typeof createSelfImprovementLoop>;
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
@@ -113,6 +119,20 @@ function isPermissionDenied(message: string | undefined): boolean {
   }
 
   return /denied|denegad|not authorized|cancelled/i.test(message);
+}
+
+function isHarnessTracePayload(value: unknown): value is HarnessTraceRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const trace = value as Partial<HarnessTraceRecord>;
+  return trace.schemaVersion === 1
+    && trace.source === "pi-chat"
+    && typeof trace.traceId === "string"
+    && typeof trace.timestamp === "string"
+    && (trace.status === "succeeded" || trace.status === "failed")
+    && typeof trace.input?.text === "string"
+    && Array.isArray(trace.toolEvents);
 }
 
 function launchFailureStatus(response: LaunchResponse, defaultStatus: number): number {
@@ -322,9 +342,16 @@ export function createInstallerApiHandler(
 ): { fetch: (request: Request) => Promise<Response> } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
+  const learnedMemory = dependencies.learnedMemory ?? createLearnedMemoryStore();
   const shellTool = dependencies.shellTool ?? runShellCommand;
-  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool });
+  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, learnedMemory, shellTool });
+  const selfImprovement = dependencies.selfImprovement ?? createSelfImprovementLoop({
+    memory: learnedMemory,
+    listConfirmations: (limit) => confirmations.list(limit),
+    proposeMemoryWrite: (input) => toolRunner.run({ source: "system", tool: "memory.write", input }),
+  });
   const taskQueue = dependencies.taskQueue ?? createTaskQueue({
+    learnedContextProvider: (query) => learnedMemory.context(query, 256).text,
     runToolCall: (call) => toolRunner.run({
       source: "system",
       taskId: call.taskId,
@@ -345,7 +372,11 @@ export function createInstallerApiHandler(
       return taskQueue.enqueue({ message, source: "ui" });
     },
     async status(taskId) {
-      return taskQueue.status(taskId);
+      const task = await taskQueue.status(taskId);
+      if (task) {
+        await selfImprovement.captureTask(task);
+      }
+      return task;
     },
     async events(taskId) {
       return taskQueue.events(taskId);
@@ -355,6 +386,23 @@ export function createInstallerApiHandler(
     },
     async health() {
       return taskQueue.health();
+    },
+  };
+  const piLearningMemoryClient: LearningMemoryClient = {
+    async list(includeDeleted) {
+      return learnedMemory.list({ includeDeleted });
+    },
+    async correct(itemId, statement) {
+      return learnedMemory.update(itemId, { statement });
+    },
+    async forget(itemId) {
+      return learnedMemory.delete(itemId);
+    },
+    async context(query, tokenBudget) {
+      return learnedMemory.context(query, tokenBudget);
+    },
+    async captureTrace(trace) {
+      await selfImprovement.captureHarnessTrace(trace);
     },
   };
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
@@ -375,8 +423,10 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup, agentTaskClient: piAgentTaskClient })),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup, agentTaskClient: piAgentTaskClient, learningMemoryClient: piLearningMemoryClient })),
     memoryStore,
+    learnedMemory,
+    selfImprovement,
     taskQueue,
     appTool: dependencies.appTool ?? createAppTool(),
     browserTool: dependencies.browserTool ?? createBrowserTool(),
@@ -400,7 +450,7 @@ export function createInstallerApiHandler(
 
       try {
         if (request.method === "OPTIONS") {
-          return options(["GET", "POST", "OPTIONS"]);
+          return options(["GET", "POST", "DELETE", "OPTIONS"]);
         }
 
         if (url.pathname === INSTALLER_ROUTES.health) {
@@ -810,6 +860,81 @@ export function createInstallerApiHandler(
           return json(deps.memoryStore.events(Number.isFinite(limit) ? limit : 50));
         }
 
+        if (url.pathname === "/api/agent/learning/memories") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.learnedMemory.list({ includeDeleted: url.searchParams.get("includeDeleted") === "true" }));
+        }
+
+        if (url.pathname === "/api/agent/learning/signals") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const limit = Number(url.searchParams.get("limit") ?? "100");
+          return json(deps.learnedMemory.signals(Number.isFinite(limit) ? limit : 100));
+        }
+
+        if (url.pathname === "/api/agent/learning/context") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const tokenBudget = Number(url.searchParams.get("tokenBudget") ?? "256");
+          return json(deps.learnedMemory.context(
+            url.searchParams.get("query") ?? "",
+            Number.isFinite(tokenBudget) ? tokenBudget : 256,
+          ));
+        }
+
+        if (url.pathname === "/api/agent/learning/signals/harness") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request);
+          if (!isHarnessTracePayload(payload)) {
+            return json({ ok: false, message: "Traza de harness invalida." }, { status: 400 });
+          }
+          const captured = await deps.selfImprovement.captureHarnessTrace(payload);
+          return json({
+            ok: true,
+            signalIds: captured.signals.map((signal) => signal.signalId),
+            proposals: captured.proposals.length,
+          }, { status: 202 });
+        }
+
+        const learnedMemoryMatch = url.pathname.match(/^\/api\/agent\/learning\/memories\/([^/]+)$/);
+        if (learnedMemoryMatch) {
+          const itemId = decodeURIComponent(learnedMemoryMatch[1] ?? "");
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as { statement?: unknown; explicitUserIntent?: unknown };
+            if (payload.explicitUserIntent !== true) {
+              return json({ ok: false, message: "La correccion requiere intencion explicita del usuario." }, { status: 403 });
+            }
+            const policy = decidePolicy({ tool: "memory.write", source: "ui", explicitUserIntent: payload.explicitUserIntent === true });
+            if (policy.decision !== "allow") {
+              return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, { status: policy.decision === "deny" ? 403 : 409 });
+            }
+            if (typeof payload.statement !== "string" || !payload.statement.trim()) {
+              return json({ ok: false, message: "La correccion no puede estar vacia." }, { status: 400 });
+            }
+            const item = deps.learnedMemory.update(itemId, { statement: payload.statement });
+            return item ? json(item, { status: 202 }) : json({ ok: false, message: "Memoria aprendida no encontrada." }, { status: 404 });
+          }
+          if (request.method === "DELETE") {
+            const payload = await readJsonBody(request) as { explicitUserIntent?: unknown };
+            if (payload.explicitUserIntent !== true) {
+              return json({ ok: false, message: "Olvidar memoria requiere intencion explicita del usuario." }, { status: 403 });
+            }
+            const policy = decidePolicy({ tool: "memory.delete", source: "ui", explicitUserIntent: payload.explicitUserIntent === true });
+            if (policy.decision !== "allow") {
+              return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, { status: 403 });
+            }
+            const item = deps.learnedMemory.delete(itemId);
+            return item ? json(item, { status: 202 }) : json({ ok: false, message: "Memoria aprendida no encontrada." }, { status: 404 });
+          }
+          return methodNotAllowed(["POST", "DELETE", "OPTIONS"]);
+        }
+
         if (url.pathname === "/api/agent/admin/status") {
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
@@ -915,6 +1040,9 @@ export function createInstallerApiHandler(
           const response = action === "retry"
             ? await deps.agentAdmin.retryTask(taskId, "ui")
             : await deps.agentAdmin.clearTask(taskId, "ui");
+          if (action === "retry") {
+            await deps.selfImprovement.captureRetry(taskId);
+          }
           return json(response, { status: "decision" in response && response.decision === "confirm" ? 409 : 202 });
         }
 
@@ -1003,16 +1131,15 @@ export function createInstallerApiHandler(
           }
 
           if (record.status === "confirmed" && record.tool === "memory.write") {
-            const input = record.input as { namespace?: unknown; content?: unknown };
-            const namespace = input.namespace;
-            if (namespace === "contacts" || namespace === "preferences" || namespace === "facts") {
-              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", {
-                source: record.source,
-                taskId: record.taskId,
-                correlationId: record.correlationId,
-                confirmationId: record.confirmationId,
-              });
-            }
+            applyMemoryWrite({ memoryStore: deps.memoryStore, learnedMemory: deps.learnedMemory }, record.input, {
+              source: record.source,
+              taskId: record.taskId,
+              correlationId: record.correlationId,
+              confirmationId: record.confirmationId,
+            });
+          }
+          if (record.status === "denied") {
+            await deps.selfImprovement.captureDenied(record);
           }
 
           return json({ ok: true, confirmation: record }, { status: 202 });
@@ -1071,6 +1198,7 @@ export function createInstallerApiHandler(
           if (!task) {
             return json({ ok: false, message: "Tarea no encontrada." }, { status: 404 });
           }
+          await deps.selfImprovement.captureTask(task);
           return json(task);
         }
 

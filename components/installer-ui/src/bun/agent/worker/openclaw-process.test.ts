@@ -107,6 +107,22 @@ describe("openclaw process adapter", () => {
     ]);
   });
 
+  test("injects broker-selected learned context into OpenClaw as system context", async () => {
+    const runtime = fakeRuntime();
+    const adapter = createOpenClawProcessAdapter({
+      stateDir: temporaryStateDir(),
+      runtime,
+      learnedContextProvider: async () => "Memoria confirmada: respuestas breves",
+    });
+
+    await adapter.enqueue({ message: "resume el proyecto", source: "ui" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(runtime.chat).toHaveBeenCalledWith("resume el proyecto", {
+      systemContext: "Memoria confirmada: respuestas breves",
+    });
+  });
+
   test("marks the task failed and records lastError when chat fails", async () => {
     const runtime = fakeRuntime({
       chat: mock(async () => ({ ok: false, content: null, message: "provider unavailable" })),
