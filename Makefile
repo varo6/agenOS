@@ -1,7 +1,7 @@
 IMAGE_NAME ?= agenos-live-build
 VERSION ?=
 
-.PHONY: build clean docker-image quick-test release release-build shell vm-live vm-disk vm-reset pi-harness-eval
+.PHONY: build clean docker-image quick-test release release-build shell vm-live vm-disk vm-reset pi-harness-eval test
 
 build:
 	SKIP_DOCKER_BUILD=1 $(MAKE) docker-image
@@ -16,6 +16,15 @@ quick-test:
 
 pi-harness-eval:
 	cd tools/pi-harness-eval && bun run eval -- $(ARGS)
+
+# Cada suite se lanza desde su propio directorio a proposito. No hay
+# package.json en la raiz, asi que un `bun test` suelto aqui recorre todo el
+# arbol -- incluido build/live-build/chroot/usr/lib/node_modules -- y se cuelga.
+test:
+	cd components/ui && bun run test
+	cd components/installer-ui && bun run test
+	cd components/installer-ui && bun test ../agent
+	python3 -m unittest discover -s tests -p 'test_*.py' -t tests
 
 release:
 	VERSION="$(VERSION)" ./scripts/release.sh
