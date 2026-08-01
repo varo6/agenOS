@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "codex:direct": "bun run src/codex-direct.ts",
+    "learning:live": "bun run src/learning-live.ts",
     "eval": "bun run src/cli.ts run",
     "test": "bun test src"
   }
