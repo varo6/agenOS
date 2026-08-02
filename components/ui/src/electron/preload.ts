@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
+import {
+  PI_IPC_CHANNELS,
+  SPEECH_IPC_CHANNELS,
+  SYSTEM_IPC_CHANNELS,
+  type SpeechCapturePhase,
+} from "./ipc";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import type {
   ApiMessageResponse,
@@ -143,6 +148,16 @@ contextBridge.exposeInMainWorld("agenosPi", {
 contextBridge.exposeInMainWorld("agenosSpeech", {
   transcribeOnce(): Promise<SpeechTranscriptionResponse> {
     return invokePi<SpeechTranscriptionResponse>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  },
+  onPhase(listener: (phase: SpeechCapturePhase) => void): () => void {
+    const handler = (_event: unknown, phase: SpeechCapturePhase) => {
+      listener(phase);
+    };
+
+    ipcRenderer.on(SPEECH_IPC_CHANNELS.phase, handler);
+    return () => {
+      ipcRenderer.off(SPEECH_IPC_CHANNELS.phase, handler);
+    };
   },
   isAvailable,
 });

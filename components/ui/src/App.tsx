@@ -19,6 +19,7 @@ import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
 import { WorkspaceSwitcher } from "./components/shell/WorkspaceSwitcher";
+import { VoiceConsole } from "./components/voice/VoiceConsole";
 import { Alert, Button } from "./components/ui";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
 import { createNetworkClient } from "../../network/client";
@@ -26,21 +27,16 @@ import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
 import { createPiClient } from "./lib/pi-client";
 import { describeTurnActivity } from "./lib/agent-activity";
-import {
-  createPreferredSpeechRecognitionController,
-  type SpeechRecognitionController,
-  type SpeechRecognitionError,
-} from "./lib/speech-recognition";
 import { resolveWorkspaceSubscription } from "./lib/workspace-source";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { usePiSession } from "./hooks/usePiSession";
 import { useSystemAlert } from "./hooks/useSystemAlert";
+import { useVoice, type VoiceAgentState } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
+import type { VoiceBlockedReason } from "./lib/voice-status";
 import type { PiAuthState } from "./lib/pi-types";
-
-type VoiceState = "idle" | "listening" | "unsupported" | "error";
 
 const piClient = createPiClient();
 const agentClient = createAgentClient();
@@ -68,10 +64,7 @@ function describeAuthState(authState: PiAuthState): string {
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
-  const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
 
   const { alert, sink } = useSystemAlert();
   const network = useNetworkStatus(networkClient);
@@ -117,47 +110,44 @@ export default function App() {
   const restoreConversation = conversation.restore;
   const resetConversationError = conversation.resetError;
 
-  const handleVoiceResult = useCallback(
+  const handleTranscript = useCallback(
     (transcript: string) => {
-      setVoiceState("idle");
-      setVoiceIssue(null);
       void sendMessage(transcript, "voice");
     },
     [sendMessage],
   );
 
-  const handleVoiceError = useCallback((error: SpeechRecognitionError) => {
-    setVoiceIssue(error.message);
-    setVoiceState(error.disableVoice ? "unsupported" : "error");
-  }, []);
+  const isProcessing = conversation.state === "processing" || session.busy;
 
-  const handleVoiceEnd = useCallback(() => {
-    setVoiceState((current) => (current === "listening" ? "idle" : current));
-  }, []);
+  // Estado del agente traducido al ciclo de voz.
+  const agentState: VoiceAgentState = isProcessing
+    ? conversation.activeTurn?.progress.currentTool
+      ? "working"
+      : "thinking"
+    : conversation.state === "error"
+      ? "error"
+      : "idle";
+
+  const blockedReason: VoiceBlockedReason | null =
+    network.online !== true
+      ? "offline"
+      : session.authState !== "connected"
+        ? "disconnected"
+        : isProcessing
+          ? "busy"
+          : null;
+
+  const voice = useVoice({
+    onTranscript: handleTranscript,
+    agentState,
+    currentTool: conversation.activeTurn?.progress.currentTool ?? null,
+    blockedReason,
+    agentIssue: alert?.hint ?? null,
+  });
 
   // Arranque del shell: micrófono, estado del sistema, historial y red.
   useEffect(() => {
     let cancelled = false;
-    let speechController: SpeechRecognitionController | null = null;
-
-    void createPreferredSpeechRecognitionController({
-      onResult: handleVoiceResult,
-      onError: handleVoiceError,
-      onEnd: handleVoiceEnd,
-    }).then((controller) => {
-      if (cancelled) {
-        controller.dispose();
-        return;
-      }
-
-      speechController = controller;
-      speechControllerRef.current = controller;
-
-      if (!controller.supported) {
-        setVoiceState("unsupported");
-        setVoiceIssue("No hay micrófono disponible. Puedes escribir a Pi.");
-      }
-    });
 
     async function bootstrap() {
       void Promise.allSettled([sessionRefresh(), healthRefresh(), refreshWorkspaces()]);
@@ -173,21 +163,8 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      speechController?.dispose();
-      speechControllerRef.current = null;
     };
-  }, [
-    handleVoiceEnd,
-    handleVoiceError,
-    handleVoiceResult,
-    healthRefresh,
-    networkRefresh,
-    refreshWorkspaces,
-    restoreConversation,
-    sessionRefresh,
-  ]);
-
-  const isProcessing = conversation.state === "processing" || session.busy;
+  }, [healthRefresh, networkRefresh, refreshWorkspaces, restoreConversation, sessionRefresh]);
 
   const refreshAgentExperience = useCallback(() => {
     resetConversationError();
@@ -218,7 +195,7 @@ export default function App() {
 
     void session.logout();
     resetConversationError();
-    setVoiceState((current) => (current === "unsupported" ? "unsupported" : "idle"));
+    voice.reset();
   }
 
   function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
@@ -235,49 +212,13 @@ export default function App() {
     void sendMessage(conversation.draft, "text");
   }
 
-  function handleVoiceStart() {
-    if (
-      !speechControllerRef.current?.supported
-      || session.authState !== "connected"
-      || isProcessing
-    ) {
-      return;
-    }
-
-    sink.clear();
-    setVoiceIssue(null);
-    setVoiceState("listening");
-
-    if (!speechControllerRef.current.start()) {
-      setVoiceState("error");
-    }
-  }
-
   const agentsBlockedByNetwork = network.online !== true;
-  const micDisabled =
-    !session.ready
-    || agentsBlockedByNetwork
-    || session.authState !== "connected"
-    || voiceState === "unsupported"
-    || isProcessing;
   const textDisabled =
     !session.ready
     || agentsBlockedByNetwork
     || isProcessing
     || session.authState === "authorizing";
   const connectLabel = session.authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
-  const voiceHint =
-    voiceState === "unsupported"
-      ? voiceIssue ?? "No hay micrófono disponible. Puedes escribir a Pi."
-      : session.authState !== "connected"
-        ? "Conecta ChatGPT para activar el micro."
-        : isProcessing
-          ? "Esperando la respuesta final del agente."
-          : voiceState === "listening"
-            ? "Escuchando una frase en espanol para enviarla al agente."
-            : voiceState === "error"
-              ? voiceIssue ?? "No se pudo usar el micro. Usa texto."
-              : "Habla o escribe una frase corta.";
   const authHint = session.pendingAttempt
     ? session.pendingAttempt.instructions
     : describeAuthState(session.authState);
@@ -390,34 +331,12 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="relative flex justify-center py-4">
-                <button
-                  aria-label="Activar micro"
-                  className="group relative flex h-32 w-32 items-center justify-center rounded-pill border border-line bg-surface transition-all duration-500 hover:bg-surface-strong disabled:cursor-not-allowed disabled:opacity-45 sm:h-40 sm:w-40"
-                  disabled={micDisabled}
-                  onClick={handleVoiceStart}
-                  type="button"
-                >
-                  <div
-                    className={[
-                      "absolute inset-0 rounded-pill border border-line transition-transform duration-700",
-                      voiceState === "listening" ? "animate-orbit scale-[1.15]" : "scale-100",
-                    ].join(" ")}
-                  />
-                  <div className="flex items-center justify-center text-ink-muted transition-colors group-hover:text-ink">
-                    {isProcessing ? (
-                      <LoaderCircle className="h-8 w-8 animate-spin sm:h-10 sm:w-10" strokeWidth={1.5} />
-                    ) : (
-                      <Mic className="h-8 w-8 sm:h-10 sm:w-10" strokeWidth={1.5} />
-                    )}
-                  </div>
-                </button>
-              </div>
-
-              <div className="w-full max-w-xl text-center">
-                <p className="eyebrow">Micro local</p>
-                <p className="mt-3 text-sm text-ink-muted sm:text-base">{voiceHint}</p>
-              </div>
+              <VoiceConsole
+                buttonLabel={voice.buttonLabel}
+                onActivate={voice.start}
+                onCancel={voice.cancel}
+                status={voice.status}
+              />
 
               <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="grid gap-4 lg:col-span-2">
