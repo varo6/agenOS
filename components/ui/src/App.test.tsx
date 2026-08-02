@@ -375,10 +375,20 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Workspace 2 Apps" }));
+    const target = await screen.findByRole("button", { name: "Escritorio 2: Apps" });
+    expect(target).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(target);
 
     await waitFor(() => {
       expect(mocks.agentClient.focusWorkspace).toHaveBeenCalledWith(2);
+    });
+    // El escritorio activo se marca de forma programática, no solo por color.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Escritorio 2: Apps" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
     });
   });
 

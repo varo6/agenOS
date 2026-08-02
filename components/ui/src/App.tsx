@@ -18,6 +18,7 @@ import { AgentAdminPanel } from "./components/AgentAdminPanel";
 import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
+import { WorkspaceSwitcher } from "./components/shell/WorkspaceSwitcher";
 import { Alert, Button } from "./components/ui";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
 import { createNetworkClient } from "../../network/client";
@@ -30,13 +31,14 @@ import {
   type SpeechRecognitionController,
   type SpeechRecognitionError,
 } from "./lib/speech-recognition";
+import { resolveWorkspaceSubscription } from "./lib/workspace-source";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { usePiSession } from "./hooks/usePiSession";
 import { useSystemAlert } from "./hooks/useSystemAlert";
+import { useWorkspaces } from "./hooks/useWorkspaces";
 import type { PiAuthState } from "./lib/pi-types";
-import type { AgentWorkspace, AgentWorkspaceNumber } from "./lib/system-types";
 
 type VoiceState = "idle" | "listening" | "unsupported" | "error";
 
@@ -45,13 +47,11 @@ const agentClient = createAgentClient();
 const agentAdminClient = createAgentAdminClient();
 const networkClient = createNetworkClient();
 
-const DEFAULT_WORKSPACES: AgentWorkspace[] = [
-  { number: 1, name: "1:home", label: "Home" },
-  { number: 2, name: "2:app", label: "Apps" },
-  { number: 3, name: "3:web", label: "Web" },
-  { number: 4, name: "4:media", label: "Media" },
-  { number: 5, name: "5:work", label: "Work" },
-];
+/*
+ * Empuje del escritorio activo desde el compositor. Se resuelve una sola vez:
+ * si el puente aún no existe, la barra sigue funcionando con la lectura HTTP.
+ */
+const workspaceSubscription = resolveWorkspaceSubscription();
 
 function describeAuthState(authState: PiAuthState): string {
   switch (authState) {
@@ -71,8 +71,6 @@ export default function App() {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
-  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>(DEFAULT_WORKSPACES);
-  const [activeWorkspace, setActiveWorkspace] = useState<AgentWorkspaceNumber>(1);
   const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
 
   const { alert, sink } = useSystemAlert();
@@ -80,21 +78,11 @@ export default function App() {
   const health = useAgentHealth(agentAdminClient);
   const session = usePiSession({ client: piClient, alert: sink });
 
-  const refreshWorkspaces = useCallback(async () => {
-    try {
-      const response = await agentClient.listWorkspaces();
-      if (response.workspaces.length > 0) {
-        setWorkspaces(response.workspaces);
-      }
-      if (response.activeWorkspace) {
-        setActiveWorkspace(response.activeWorkspace);
-      }
-      return response;
-    } catch (error) {
-      sink.raise(error);
-      return null;
-    }
-  }, [sink]);
+  const workspaces = useWorkspaces({
+    client: agentClient,
+    alert: sink,
+    subscribe: workspaceSubscription,
+  });
 
   const isOffline = useCallback(() => network.online !== true, [network.online]);
   const isDisconnected = useCallback(() => session.authState !== "connected", [session.authState]);
@@ -108,6 +96,7 @@ export default function App() {
   const sessionRefresh = session.refresh;
   const healthRefresh = health.refresh;
   const networkRefresh = network.refresh;
+  const refreshWorkspaces = workspaces.refresh;
 
   const handleTurnSettled = useCallback(() => {
     void Promise.allSettled([sessionRefresh(), refreshWorkspaces()]);
@@ -246,31 +235,6 @@ export default function App() {
     void sendMessage(conversation.draft, "text");
   }
 
-  async function handleWorkspaceFocus(workspace: AgentWorkspaceNumber) {
-    const previousWorkspace = activeWorkspace;
-    setActiveWorkspace(workspace);
-    sink.clear();
-
-    try {
-      const response = await agentClient.focusWorkspace(workspace);
-      if (response.workspaces.length > 0) {
-        setWorkspaces(response.workspaces);
-      }
-      if (response.activeWorkspace) {
-        setActiveWorkspace(response.activeWorkspace);
-      } else if (response.ok) {
-        setActiveWorkspace(workspace);
-      }
-      if (!response.ok) {
-        setActiveWorkspace(previousWorkspace);
-        sink.raise(response.message ?? "No se pudo cambiar de escritorio.");
-      }
-    } catch (error) {
-      setActiveWorkspace(previousWorkspace);
-      sink.raise(error);
-    }
-  }
-
   function handleVoiceStart() {
     if (
       !speechControllerRef.current?.supported
@@ -324,32 +288,19 @@ export default function App() {
       <header className="fixed left-0 right-0 top-0 z-40 border-b border-line bg-black/55 backdrop-blur-xl">
         <div className="mx-auto grid h-12 w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6">
           <div className="font-display text-sm font-medium text-ink">AgenOS</div>
-          <div className="flex items-center gap-1 rounded-control border border-line bg-surface p-1">
-            {workspaces.map((workspace) => (
-              <button
-                aria-label={`Workspace ${workspace.number} ${workspace.label}`}
-                className={[
-                  "grid h-8 w-8 place-items-center rounded text-sm font-medium transition-colors",
-                  activeWorkspace === workspace.number
-                    ? "bg-accent text-accent-ink"
-                    : "text-ink-muted hover:bg-surface-strong hover:text-ink",
-                ].join(" ")}
-                key={workspace.number}
-                onClick={() => {
-                  void handleWorkspaceFocus(workspace.number);
-                }}
-                title={workspace.name}
-                type="button"
-              >
-                {workspace.number}
-              </button>
-            ))}
-          </div>
+          <WorkspaceSwitcher
+            activeWorkspace={workspaces.activeWorkspace}
+            live={workspaces.live}
+            onFocus={(workspace) => {
+              void workspaces.focus(workspace);
+            }}
+            workspaces={workspaces.workspaces}
+          />
           <div className="min-w-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
             <span className="hidden sm:inline">
               {session.authState === "connected" ? session.modelId : session.authState}
             </span>
-            <span className="sm:hidden">{activeWorkspace}</span>
+            <span className="sm:hidden">{workspaces.activeWorkspace}</span>
           </div>
         </div>
       </header>
