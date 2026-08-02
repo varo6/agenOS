@@ -1,16 +1,68 @@
 @import "tailwindcss";
 
+/*
+ * Sistema de diseño de AgenOS.
+ *
+ * Todo el shell consume estos tokens: ningún componente debe inventar colores,
+ * radios ni curvas de animación propias. Los nombres son semánticos (qué papel
+ * juega el color) y no literales (qué color es), para poder afinar la paleta sin
+ * tocar los componentes.
+ */
 @theme {
+  /* Tipografía */
   --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
   --font-display: "Space Grotesk", "IBM Plex Sans", sans-serif;
   --font-mono: "JetBrains Mono", "IBM Plex Mono", monospace;
 
+  /* Superficies */
+  --color-canvas: #06080d;
+  --color-surface: rgba(255, 255, 255, 0.038);
+  --color-surface-strong: rgba(255, 255, 255, 0.07);
+  --color-sunken: rgba(4, 6, 11, 0.5);
+  --color-line: rgba(255, 255, 255, 0.11);
+  --color-line-strong: rgba(255, 255, 255, 0.22);
+
+  /* Texto: el mínimo para texto de apoyo es ink-muted (>= 4.5:1 sobre canvas) */
+  --color-ink: rgba(255, 255, 255, 0.96);
+  --color-ink-muted: rgba(255, 255, 255, 0.74);
+  --color-ink-faint: rgba(255, 255, 255, 0.58);
+
+  /* Marca y estados */
   --color-accent: #f4ab39;
   --color-accent-light: #ffd27e;
-  --color-danger: #ff7c6c;
+  --color-accent-ink: #21160a;
+  --color-positive: #5fd9a4;
+  --color-warning: #ffc861;
+  --color-danger: #ff9080;
+  --color-info: #93c5ff;
+  --color-listening: #7ad7ff;
+
+  /* Radios */
+  --radius-control: 10px;
+  --radius-panel: 18px;
+  --radius-pill: 999px;
+
+  /* Sombras */
+  --shadow-panel: 0 24px 60px -34px rgba(0, 0, 0, 0.95);
+  --shadow-raised: 0 10px 30px -18px rgba(0, 0, 0, 0.9);
+
+  /* Curvas */
+  --ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @layer base {
+  :root {
+    /* Motion: una sola escala para todo el shell. */
+    --duration-instant: 90ms;
+    --duration-fast: 160ms;
+    --duration-medium: 280ms;
+    --duration-slow: 520ms;
+
+    /* Ritmo del orbe de voz, único elemento con animación continua. */
+    --voice-pulse-duration: 2.4s;
+  }
+
   *,
   *::before,
   *::after {
@@ -24,11 +76,8 @@
     min-height: 100%;
     width: 100%;
     overflow-x: hidden;
-    color: rgba(255, 255, 255, 0.9);
-    background:
-      radial-gradient(circle at top left, rgba(255, 205, 118, 0.14), transparent 28%),
-      radial-gradient(circle at top right, rgba(123, 191, 255, 0.12), transparent 24%),
-      linear-gradient(145deg, #090b12 0%, #111521 42%, #06070b 100%);
+    color: var(--color-ink);
+    background-color: var(--color-canvas);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -43,86 +92,261 @@
   select,
   textarea {
     font: inherit;
+    color: inherit;
   }
 
   button {
     cursor: pointer;
   }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  /*
+   * Foco visible por defecto en todo lo accionable: es obligatorio para navegar
+   * el shell con teclado y no depende de que cada componente se acuerde.
+   */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent-light);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+
+  ::selection {
+    background: rgba(244, 171, 57, 0.3);
+  }
+
+  /* Scrollbars discretas y consistentes con la paleta. */
+  * {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: var(--radius-pill);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.24);
+    background-clip: content-box;
+  }
 }
 
 @layer components {
+  .panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  /* Bloque interior de un panel (métricas, listas, celdas). */
+  .panel-inset {
+    background: var(--color-sunken);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-control);
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    line-height: 1;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+  }
+
+  .field-input {
+    width: 100%;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line);
+    background: var(--color-sunken);
+    color: var(--color-ink);
+    padding: 0.7rem 0.95rem;
+    outline: none;
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  .field-input::placeholder {
+    color: rgba(255, 255, 255, 0.38);
+  }
+
+  .field-input:hover:not(:disabled) {
+    border-color: var(--color-line-strong);
+  }
+
+  .field-input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .field-input[aria-invalid="true"] {
+    border-color: var(--color-danger);
+  }
+
+  .btn,
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost,
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-control);
+    border: 1px solid transparent;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 0.6rem 1.05rem;
+    white-space: nowrap;
+    transition:
+      background-color var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      color var(--duration-fast) var(--ease-standard),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .btn:disabled,
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .btn-ghost:disabled,
+  .btn-danger:disabled {
+    opacity: 0.45;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-accent-light);
+    border-color: var(--color-accent-light);
+  }
+
+  .btn-secondary {
+    background: var(--color-surface-strong);
+    border-color: var(--color-line);
+    color: var(--color-ink);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--color-line-strong);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-ink-muted);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-surface-strong);
+    color: var(--color-ink);
+  }
+
+  .btn-danger {
+    background: rgba(255, 144, 128, 0.16);
+    border-color: rgba(255, 144, 128, 0.4);
+    color: var(--color-danger);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: rgba(255, 144, 128, 0.24);
+  }
+
+  /*
+   * Alias heredados. Los paneles antiguos todavía usan estos nombres; apuntan a
+   * los tokens nuevos para que la migración sea progresiva y sin regresiones
+   * visuales. Se retiran cuando ningún componente los referencie.
+   */
   .glass-panel {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-radius: 16px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
   }
 
   .glass-input {
     width: 100%;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(0, 0, 0, 0.15);
-    color: white;
-    padding: 0.75rem 1rem;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-line);
+    background: var(--color-sunken);
+    color: var(--color-ink);
+    padding: 0.7rem 0.95rem;
     outline: none;
-    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .glass-input::placeholder {
-    color: rgba(255, 255, 255, 0.25);
-  }
-
-  .glass-input:focus {
-    border-color: rgba(255, 255, 255, 0.25);
-    background: rgba(0, 0, 0, 0.25);
-  }
-
-  .btn-primary,
-  .btn-secondary {
-    border-radius: 8px;
-    padding: 0.75rem 1.25rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .btn-primary {
-    background: #ffffff;
-    color: #050505;
-    border: 1px solid #ffffff;
-  }
-
-  .btn-secondary {
-    background: transparent;
-    color: rgba(255, 255, 255, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-  }
-
-  .btn-primary:hover {
-    background: #e0e0e0;
-    transform: scale(0.98);
-  }
-
-  .btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  .btn-primary:disabled,
-  .btn-secondary:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-    transform: none;
+    color: rgba(255, 255, 255, 0.38);
   }
 }
 
-.animate-spin-slow {
-  animation: spin 4s linear infinite;
+@layer utilities {
+  /*
+   * Respiración del orbe de voz. Solo anima transform/opacity para que el
+   * compositor la resuelva en GPU y no toque el hilo principal.
+   */
+  @keyframes agenos-breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.55;
+    }
+    50% {
+      transform: scale(1.14);
+      opacity: 0.12;
+    }
+  }
+
+  @keyframes agenos-orbit {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .animate-breathe {
+    animation: agenos-breathe var(--voice-pulse-duration) var(--ease-standard) infinite;
+    will-change: transform, opacity;
+  }
+
+  .animate-orbit {
+    animation: agenos-orbit 2.6s linear infinite;
+    will-change: transform;
+  }
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/*
+ * Portátil modesto + usuarios sensibles al movimiento: sin animaciones
+ * continuas cuando el sistema las desaconseja. El estado sigue siendo legible
+ * porque nunca se comunica solo con movimiento.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
