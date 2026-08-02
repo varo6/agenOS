@@ -338,6 +338,32 @@ describe("App chat recovery", () => {
     expect(screen.getByText("configura openclaw")).toBeInTheDocument();
   });
 
+  test("escribir no vuelve a arrancar el shell ni a recargar el estado", async () => {
+    mocks.piClient.getStatus.mockResolvedValue({
+      ...disconnectedStatus,
+      authState: "connected",
+    });
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+
+    render(<App />);
+
+    const input = await screen.findByLabelText("Texto");
+    await waitFor(() => {
+      expect(mocks.piClient.listTurns).toHaveBeenCalled();
+    });
+
+    const statusCalls = mocks.piClient.getStatus.mock.calls.length;
+    const historyCalls = mocks.piClient.listTurns.mock.calls.length;
+
+    fireEvent.change(input, { target: { value: "hola" } });
+    fireEvent.change(input, { target: { value: "hola Pi" } });
+
+    // El arranque solo debe ocurrir una vez: si los efectos dependieran del
+    // objeto de conversación, cada tecla relanzaría el bootstrap completo.
+    expect(mocks.piClient.listTurns.mock.calls.length).toBe(historyCalls);
+    expect(mocks.piClient.getStatus.mock.calls.length).toBe(statusCalls);
+  });
+
   test("shows the workspace system bar and focuses workspace clicks", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
