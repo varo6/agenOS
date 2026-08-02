@@ -1,9 +1,11 @@
-/**
- * Escala de tonos semánticos compartida por indicadores, pastillas y avisos.
- * Un solo mapa evita que cada panel elija su propio verde o su propio rojo.
- */
-export type Tone = "neutral" | "accent" | "positive" | "warning" | "danger" | "info";
+import type { Tone } from "../../lib/tone";
 
+export type { Tone };
+
+/**
+ * Traducción de los tonos semánticos a clases. Un solo mapa evita que cada
+ * panel elija su propio verde o su propio rojo.
+ */
 export const TONE_TEXT: Record<Tone, string> = {
   neutral: "text-ink-muted",
   accent: "text-accent-light",
