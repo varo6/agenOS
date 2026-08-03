@@ -151,8 +151,7 @@ export default function App() {
 
     async function bootstrap() {
       void Promise.allSettled([sessionRefresh(), healthRefresh(), refreshWorkspaces()]);
-      await restoreConversation();
-      await networkRefresh();
+      await Promise.allSettled([restoreConversation(), networkRefresh()]);
 
       if (!cancelled) {
         setIsLoading(false);

@@ -176,6 +176,26 @@ beforeEach(() => {
 });
 
 describe("App chat recovery", () => {
+  test("checks network without waiting for conversation history", async () => {
+    let releaseHistory!: (turns: never[]) => void;
+    mocks.piClient.listTurns.mockReturnValue(new Promise((resolve) => {
+      releaseHistory = resolve;
+    }));
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mocks.piClient.listTurns).toHaveBeenCalledWith(20);
+      expect(mocks.networkClient.getStatus).toHaveBeenCalledOnce();
+    });
+    expect(screen.getByText("Iniciando AgenOS")).toBeInTheDocument();
+
+    releaseHistory([]);
+    expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+  });
+
   test("shows the network panel and blocks ChatGPT login while offline", async () => {
     mocks.networkClient.getStatus.mockResolvedValue(offlineNetworkStatus);
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
