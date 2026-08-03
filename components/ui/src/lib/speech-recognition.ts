@@ -3,7 +3,11 @@ import {
   getCachedLocalSttAvailability,
   probeLocalSttAvailability,
 } from "./local-stt";
-import { getSpeechBridge, type AgenosSpeechBridge } from "./speech-bridge";
+import {
+  getSpeechBridge,
+  type AgenosSpeechBridge,
+  type SpeechCapturePhase,
+} from "./speech-bridge";
 
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
@@ -32,6 +36,7 @@ type BrowserSpeechRecognition = {
   lang: string;
   onstart: (() => void) | null;
   onend: (() => void) | null;
+  onspeechend: (() => void) | null;
   onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   start(): void;
@@ -54,10 +59,18 @@ export type SpeechRecognitionError = {
   disableVoice: boolean;
 };
 
+export type { SpeechCapturePhase };
+
 export type SpeechRecognitionCallbacks = {
   onResult: (transcript: string) => void;
   onError: (error: SpeechRecognitionError) => void;
   onEnd: () => void;
+  /**
+   * Progreso de la captura: permite distinguir "te escucho" de "estoy
+   * entendiendo lo que has dicho". Es opcional para no romper a quien ya
+   * construye controladores con las tres callbacks originales.
+   */
+  onPhase?: (phase: SpeechCapturePhase) => void;
 };
 
 export type SpeechRecognitionController = {
@@ -168,6 +181,13 @@ function createNativeSpeechRecognitionController(
   let disposed = false;
   let listening = false;
 
+  // El puente empuja la fase real (grabando / transcribiendo) si la expone.
+  const unsubscribePhase = bridge.onPhase?.((phase) => {
+    if (!disposed && listening) {
+      callbacks.onPhase?.(phase);
+    }
+  });
+
   return {
     supported: true,
     engine: "native",
@@ -177,6 +197,7 @@ function createNativeSpeechRecognitionController(
       }
 
       listening = true;
+      callbacks.onPhase?.("listening");
       void bridge.transcribeOnce()
         .then((result) => {
           if (!disposed && result.transcript.trim()) {
@@ -203,6 +224,7 @@ function createNativeSpeechRecognitionController(
     dispose() {
       disposed = true;
       listening = false;
+      unsubscribePhase?.();
     },
   };
 }
@@ -254,6 +276,9 @@ export function createSpeechRecognitionController(
       callbacks.onResult(transcript);
     }
   };
+  recognition.onspeechend = () => {
+    callbacks.onPhase?.("transcribing");
+  };
   recognition.onerror = (event) => {
     callbacks.onError(normalizeSpeechError(event.error));
   };
@@ -267,6 +292,7 @@ export function createSpeechRecognitionController(
     start() {
       try {
         recognition.start();
+        callbacks.onPhase?.("listening");
         return true;
       } catch {
         callbacks.onError(normalizeSpeechError("start-failed"));
@@ -280,6 +306,7 @@ export function createSpeechRecognitionController(
       recognition.onresult = null;
       recognition.onerror = null;
       recognition.onend = null;
+      recognition.onspeechend = null;
 
       if (typeof recognition.abort === "function") {
         recognition.abort();

@@ -225,12 +225,16 @@ export function createLocalHttpSpeechController(
       });
 
       recorder.start();
+      callbacks.onPhase?.("listening");
       timer = setTimeout(() => stopRecorder(), maxDurationMs);
       await stopped;
 
       if (disposed) {
         return;
       }
+
+      // A partir de aquí ya no se graba: se sube el audio y se transcribe.
+      callbacks.onPhase?.("transcribing");
 
       const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
       if (blob.size === 0) {

@@ -8,7 +8,12 @@ import { app, BrowserWindow, ipcMain, shell } from "electron";
 
 import { createPiHarness, PiHarnessError } from "../../dev/pi-harness";
 import { launchBrowserUrl } from "../../../agent/browser-launcher";
-import { PI_IPC_CHANNELS, SPEECH_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
+import {
+  PI_IPC_CHANNELS,
+  SPEECH_IPC_CHANNELS,
+  SYSTEM_IPC_CHANNELS,
+  type SpeechCapturePhase,
+} from "./ipc";
 import type { PiChatSource } from "../lib/pi-types";
 import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
 import { createNetworkManagerService } from "../../../network/node/network-manager";
@@ -378,6 +383,15 @@ function resolveRecorderBinary(): string | null {
   ]);
 }
 
+/** Avisa al renderer de en qué punto de la captura estamos. */
+function emitSpeechPhase(phase: SpeechCapturePhase): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send(SPEECH_IPC_CHANNELS.phase, phase);
+}
+
 async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
   const whisperBinary = resolveWhisperBinary();
   const modelPath = resolveWhisperModel();
@@ -394,6 +408,7 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
   const device = process.env.AGENOS_STT_ALSA_DEVICE?.trim() || "default";
 
   try {
+    emitSpeechPhase("listening");
     await runCommand(recorderBinary, [
       "-q",
       "-D",
@@ -411,6 +426,7 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
       wavPath,
     ], { timeoutMs: (seconds + 3) * 1000 });
 
+    emitSpeechPhase("transcribing");
     const transcription = await runCommand(whisperBinary, [
       "-m",
       modelPath,

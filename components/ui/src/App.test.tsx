@@ -14,8 +14,8 @@ const mocks = vi.hoisted(() => ({
     delegateBackgroundTask: vi.fn(),
     openApp: vi.fn(),
     listWorkspaces: vi.fn(),
-    subscribeWorkspaceChanges: vi.fn(),
     focusWorkspace: vi.fn(),
+    subscribeWorkspaceChanges: vi.fn(),
   },
   piClient: {
     getStatus: vi.fn(),
@@ -173,7 +173,6 @@ beforeEach(() => {
       { number: 5, name: "5:work", label: "Work" },
     ],
   });
-  mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(vi.fn());
 });
 
 describe("App chat recovery", () => {
@@ -340,60 +339,86 @@ describe("App chat recovery", () => {
     expect(screen.getByText("configura openclaw")).toBeInTheDocument();
   });
 
-  test("shows the workspace system bar and focuses workspace clicks", async () => {
-    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+  test("escribir no vuelve a arrancar el shell ni a recargar el estado", async () => {
+    mocks.piClient.getStatus.mockResolvedValue({
+      ...disconnectedStatus,
+      authState: "connected",
+    });
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
-    let resolveFocus!: (response: { ok: boolean; activeWorkspace: number; workspaces: never[] }) => void;
-    mocks.agentClient.focusWorkspace.mockReturnValue(new Promise((resolve) => {
-      resolveFocus = resolve;
-    }));
 
     render(<App />);
 
+    const input = await screen.findByLabelText("Texto");
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Workspace 1 Home" })).toHaveAttribute("aria-current", "page");
+      expect(mocks.piClient.listTurns).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Workspace 2 Apps" }));
+    const statusCalls = mocks.piClient.getStatus.mock.calls.length;
+    const historyCalls = mocks.piClient.listTurns.mock.calls.length;
+
+    fireEvent.change(input, { target: { value: "hola" } });
+    fireEvent.change(input, { target: { value: "hola Pi" } });
+
+    // El arranque solo debe ocurrir una vez: si los efectos dependieran del
+    // objeto de conversación, cada tecla relanzaría el bootstrap completo.
+    expect(mocks.piClient.listTurns.mock.calls.length).toBe(historyCalls);
+    expect(mocks.piClient.getStatus.mock.calls.length).toBe(statusCalls);
+  });
+
+  test("shows the workspace system bar and focuses workspace clicks", async () => {
+    mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.agentClient.focusWorkspace.mockResolvedValue({
+      ok: true,
+      activeWorkspace: 2,
+      workspaces: [],
+    });
+
+    render(<App />);
+
+    const target = await screen.findByRole("button", { name: "Escritorio 2: Apps" });
+    expect(target).not.toHaveAttribute("aria-current");
+
+    fireEvent.click(target);
 
     await waitFor(() => {
       expect(mocks.agentClient.focusWorkspace).toHaveBeenCalledWith(2);
     });
-    expect(screen.getByRole("button", { name: "Workspace 1 Home" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "Workspace 2 Apps" })).not.toHaveAttribute("aria-current");
-
-    await act(async () => {
-      resolveFocus({ ok: true, activeWorkspace: 2, workspaces: [] });
-    });
-
+    // El escritorio activo se marca de forma programática, no solo por color.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Workspace 2 Apps" })).toHaveAttribute("aria-current", "page");
+      expect(screen.getByRole("button", { name: "Escritorio 2: Apps" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
     });
   });
 
-  test("tracks keyboard and agent workspace changes from the Sway event stream", async () => {
+  // Regresion del sintoma original: la barra mostraba un escritorio distinto del
+  // real porque nadie escuchaba a Sway. Un cambio por teclado (Ctrl+Alt+N) o
+  // hecho por Pi llega por el stream y tiene que reflejarse igual que un click.
+  test("sigue los cambios de escritorio que llegan del stream de Sway", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
     const unsubscribe = vi.fn();
     mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(unsubscribe);
 
     const view = render(<App />);
-    await screen.findByRole("button", { name: "Workspace 1 Home" });
+    await screen.findByRole("button", { name: "Escritorio 1: Inicio" });
+
     const listener = mocks.agentClient.subscribeWorkspaceChanges.mock.calls[0]?.[0];
+    expect(listener).toBeTypeOf("function");
+
     act(() => {
-      listener?.({
-        ok: true,
-        activeWorkspace: 4,
-        workspaces: [
-          { number: 1, name: "1:home", label: "Home" },
-          { number: 4, name: "4:media", label: "Media" },
-        ],
-      });
+      listener?.({ ok: true, activeWorkspace: 4, workspaces: [] });
     });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Workspace 4 Media" })).toHaveAttribute("aria-current", "page");
+      expect(screen.getByRole("button", { name: "Escritorio 4: Media" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
     });
+
     view.unmount();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });

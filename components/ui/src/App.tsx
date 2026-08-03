@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  AlertTriangle,
   ArrowUpRight,
   Clipboard,
   ExternalLink,
@@ -19,80 +18,36 @@ import { AgentAdminPanel } from "./components/AgentAdminPanel";
 import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
+import { WorkspaceSwitcher } from "./components/shell/WorkspaceSwitcher";
+import { VoiceConsole } from "./components/voice/VoiceConsole";
+import { Alert, Button } from "./components/ui";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
 import { createNetworkClient } from "../../network/client";
 import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
-import { classifyAgentCommand } from "./lib/agent-command";
-import { createPiClient, PiClientError } from "./lib/pi-client";
-import {
-  createPreferredSpeechRecognitionController,
-  isSpeechRecognitionSupported,
-  type SpeechRecognitionController,
-  type SpeechRecognitionError,
-} from "./lib/speech-recognition";
-import type { PiAuthState, PiChatSource, PiPendingAttempt, PiStatusResponse, PiTurnProgress, PiTurnState } from "./lib/pi-types";
-import type {
-  AgentAdminStatus,
-  AgentSetupStateSummary,
-  AgentWorkspace,
-  AgentWorkspaceNumber,
-} from "./lib/system-types";
-
-type VoiceState = "idle" | "listening" | "unsupported" | "error";
-type ChatState = "idle" | "processing" | "error";
+import { createPiClient } from "./lib/pi-client";
+import { describeTurnActivity } from "./lib/agent-activity";
+import { resolveWorkspaceSubscription } from "./lib/workspace-source";
+import { useAgentHealth } from "./hooks/useAgentHealth";
+import { useConversation } from "./hooks/useConversation";
+import { useNetworkStatus } from "./hooks/useNetworkStatus";
+import { usePiSession } from "./hooks/usePiSession";
+import { useSystemAlert } from "./hooks/useSystemAlert";
+import { useVoice, type VoiceAgentState } from "./hooks/useVoice";
+import { useWorkspaces } from "./hooks/useWorkspaces";
+import type { VoiceBlockedReason } from "./lib/voice-status";
+import type { PiAuthState } from "./lib/pi-types";
 
 const piClient = createPiClient();
 const agentClient = createAgentClient();
 const agentAdminClient = createAgentAdminClient();
 const networkClient = createNetworkClient();
 
-const DEFAULT_WORKSPACES: AgentWorkspace[] = [
-  { number: 1, name: "1:home", label: "Home" },
-  { number: 2, name: "2:app", label: "Apps" },
-  { number: 3, name: "3:web", label: "Web" },
-  { number: 4, name: "4:media", label: "Media" },
-  { number: 5, name: "5:work", label: "Work" },
-];
-
-function describeClientError(error: unknown): string {
-  if (error instanceof PiClientError || error instanceof Error) {
-    return error.message;
-  }
-
-  return "No se pudo completar la accion.";
-}
-
-const TOOL_ACTIVITY_LABELS: Record<string, string> = {
-  openclaw_setup: "configurando OpenClaw",
-  browser_open: "abriendo una web",
-  apps_open: "abriendo una aplicacion",
-  apps_install: "instalando una aplicacion",
-  files_open: "abriendo un archivo",
-  bash: "ejecutando un comando",
-  read: "leyendo archivos",
-  edit: "editando archivos",
-  write: "escribiendo archivos",
-  grep: "buscando en archivos",
-  find: "buscando archivos",
-  ls: "listando directorios",
-};
-
-function describeTurnActivity(turn: PiTurnProgress | null): string | null {
-  if (!turn) {
-    return null;
-  }
-  if (turn.currentToolMessage) {
-    return turn.currentToolMessage;
-  }
-  if (turn.currentTool) {
-    return `Pi esta ${TOOL_ACTIVITY_LABELS[turn.currentTool] ?? `usando ${turn.currentTool}`}...`;
-  }
-  if (turn.completedTools.length > 0) {
-    return "Pi esta procesando los resultados de las herramientas...";
-  }
-  return "Pi esta pensando...";
-}
+/*
+ * Empuje del escritorio activo desde el compositor. Se resuelve una sola vez:
+ * si el puente aún no existe, la barra sigue funcionando con la lectura HTTP.
+ */
+const workspaceSubscription = resolveWorkspaceSubscription(agentClient);
 
 function describeAuthState(authState: PiAuthState): string {
   switch (authState) {
@@ -107,334 +62,99 @@ function describeAuthState(authState: PiAuthState): string {
   }
 }
 
-
-
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [harnessAvailable, setHarnessAvailable] = useState(true);
-  const [globalError, setGlobalError] = useState<string | null>(null);
-  const [networkOnline, setNetworkOnline] = useState<boolean | null>(null);
-  const [authState, setAuthState] = useState<PiAuthState>("disconnected");
-  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [chatState, setChatState] = useState<ChatState>("idle");
-  const [providerName, setProviderName] = useState("ChatGPT/Codex");
-  const [modelId, setModelId] = useState("gpt-5.4-mini");
-  const [serverBusy, setServerBusy] = useState(false);
-  const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
-  const [agentStatus, setAgentStatus] = useState<AgentAdminStatus | null>(null);
-  const [agentBackendError, setAgentBackendError] = useState<string | null>(null);
-  const [manualCodeInput, setManualCodeInput] = useState("");
-  const [draft, setDraft] = useState("");
-  const [turns, setTurns] = useState<PiTurnState[]>([]);
-  const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
-  const [voiceIssue, setVoiceIssue] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
-  const [workspaces, setWorkspaces] = useState<AgentWorkspace[]>(DEFAULT_WORKSPACES);
-  const [activeWorkspace, setActiveWorkspace] = useState<AgentWorkspaceNumber>(1);
-  const speechControllerRef = useRef<SpeechRecognitionController | null>(null);
-  const authActionIdRef = useRef(0);
 
-  const applyStatus = useCallback((status: PiStatusResponse) => {
-    setHarnessAvailable(true);
-    setProviderName(status.providerName);
-    setModelId(status.modelId);
-    setServerBusy(status.busy);
-    setPendingAttempt(status.pendingAttempt ?? null);
-    setAuthState(status.authState);
-    if (status.error) {
-      setGlobalError(status.error);
-    }
-  }, []);
+  const { alert, sink } = useSystemAlert();
+  const network = useNetworkStatus(networkClient);
+  const health = useAgentHealth(agentAdminClient);
+  const session = usePiSession({ client: piClient, alert: sink });
 
-  const refreshStatus = useCallback(async (options: { clearErrors?: boolean } = {}) => {
-    try {
-      const status = await piClient.getStatus();
-      applyStatus(status);
-      if (status.error) {
-        setGlobalError(status.error);
-      } else if (options.clearErrors) {
-        setGlobalError(null);
-        setChatState((current) => (current === "error" ? "idle" : current));
-      } else {
-        setGlobalError((current) =>
-          current === "Harness de desarrollo no disponible." ? null : current,
-        );
-      }
-      return status;
-    } catch (error) {
-      const message = describeClientError(error);
-      setHarnessAvailable(false);
-      setAuthState("error");
-      setServerBusy(false);
-      setPendingAttempt(null);
-      setGlobalError(message);
-      throw error;
-    }
-  }, [applyStatus]);
+  const workspaces = useWorkspaces({
+    client: agentClient,
+    alert: sink,
+    subscribe: workspaceSubscription,
+  });
 
-  const refreshAgentStatus = useCallback(async () => {
-    try {
-      const status = await agentAdminClient.getStatus();
-      setAgentStatus(status);
-      setAgentBackendError(null);
-      return status;
-    } catch (error) {
-      const message = describeClientError(error);
-      setAgentStatus(null);
-      setAgentBackendError(message);
-      return null;
-    }
-  }, []);
+  const isOffline = useCallback(() => network.online !== true, [network.online]);
+  const isDisconnected = useCallback(() => session.authState !== "connected", [session.authState]);
 
-  const refreshWorkspaces = useCallback(async () => {
-    try {
-      const response = await agentClient.listWorkspaces();
-      if (response.workspaces.length > 0) {
-        setWorkspaces(response.workspaces);
-      }
-      if (response.activeWorkspace) {
-        setActiveWorkspace(response.activeWorkspace);
-      }
-      return response;
-    } catch (error) {
-      setGlobalError(describeClientError(error));
-      return null;
-    }
-  }, []);
+  /*
+   * Los hooks devuelven objetos nuevos en cada render, pero sus funciones son
+   * estables. Los efectos y callbacks dependen solo de las funciones: si
+   * dependieran del objeto entero, cada pulsación de tecla reiniciaría el
+   * arranque, el micrófono y los sondeos.
+   */
+  const sessionRefresh = session.refresh;
+  const healthRefresh = health.refresh;
+  const networkRefresh = network.refresh;
+  const refreshWorkspaces = workspaces.refresh;
 
-  const upsertTurn = useCallback((turn: PiTurnState) => {
-    setTurns((current) => {
-      const index = current.findIndex((candidate) => candidate.turnId === turn.turnId);
-      if (index === -1) {
-        return [...current, turn].slice(-40);
-      }
+  const handleTurnSettled = useCallback(() => {
+    void Promise.allSettled([sessionRefresh(), refreshWorkspaces()]);
+  }, [refreshWorkspaces, sessionRefresh]);
 
-      const next = [...current];
-      next[index] = turn;
-      return next;
-    });
-  }, []);
+  const conversation = useConversation({
+    piClient,
+    agentClient,
+    alert: sink,
+    isOffline,
+    isDisconnected,
+    onUnauthorized: session.markUnauthorized,
+    onModelId: session.noteModelId,
+    onSettled: handleTurnSettled,
+  });
 
-  const appendLocalTurn = useCallback((input: string, reply: string) => {
-    const timestamp = new Date().toISOString();
-    upsertTurn({
-      turnId: `local_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      status: "succeeded",
-      source: "text",
-      input,
-      startedAt: timestamp,
-      finishedAt: timestamp,
-      progress: {
-        startedAt: timestamp,
-        streamedText: "",
-        currentTool: null,
-        completedTools: [],
-      },
-      reply,
-    });
-  }, [upsertTurn]);
+  const sendMessage = conversation.send;
+  const restoreConversation = conversation.restore;
+  const resetConversationError = conversation.resetError;
 
-  const sendPrompt = useCallback(async (message: string, source: PiChatSource) => {
-    const trimmed = message.trim();
-    if (!trimmed) {
-      return;
-    }
+  const handleTranscript = useCallback(
+    (transcript: string) => {
+      void sendMessage(transcript, "voice");
+    },
+    [sendMessage],
+  );
 
-    if (networkOnline !== true) {
-      setChatState("idle");
-      setGlobalError("Conecta AgenOS a internet antes de usar Codex o Gemini.");
-      return;
-    }
+  const isProcessing = conversation.state === "processing" || session.busy;
 
-    const command = classifyAgentCommand(trimmed);
+  // Estado del agente traducido al ciclo de voz.
+  const agentState: VoiceAgentState = isProcessing
+    ? conversation.activeTurn?.progress.currentTool
+      ? "working"
+      : "thinking"
+    : conversation.state === "error"
+      ? "error"
+      : "idle";
 
-    setChatState("processing");
-    setGlobalError(null);
-    if (source === "text") {
-      setDraft("");
-    }
+  const blockedReason: VoiceBlockedReason | null =
+    network.online !== true
+      ? "offline"
+      : session.authState !== "connected"
+        ? "disconnected"
+        : isProcessing
+          ? "busy"
+          : null;
 
-    if (command.kind === "memory") {
-      try {
-        const response = await agentClient.appendMemory(command.namespace, command.content);
-        appendLocalTurn(trimmed, response.message ?? "Memoria guardada.");
-        setChatState("idle");
-      } catch (error) {
-        setChatState("error");
-        setGlobalError(describeClientError(error));
-      }
-      return;
-    }
+  const voice = useVoice({
+    onTranscript: handleTranscript,
+    agentState,
+    currentTool: conversation.activeTurn?.progress.currentTool ?? null,
+    blockedReason,
+    agentIssue: alert?.hint ?? null,
+  });
 
-    if (command.kind === "background") {
-      try {
-        const response = await agentClient.delegateBackgroundTask(command.message);
-        appendLocalTurn(trimmed, response.message ?? `Tarea enviada: ${response.taskId ?? "sin id"}`);
-        setChatState("idle");
-      } catch (error) {
-        setChatState("error");
-        setGlobalError(describeClientError(error));
-      }
-      return;
-    }
-
-
-    if (authState !== "connected") {
-      setChatState("idle");
-      setAuthState("error");
-      setGlobalError("Conecta ChatGPT antes de enviar mensajes.");
-      return;
-    }
-
-    try {
-      const turn = await piClient.startTurn(trimmed, source);
-      upsertTurn(turn);
-      setActiveTurnId(turn.turnId);
-    } catch (error) {
-      const message = describeClientError(error);
-      setChatState("error");
-      setGlobalError(message);
-      if (error instanceof PiClientError && error.status === 401) {
-        setAuthState("error");
-      }
-      try {
-        await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
-      } catch {
-        // refreshStatus already updated the UI with the relevant failure
-      }
-    }
-  }, [authState, networkOnline, refreshAgentStatus, refreshStatus, refreshWorkspaces, upsertTurn, appendLocalTurn]);
-
-  const applyFinishedTurn = useCallback((turn: PiTurnState) => {
-    setActiveTurnId(null);
-    if (turn.status === "succeeded") {
-      if (turn.modelId) {
-        setModelId(turn.modelId);
-      }
-      setChatState("idle");
-      return;
-    }
-
-    setChatState("error");
-    setGlobalError(turn.error ?? "El turno fallo.");
-    if (turn.errorStatus === 401) {
-      setAuthState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!activeTurnId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const pollTurn = async () => {
-      try {
-        const turn = await piClient.getTurn(activeTurnId);
-        if (cancelled) {
-          return;
-        }
-
-        upsertTurn(turn);
-        if (turn.status !== "processing") {
-          applyFinishedTurn(turn);
-          await Promise.allSettled([refreshStatus(), refreshWorkspaces()]);
-        }
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        // El turno sigue corriendo en el harness aunque falle una consulta
-        // puntual; solo un 404 significa que el turno ya no existe.
-        if (error instanceof PiClientError && error.status === 404) {
-          setActiveTurnId(null);
-          setChatState("error");
-          setGlobalError("Se perdio el turno en curso. Intentalo de nuevo.");
-        }
-      }
-    };
-
-    void pollTurn();
-    const intervalId = window.setInterval(() => {
-      void pollTurn();
-    }, 1200);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [activeTurnId, applyFinishedTurn, refreshStatus, refreshWorkspaces, upsertTurn]);
-
-  const handleVoiceResult = useCallback((transcript: string) => {
-    setVoiceState("idle");
-    setVoiceIssue(null);
-    void sendPrompt(transcript, "voice");
-  }, [sendPrompt]);
-
-  const handleVoiceError = useCallback((error: SpeechRecognitionError) => {
-    setVoiceIssue(error.message);
-    setVoiceState(error.disableVoice ? "unsupported" : "error");
-  }, []);
-
-  const handleVoiceEnd = useCallback(() => {
-    setVoiceState((current) => (current === "listening" ? "idle" : current));
-  }, []);
-
+  // Arranque del shell: micrófono, estado del sistema, historial y red.
   useEffect(() => {
     let cancelled = false;
-    let speechController: SpeechRecognitionController | null = null;
-
-    void createPreferredSpeechRecognitionController({
-      onResult: handleVoiceResult,
-      onError: handleVoiceError,
-      onEnd: handleVoiceEnd,
-    }).then((controller) => {
-      if (cancelled) {
-        controller.dispose();
-        return;
-      }
-
-      speechController = controller;
-      speechControllerRef.current = controller;
-
-      if (!controller.supported) {
-        setVoiceState("unsupported");
-        setVoiceIssue("STT local no disponible. Usa texto.");
-      }
-    });
 
     async function bootstrap() {
-      void Promise.allSettled([refreshStatus(), refreshAgentStatus(), refreshWorkspaces()]);
+      void Promise.allSettled([sessionRefresh(), healthRefresh(), refreshWorkspaces()]);
+      await restoreConversation();
+      await networkRefresh();
 
-      try {
-        const history = await piClient.listTurns(20);
-        if (!cancelled && Array.isArray(history) && history.length > 0) {
-          setTurns(history);
-          const latestTurn = history[history.length - 1];
-          if (latestTurn?.status === "processing") {
-            setChatState("processing");
-            setActiveTurnId(latestTurn.turnId);
-          }
-        }
-      } catch {
-        // Recuperar el historial es opcional; el resto de la UI sigue funcionando.
-      }
-
-      try {
-        const status = await networkClient.getStatus();
-        if (!cancelled) {
-          setNetworkOnline(status.overall === "online");
-        }
-      } catch {
-        if (!cancelled) {
-          setNetworkOnline(false);
-        }
-      } finally {
-        if (cancelled) {
-          return;
-        }
+      if (!cancelled) {
         setIsLoading(false);
       }
     }
@@ -443,336 +163,127 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      speechController?.dispose();
-      speechControllerRef.current = null;
     };
-  }, [handleVoiceEnd, handleVoiceError, handleVoiceResult, refreshAgentStatus, refreshStatus, refreshWorkspaces]);
+  }, [healthRefresh, networkRefresh, refreshWorkspaces, restoreConversation, sessionRefresh]);
 
-  useEffect(() => agentClient.subscribeWorkspaceChanges((state) => {
-    if (state.workspaces.length > 0) {
-      setWorkspaces(state.workspaces);
-    }
-    if (state.activeWorkspace) {
-      setActiveWorkspace(state.activeWorkspace);
-    }
-  }), []);
+  const refreshAgentExperience = useCallback(() => {
+    resetConversationError();
+    void Promise.allSettled([
+      sessionRefresh({ clearErrors: true }),
+      healthRefresh(),
+      refreshWorkspaces(),
+    ]);
+  }, [healthRefresh, refreshWorkspaces, resetConversationError, sessionRefresh]);
 
-  useEffect(() => {
-    if (!pendingAttempt) {
+  function handleStartAuth(method: "device" | "browser" = "device") {
+    if (network.online !== true) {
+      sink.raise("Sin conexión a internet.", { kind: "offline" });
       return;
     }
 
-    let cancelled = false;
-
-    const pollAttempt = async () => {
-      try {
-        const attempt = await piClient.getAuthAttempt(pendingAttempt.attemptId);
-        if (cancelled) {
-          return;
-        }
-
-        if (attempt.status === "pending") {
-          return;
-        }
-
-        if (attempt.status === "success") {
-          setManualCodeInput("");
-          setGlobalError(null);
-          await refreshStatus();
-          return;
-        }
-
-        setAuthState("error");
-        setPendingAttempt(null);
-        setGlobalError(attempt.error ?? "No se pudo completar el login.");
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        setAuthState("error");
-        setPendingAttempt(null);
-        setGlobalError(describeClientError(error));
-      }
-    };
-
-    void pollAttempt();
-    const intervalId = window.setInterval(() => {
-      void pollAttempt();
-    }, 1250);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [pendingAttempt, refreshStatus]);
-
-  async function handleStartAuth(method: "device" | "browser" = "device") {
-    if (networkOnline !== true) {
-      setGlobalError("Conecta AgenOS a internet antes de iniciar sesión.");
+    if (!session.ready || conversation.state === "processing") {
       return;
     }
 
-    if (!harnessAvailable || chatState === "processing") {
-      return;
-    }
-
-    const actionId = authActionIdRef.current + 1;
-    authActionIdRef.current = actionId;
-    setGlobalError(null);
-    setAuthState("authorizing");
-
-    try {
-      const attempt = await piClient.startAuth(method);
-      if (authActionIdRef.current !== actionId) {
-        return;
-      }
-
-      setPendingAttempt(attempt);
-      setManualCodeInput("");
-
-      if (method === "browser") {
-        const popup = window.open(attempt.url, "_blank", "noopener");
-        if (!popup) {
-          setGlobalError("No se pudo abrir una pestana nueva. Usa el campo manual.");
-        }
-      }
-    } catch (error) {
-      if (authActionIdRef.current !== actionId) {
-        return;
-      }
-
-      setAuthState("error");
-      setGlobalError(describeClientError(error));
-    }
+    void session.startAuth(method);
   }
 
-  async function handleCancelAuth() {
-    if (!harnessAvailable || !pendingAttempt) {
+  function handleLogout() {
+    if (!session.ready) {
       return;
     }
 
-    authActionIdRef.current += 1;
-    setGlobalError(null);
-
-    try {
-      await piClient.cancelAuth(pendingAttempt.attemptId);
-      setPendingAttempt(null);
-      setManualCodeInput("");
-      setServerBusy(false);
-      setAuthState("disconnected");
-      await refreshStatus({ clearErrors: true });
-    } catch (error) {
-      setAuthState("error");
-      setGlobalError(describeClientError(error));
-    }
+    void session.logout();
+    resetConversationError();
+    voice.reset();
   }
 
-  async function handleLogout() {
-    if (!harnessAvailable) {
-      return;
-    }
-
-    authActionIdRef.current += 1;
-    setGlobalError(null);
-
-    try {
-      await piClient.logout();
-      setPendingAttempt(null);
-      setManualCodeInput("");
-      setActiveTurnId(null);
-      setChatState("idle");
-      setServerBusy(false);
-      setAuthState("disconnected");
-      if (isSpeechRecognitionSupported()) {
-        setVoiceState((current) => (current === "unsupported" ? "unsupported" : "idle"));
-      }
-    } catch (error) {
-      setGlobalError(describeClientError(error));
-    }
-  }
-
-  async function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!pendingAttempt) {
-      return;
-    }
-
-    try {
-      await piClient.submitManualCode(pendingAttempt.attemptId, manualCodeInput);
-      setManualCodeInput("");
-      setGlobalError(null);
-    } catch (error) {
-      setGlobalError(describeClientError(error));
-    }
+    void session.submitManualCode();
   }
 
   function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (chatState === "processing" || serverBusy) {
+    if (isProcessing) {
       return;
     }
 
-    void sendPrompt(draft, "text");
+    void sendMessage(conversation.draft, "text");
   }
 
-  function refreshAgentExperience() {
-    void Promise.allSettled([
-      refreshStatus({ clearErrors: true }),
-      refreshAgentStatus(),
-      refreshWorkspaces(),
-    ]);
-  }
-
-  async function handleWorkspaceFocus(workspace: AgentWorkspaceNumber) {
-    setGlobalError(null);
-
-    try {
-      const response = await agentClient.focusWorkspace(workspace);
-      if (response.workspaces.length > 0) {
-        setWorkspaces(response.workspaces);
-      }
-      if (response.activeWorkspace) {
-        setActiveWorkspace(response.activeWorkspace);
-      }
-      if (!response.ok) {
-        setGlobalError(response.message ?? "No se pudo cambiar de workspace.");
-      }
-    } catch (error) {
-      setGlobalError(describeClientError(error));
-    }
-  }
-
-  function handleVoiceStart() {
-    if (
-      !speechControllerRef.current?.supported
-      || authState !== "connected"
-      || chatState === "processing"
-      || serverBusy
-    ) {
-      return;
-    }
-
-    setGlobalError(null);
-    setVoiceIssue(null);
-    setVoiceState("listening");
-
-    const started = speechControllerRef.current.start();
-    if (!started) {
-      setVoiceState("error");
-    }
-  }
-
-  const isProcessing = chatState === "processing" || serverBusy;
-  const agentsBlockedByNetwork = networkOnline !== true;
-  const micDisabled =
-    !harnessAvailable
-    || agentsBlockedByNetwork
-    || authState !== "connected"
-    || voiceState === "unsupported"
-    || isProcessing;
+  const agentsBlockedByNetwork = network.online !== true;
   const textDisabled =
-    !harnessAvailable
+    !session.ready
     || agentsBlockedByNetwork
     || isProcessing
-    || authState === "authorizing";
-  const connectLabel = authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
-  const voiceHint =
-    voiceState === "unsupported"
-      ? voiceIssue ?? "STT local no disponible. Usa texto."
-      : authState !== "connected"
-        ? "Conecta ChatGPT para activar el micro."
-        : isProcessing
-          ? "Esperando la respuesta final del agente."
-          : voiceState === "listening"
-            ? "Escuchando una frase en espanol para enviarla al agente."
-            : voiceState === "error"
-              ? voiceIssue ?? "No se pudo usar el micro. Usa texto."
-              : "Habla o escribe una frase corta.";
-  const authHint = pendingAttempt
-    ? pendingAttempt.instructions
-    : describeAuthState(authState);
+    || session.authState === "authorizing";
+  const connectLabel = session.authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
+  const authHint = session.pendingAttempt
+    ? session.pendingAttempt.instructions
+    : describeAuthState(session.authState);
 
   return (
-    <div className="relative min-h-[100dvh] overflow-hidden bg-[#07090f] text-white selection:bg-white/20">
+    <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
       <VideoBackground />
-      <header className="fixed left-0 right-0 top-0 z-40 border-b border-white/10 bg-black/55 backdrop-blur-xl">
+      <header className="fixed left-0 right-0 top-0 z-40 border-b border-line bg-black/55 backdrop-blur-xl">
         <div className="mx-auto grid h-12 w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6">
-          <div className="font-display text-sm font-medium text-white">AgenOS</div>
-          <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/5 p-1">
-            {workspaces.map((workspace) => (
-              <button
-                aria-label={`Workspace ${workspace.number} ${workspace.label}`}
-                aria-current={activeWorkspace === workspace.number ? "page" : undefined}
-                className={[
-                  "grid h-8 w-8 place-items-center rounded text-sm font-medium transition-colors",
-                  activeWorkspace === workspace.number
-                    ? "bg-accent text-black"
-                    : "text-white/65 hover:bg-white/10 hover:text-white",
-                ].join(" ")}
-                key={workspace.number}
-                onClick={() => {
-                  void handleWorkspaceFocus(workspace.number);
-                }}
-                title={workspace.name}
-                type="button"
-              >
-                {workspace.number}
-              </button>
-            ))}
-          </div>
-          <div className="min-w-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-white/45">
-            <span className="hidden sm:inline">{authState === "connected" ? modelId : authState}</span>
-            <span className="sm:hidden">{activeWorkspace}</span>
+          <div className="font-display text-sm font-medium text-ink">AgenOS</div>
+          <WorkspaceSwitcher
+            activeWorkspace={workspaces.activeWorkspace}
+            live={workspaces.live}
+            onFocus={(workspace) => {
+              void workspaces.focus(workspace);
+            }}
+            workspaces={workspaces.workspaces}
+          />
+          <div className="min-w-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+            <span className="hidden sm:inline">
+              {session.authState === "connected" ? session.modelId : session.authState}
+            </span>
+            <span className="sm:hidden">{workspaces.activeWorkspace}</span>
           </div>
         </div>
       </header>
       <AgentDiagnosticsButton />
 
-      {globalError ? (
+      {alert ? (
         <div className="fixed left-1/2 top-16 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
-          <div className="glass-panel flex items-start gap-4 border-danger/30 bg-danger/10 p-4">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-white">Estado del harness</p>
-              <p className="mt-1 text-sm text-white/70">{globalError}</p>
-            </div>
-            <button
-              aria-label="Cerrar error"
-              className="rounded-full p-1 text-white/50 transition-colors hover:text-white"
-              onClick={() => setGlobalError(null)}
-              type="button"
-            >
-              ×
-            </button>
-          </div>
+          <Alert
+            details={alert.details}
+            onDismiss={sink.clear}
+            title={alert.title}
+            tone={alert.tone}
+          >
+            {alert.hint}
+          </Alert>
         </div>
       ) : null}
 
       {isLoading ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-6 backdrop-blur-sm">
           <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
-            <LoaderCircle className="h-6 w-6 animate-spin text-white/60" />
-            <p className="font-mono text-sm uppercase tracking-widest text-white/60">
-              Iniciando Harness
+            <LoaderCircle className="h-6 w-6 animate-spin text-ink-faint" />
+            <p className="font-mono text-sm uppercase tracking-widest text-ink-faint">
+              Iniciando AgenOS
             </p>
           </div>
         </div>
-      ) : networkOnline !== true ? (
+      ) : network.online !== true ? (
         <NetworkConnectionPanel
           client={networkClient}
           onOnline={() => {
-            setNetworkOnline(true);
+            network.markOnline();
             refreshAgentExperience();
           }}
         />
       ) : (
         <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 pb-20 pt-28 sm:pb-28 sm:pt-32">
-          <div className="mb-8 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">
+          <div className="mb-8 inline-flex rounded-control border border-line bg-black/25 p-1">
             <button
               className={[
-                "rounded-md px-4 py-2 text-sm transition-colors",
-                activeTab === "chat" ? "bg-white text-black" : "text-white/65 hover:text-white",
+                "rounded px-4 py-2 text-sm transition-colors",
+                activeTab === "chat" ? "bg-white text-black" : "text-ink-muted hover:text-ink",
               ].join(" ")}
               onClick={() => setActiveTab("chat")}
               type="button"
@@ -781,8 +292,8 @@ export default function App() {
             </button>
             <button
               className={[
-                "rounded-md px-4 py-2 text-sm transition-colors",
-                activeTab === "backend" ? "bg-white text-black" : "text-white/65 hover:text-white",
+                "rounded px-4 py-2 text-sm transition-colors",
+                activeTab === "backend" ? "bg-white text-black" : "text-ink-muted hover:text-ink",
               ].join(" ")}
               onClick={() => setActiveTab("backend")}
               type="button"
@@ -795,334 +306,262 @@ export default function App() {
               <AgentAdminPanel client={agentAdminClient} />
             </div>
           ) : (
-          <div className="flex w-full flex-col items-center gap-12 text-center">
-            <div className="space-y-6">
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-white/60 backdrop-blur-md">
-                <span
-                  className={[
-                    "h-1.5 w-1.5 rounded-full",
-                    authState === "connected"
-                      ? "bg-accent"
-                      : authState === "error"
-                        ? "bg-danger"
-                        : "bg-white/35",
-                  ].join(" ")}
-                />
-                {harnessAvailable ? "UI Dev Harness" : "Dev Harness Offline"}
+            <div className="flex w-full flex-col items-center gap-12 text-center">
+              <div className="space-y-6">
+                <div className="inline-flex items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-ink-faint backdrop-blur-md">
+                  <span
+                    className={[
+                      "h-1.5 w-1.5 rounded-pill",
+                      session.authState === "connected"
+                        ? "bg-accent"
+                        : session.authState === "error"
+                          ? "bg-danger"
+                          : "bg-ink-faint",
+                    ].join(" ")}
+                  />
+                  {session.ready ? "Sistema listo" : "Sistema sin respuesta"}
+                </div>
+
+                <h1 className="font-display text-5xl font-medium tracking-tight text-ink sm:text-7xl lg:text-8xl">
+                  AgenOS
+                </h1>
+
+                <p className="mx-auto max-w-xl text-base text-ink-muted sm:text-lg">
+                  Habla con Pi para abrir aplicaciones, buscar archivos y organizar tu equipo.
+                </p>
               </div>
 
-              <h1 className="font-display text-5xl font-medium tracking-tight text-white sm:text-7xl lg:text-8xl">
-                AgenOS
-              </h1>
+              <VoiceConsole
+                buttonLabel={voice.buttonLabel}
+                onActivate={voice.start}
+                onCancel={voice.cancel}
+                status={voice.status}
+              />
 
-              <p className="mx-auto max-w-xl text-base text-white/55 sm:text-lg">
-                Shell visual de AgenOS sobre un harness local de ChatGPT/Codex para desarrollo web.
-              </p>
-            </div>
-
-            <div className="relative flex justify-center py-4">
-              <button
-                aria-label="Activar micro"
-                className="group relative flex h-32 w-32 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[0.98] hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45 sm:h-40 sm:w-40"
-                disabled={micDisabled}
-                onClick={handleVoiceStart}
-                type="button"
-              >
-                <div
-                  className={[
-                    "absolute inset-0 rounded-full border border-white/5 transition-transform duration-700",
-                    voiceState === "listening"
-                      ? "animate-spin-slow scale-[1.15] border-t-white/30"
-                      : "scale-100",
-                  ].join(" ")}
-                />
-                <div
-                  className={[
-                    "absolute inset-[-1px] rounded-full border border-white/10 transition-transform duration-1000",
-                    isProcessing
-                      ? "animate-spin-slow scale-105 border-b-accent/40"
-                      : "scale-100",
-                  ].join(" ")}
-                />
-
-                <div className="flex items-center justify-center text-white/70 transition-colors group-hover:text-white">
-                  {isProcessing ? (
-                    <LoaderCircle className="h-8 w-8 animate-spin sm:h-10 sm:w-10" strokeWidth={1.5} />
-                  ) : (
-                    <Mic className="h-8 w-8 sm:h-10 sm:w-10" strokeWidth={1.5} />
-                  )}
-                </div>
-              </button>
-            </div>
-
-            <div className="w-full max-w-xl text-center">
-              <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
-                Micro Local
-              </p>
-              <p className="mt-3 text-sm text-white/60 sm:text-base">{voiceHint}</p>
-            </div>
-
-            <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
-              <div className="grid gap-4 lg:col-span-2">
-                <AgentHealthChecklist
-                  adminStatus={agentStatus}
-                  authState={authState}
-                  backendError={agentBackendError}
-                  harnessAvailable={harnessAvailable}
-                />
-                <AgentOnboardingPanel
-                  adminStatus={agentStatus}
-                  authState={authState}
-                  backendError={agentBackendError}
-                  harnessAvailable={harnessAvailable}
-                  onConnectCodex={() => {
-                    void handleStartAuth("device");
-                  }}
-                  onOpenBackend={() => setActiveTab("backend")}
-                  onRefresh={refreshAgentExperience}
-                />
-              </div>
-
-              <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
-                      Estado de Conexion
-                    </p>
-                    <h2 className="mt-3 text-2xl font-medium text-white">
-                      {providerName}
-                    </h2>
-                    <p className="mt-2 text-sm text-white/55">{authHint}</p>
-                  </div>
-                  <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 font-mono text-[11px] text-white/60">
-                    {modelId}
-                  </div>
+              <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="grid gap-4 lg:col-span-2">
+                  <AgentHealthChecklist
+                    adminStatus={health.status}
+                    authState={session.authState}
+                    backendError={health.error}
+                    harnessAvailable={session.ready}
+                  />
+                  <AgentOnboardingPanel
+                    adminStatus={health.status}
+                    authState={session.authState}
+                    backendError={health.error}
+                    harnessAvailable={session.ready}
+                    onConnectCodex={() => handleStartAuth("device")}
+                    onOpenBackend={() => setActiveTab("backend")}
+                    onRefresh={refreshAgentExperience}
+                  />
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    className="btn-primary inline-flex items-center gap-2"
-                    disabled={!harnessAvailable || authState === "authorizing" || isProcessing}
-                    onClick={() => {
-                      void handleStartAuth("device");
-                    }}
-                    type="button"
-                  >
-                    {authState === "authorizing" ? (
-                      <LoaderCircle className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <ArrowUpRight className="h-4 w-4" />
-                    )}
-                    {connectLabel} con codigo
-                  </button>
-
-                  <button
-                    className="btn-secondary inline-flex items-center gap-2"
-                    disabled={!harnessAvailable || authState === "authorizing"}
-                    onClick={handleLogout}
-                    type="button"
-                  >
-                    <LogOut className="h-4 w-4" />
-                    Logout
-                  </button>
-
-                  {pendingAttempt ? (
-                    <button
-                      className="btn-secondary inline-flex items-center gap-2"
-                      disabled={!harnessAvailable}
-                      onClick={() => {
-                        void handleCancelAuth();
-                      }}
-                      type="button"
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Cancelar login
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
-                    <div className="flex items-center gap-2 text-sm text-white/75">
-                      {authState === "connected" ? (
-                        <ShieldCheck className="h-4 w-4 text-accent" />
-                      ) : (
-                        <ShieldX className="h-4 w-4 text-danger" />
-                      )}
-                      Cuenta
+                <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="eyebrow">Estado de conexion</p>
+                      <h2 className="mt-3 text-2xl font-medium text-ink">{session.providerName}</h2>
+                      <p className="mt-2 text-sm text-ink-muted">{authHint}</p>
                     </div>
-                    <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-white/35">
-                      {authState}
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
-                    <div className="flex items-center gap-2 text-sm text-white/75">
-                      <MessageSquareText className="h-4 w-4 text-white/70" />
-                      Turno
+                    <div className="rounded-pill border border-line bg-black/20 px-3 py-1 font-mono text-[11px] text-ink-muted">
+                      {session.modelId}
                     </div>
-                    <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-white/35">
-                      {isProcessing ? "processing" : chatState}
-                    </p>
-                  </div>
-                </div>
-
-                {pendingAttempt ? (
-                  pendingAttempt.method === "device" ? (
-                    <div className="grid gap-3 rounded-lg border border-white/8 bg-black/20 p-4">
-                      <div>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
-                          Device Auth
-                        </p>
-                        <a
-                          className="mt-2 inline-flex min-w-0 items-center gap-2 break-all text-sm text-accent-light hover:text-white"
-                          href={pendingAttempt.url}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          {pendingAttempt.url}
-                          <ExternalLink className="h-4 w-4 shrink-0" />
-                        </a>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3">
-                        <code className="rounded-md border border-white/10 bg-black/30 px-3 py-2 font-mono text-lg tracking-[0.18em] text-white">
-                          {pendingAttempt.userCode ?? "Esperando codigo..."}
-                        </code>
-                        <button
-                          className="btn-secondary inline-flex items-center gap-2"
-                          disabled={!pendingAttempt.userCode}
-                          onClick={() => {
-                            if (pendingAttempt.userCode) {
-                              void navigator.clipboard?.writeText(pendingAttempt.userCode);
-                            }
-                          }}
-                          type="button"
-                        >
-                          <Clipboard className="h-4 w-4" />
-                          Copiar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
-                      <div>
-                        <label
-                          className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
-                          htmlFor="manual-code"
-                        >
-                          Pegar URL o Codigo Manual
-                        </label>
-                        <input
-                          className="glass-input mt-3"
-                          id="manual-code"
-                          onChange={(event) => setManualCodeInput(event.target.value)}
-                          placeholder="http://localhost:1455/auth/callback?... o el code"
-                          value={manualCodeInput}
-                        />
-                      </div>
-
-                      <button className="btn-secondary self-start" type="submit">
-                        Enviar fallback manual
-                      </button>
-                    </form>
-                  )
-                ) : null}
-
-                <form className="flex flex-col gap-3" onSubmit={handleTextSubmit}>
-                  <div>
-                    <label
-                      className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35"
-                      htmlFor="message"
-                    >
-                      Texto
-                    </label>
-                    <input
-                      className="glass-input mt-3"
-                      disabled={textDisabled}
-                      id="message"
-                      onChange={(event) => setDraft(event.target.value)}
-                      placeholder="Escribe una frase corta en espanol"
-                      value={draft}
-                    />
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <button className="btn-primary" disabled={textDisabled} type="submit">
-                      {isProcessing ? "Procesando..." : "Enviar"}
-                    </button>
-
-                    <button
-                      className="btn-secondary inline-flex items-center gap-2"
-                      disabled={!harnessAvailable}
-                      onClick={() => {
-                        void refreshStatus({ clearErrors: true });
-                      }}
-                      type="button"
+                    <Button
+                      disabled={!session.ready || session.authState === "authorizing" || isProcessing}
+                      icon={<ArrowUpRight className="h-4 w-4" />}
+                      loading={session.authState === "authorizing"}
+                      onClick={() => handleStartAuth("device")}
+                      variant="primary"
                     >
-                      <RefreshCcw className="h-4 w-4" />
-                      Refrescar estado
-                    </button>
-                  </div>
-                </form>
-              </div>
+                      {connectLabel} con codigo
+                    </Button>
 
-              <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
-                    Conversacion
-                  </p>
-                  <h2 className="mt-3 text-2xl font-medium text-white">
-                    Historial con Pi
-                  </h2>
-                  <p className="mt-2 text-sm text-white/55">
-                    Los turnos se guardan en este equipo y sobreviven reinicios del shell.
-                  </p>
+                    <Button
+                      disabled={!session.ready || session.authState === "authorizing"}
+                      icon={<LogOut className="h-4 w-4" />}
+                      onClick={handleLogout}
+                    >
+                      Logout
+                    </Button>
+
+                    {session.pendingAttempt ? (
+                      <Button
+                        disabled={!session.ready}
+                        icon={<XCircle className="h-4 w-4" />}
+                        onClick={() => {
+                          void session.cancelAuth();
+                        }}
+                      >
+                        Cancelar login
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="panel-inset p-4">
+                      <div className="flex items-center gap-2 text-sm text-ink-muted">
+                        {session.authState === "connected" ? (
+                          <ShieldCheck className="h-4 w-4 text-positive" />
+                        ) : (
+                          <ShieldX className="h-4 w-4 text-danger" />
+                        )}
+                        Cuenta
+                      </div>
+                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-ink-faint">
+                        {session.authState}
+                      </p>
+                    </div>
+
+                    <div className="panel-inset p-4">
+                      <div className="flex items-center gap-2 text-sm text-ink-muted">
+                        <MessageSquareText className="h-4 w-4 text-ink-muted" />
+                        Turno
+                      </div>
+                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-ink-faint">
+                        {isProcessing ? "processing" : conversation.state}
+                      </p>
+                    </div>
+                  </div>
+
+                  {session.pendingAttempt ? (
+                    session.pendingAttempt.method === "device" ? (
+                      <div className="panel-inset grid gap-3 p-4">
+                        <div>
+                          <p className="eyebrow">Device auth</p>
+                          <a
+                            className="mt-2 inline-flex min-w-0 items-center gap-2 break-all text-sm text-accent-light hover:text-ink"
+                            href={session.pendingAttempt.url}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {session.pendingAttempt.url}
+                            <ExternalLink className="h-4 w-4 shrink-0" />
+                          </a>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+                          <code className="rounded-control border border-line bg-black/30 px-3 py-2 font-mono text-lg tracking-[0.18em] text-ink">
+                            {session.pendingAttempt.userCode ?? "Esperando codigo..."}
+                          </code>
+                          <Button
+                            disabled={!session.pendingAttempt.userCode}
+                            icon={<Clipboard className="h-4 w-4" />}
+                            onClick={() => {
+                              const code = session.pendingAttempt?.userCode;
+                              if (code) {
+                                void navigator.clipboard?.writeText(code);
+                              }
+                            }}
+                          >
+                            Copiar
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
+                        <div>
+                          <label className="eyebrow" htmlFor="manual-code">
+                            Pegar URL o Codigo Manual
+                          </label>
+                          <input
+                            className="glass-input mt-3"
+                            id="manual-code"
+                            onChange={(event) => session.setManualCode(event.target.value)}
+                            placeholder="http://localhost:1455/auth/callback?... o el code"
+                            value={session.manualCode}
+                          />
+                        </div>
+
+                        <Button className="self-start" type="submit">
+                          Enviar fallback manual
+                        </Button>
+                      </form>
+                    )
+                  ) : null}
+
+                  <form className="flex flex-col gap-3" onSubmit={handleTextSubmit}>
+                    <div>
+                      <label className="eyebrow" htmlFor="message">
+                        Texto
+                      </label>
+                      <input
+                        className="glass-input mt-3"
+                        disabled={textDisabled}
+                        id="message"
+                        onChange={(event) => conversation.setDraft(event.target.value)}
+                        placeholder="Escribe una frase corta en espanol"
+                        value={conversation.draft}
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button disabled={textDisabled} type="submit" variant="primary">
+                        {isProcessing ? "Procesando..." : "Enviar"}
+                      </Button>
+
+                      <Button
+                        disabled={!session.ready}
+                        icon={<RefreshCcw className="h-4 w-4" />}
+                        onClick={refreshAgentExperience}
+                      >
+                        Refrescar estado
+                      </Button>
+                    </div>
+                  </form>
                 </div>
 
-                <div className="flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1">
-                  {turns.length === 0 ? (
-                    <div className="rounded-2xl border border-white/8 bg-black/20 p-5 text-sm text-white/55">
-                      Todavia no hay conversacion. Escribe o usa el microfono para hablar con Pi.
-                    </div>
-                  ) : (
-                    turns.map((turn) => (
-                      <div className="rounded-2xl border border-white/8 bg-black/20 p-5" key={turn.turnId}>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
-                          Tu
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/80">
-                          {turn.input}
-                        </p>
-                        <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
-                          Pi
-                        </p>
-                        {turn.status === "processing" ? (
-                          <>
-                            <p className="mt-2 inline-flex items-center gap-2 text-xs text-accent-light">
-                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                              {describeTurnActivity(turn.progress) ?? "Pi esta trabajando..."}
-                            </p>
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/85">
-                              {turn.progress.streamedText || "Esperando la primera respuesta de Pi..."}
-                            </p>
-                          </>
-                        ) : turn.status === "failed" ? (
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-danger">
-                            {turn.error ?? "El turno fallo."}
-                          </p>
-                        ) : (
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/85">
-                            {turn.reply ?? ""}
-                          </p>
-                        )}
+                <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
+                  <div>
+                    <p className="eyebrow">Conversacion</p>
+                    <h2 className="mt-3 text-2xl font-medium text-ink">Historial con Pi</h2>
+                    <p className="mt-2 text-sm text-ink-muted">
+                      Los turnos se guardan en este equipo y sobreviven reinicios del shell.
+                    </p>
+                  </div>
+
+                  <div className="flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1">
+                    {conversation.turns.length === 0 ? (
+                      <div className="panel-inset p-5 text-sm text-ink-muted">
+                        Todavia no hay conversacion. Escribe o usa el microfono para hablar con Pi.
                       </div>
-                    ))
-                  )}
+                    ) : (
+                      conversation.turns.map((turn) => (
+                        <div className="panel-inset p-5" key={turn.turnId}>
+                          <p className="eyebrow">Tu</p>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink-muted">
+                            {turn.input}
+                          </p>
+                          <p className="eyebrow mt-4">Pi</p>
+                          {turn.status === "processing" ? (
+                            <>
+                              <p className="mt-2 inline-flex items-center gap-2 text-xs text-accent-light">
+                                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                {describeTurnActivity(turn.progress) ?? "Pi está trabajando…"}
+                              </p>
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">
+                                {turn.progress.streamedText || "Esperando la primera respuesta de Pi..."}
+                              </p>
+                            </>
+                          ) : turn.status === "failed" ? (
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-danger">
+                              {turn.error ?? "El turno fallo."}
+                            </p>
+                          ) : (
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">
+                              {turn.reply ?? ""}
+                            </p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           )}
         </div>
       )}
