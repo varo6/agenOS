@@ -249,6 +249,11 @@ printf '%s\n' \
   'export TMPDIR="${RUNTIME_DIR}"' \
   '' \
   'start_api() {' \
+  '  # La ISO ya gestiona el broker con systemd. No lo dupliques mientras arranca.' \
+  '  if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet agenos-agent-api.service 2>/dev/null; then' \
+  '    return 0' \
+  '  fi' \
+  '' \
   '  if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
   '    return 0' \
   '  fi' \
@@ -273,7 +278,8 @@ printf '%s\n' \
   '  fi' \
   '}' \
   '' \
-  'start_api || true' \
+  '# El broker de desarrollo no forma parte de la ruta crítica al primer frame.' \
+  'start_api &' \
   'exec flock -n "${LOCK_FILE}" "${ELECTRON_BIN}" "${ELECTRON_APP}" \' \
   '  --no-sandbox \' \
   '  --disable-dev-shm-usage \' \
