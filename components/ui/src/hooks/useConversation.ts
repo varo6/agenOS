@@ -4,13 +4,13 @@ import type { createAgentClient } from "../lib/agent-client";
 import { classifyAgentCommand } from "../lib/agent-command";
 import { PiClientError, type createPiClient } from "../lib/pi-client";
 import type { PiChatSource, PiTurnState } from "../lib/pi-types";
+import { turnPollDelayMs } from "../lib/turn-polling";
 import { useLatest } from "./useLatest";
 import type { AlertSink } from "./useSystemAlert";
 
 type PiClient = ReturnType<typeof createPiClient>;
 type AgentClient = ReturnType<typeof createAgentClient>;
 
-const TURN_POLL_INTERVAL_MS = 1_200;
 const HISTORY_LIMIT = 20;
 /** Turnos que se conservan en memoria; el historial completo vive en el equipo. */
 const MAX_TURNS = 40;
@@ -224,19 +224,54 @@ export function useConversation({
     }
 
     let cancelled = false;
-    const tick = () => {
+    let inFlight = false;
+    let timeoutId: number | null = null;
+    const startedAt = performance.now();
+
+    const schedule = () => {
       if (cancelled) {
         return;
       }
-      void pollTurnRef.current();
+      const delay = turnPollDelayMs(
+        performance.now() - startedAt,
+        document.visibilityState === "hidden",
+      );
+      timeoutId = window.setTimeout(() => void tick(), delay);
     };
 
-    tick();
-    const intervalId = window.setInterval(tick, TURN_POLL_INTERVAL_MS);
+    const tick = async () => {
+      if (cancelled || inFlight) {
+        return;
+      }
+      inFlight = true;
+      try {
+        await pollTurnRef.current();
+      } finally {
+        inFlight = false;
+        schedule();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || inFlight) {
+        return;
+      }
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      void tick();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void tick();
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [activeTurnId, pollTurnRef]);
 
