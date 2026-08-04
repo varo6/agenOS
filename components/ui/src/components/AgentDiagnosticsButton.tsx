@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { Clipboard, FileWarning, LoaderCircle, RefreshCcw, X } from "lucide-react";
+import { Clipboard, FileWarning, RefreshCcw, X } from "lucide-react";
 import { collectAgentDiagnostics, type AgentDiagnosticCheck, type AgentDiagnosticsReport } from "../lib/agent-diagnostics";
+import { Button } from "./ui";
 
 export type AgentDiagnosticsButtonProps = {
   collectDiagnostics?: () => Promise<AgentDiagnosticsReport>;
@@ -78,17 +79,17 @@ export function AgentDiagnosticsButton({
 
   return (
     <>
-      <div className="fixed right-4 top-16 z-50 sm:right-6">
-        <button
-          aria-label="Diagnostico"
-          className="btn-secondary inline-flex items-center gap-2 bg-black/35 px-3 py-2 text-sm backdrop-blur-md"
-          onClick={loadDiagnostics}
-          type="button"
-        >
-          {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileWarning className="h-4 w-4" />}
-          Diagnostico
-        </button>
-      </div>
+      {/* Vive en la barra de sistema: antes flotaba encima del contenido. */}
+      <Button
+        aria-label="Diagnostico"
+        icon={<FileWarning aria-hidden="true" className="h-4 w-4" />}
+        loading={loading}
+        onClick={loadDiagnostics}
+        size="sm"
+        variant="ghost"
+      >
+        Diagnostico
+      </Button>
 
       {open ? (
         <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/55 px-4 py-20 backdrop-blur-sm">

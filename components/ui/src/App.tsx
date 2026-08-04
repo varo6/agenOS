@@ -18,7 +18,8 @@ import { AgentAdminPanel } from "./components/AgentAdminPanel";
 import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
-import { WorkspaceSwitcher } from "./components/shell/WorkspaceSwitcher";
+import { BootScreen } from "./components/shell/BootScreen";
+import { TopBar, type ShellSection } from "./components/shell/TopBar";
 import { VoiceConsole } from "./components/voice/VoiceConsole";
 import { Alert, Button } from "./components/ui";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
@@ -37,6 +38,7 @@ import { useVoice, type VoiceAgentState } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 import type { VoiceBlockedReason } from "./lib/voice-status";
 import type { PiAuthState } from "./lib/pi-types";
+import type { AgentWorkspaceNumber } from "./lib/system-types";
 
 const piClient = createPiClient();
 const agentClient = createAgentClient();
@@ -48,6 +50,12 @@ const networkClient = createNetworkClient();
  * si el puente aún no existe, la barra sigue funcionando con la lectura HTTP.
  */
 const workspaceSubscription = resolveWorkspaceSubscription(agentClient);
+
+/*
+ * El botón de diagnóstico no recibe props: se crea una sola vez para que la
+ * barra de sistema siga siendo memoizable.
+ */
+const diagnosticsAction = <AgentDiagnosticsButton />;
 
 function describeAuthState(authState: PiAuthState): string {
   switch (authState) {
@@ -64,7 +72,7 @@ function describeAuthState(authState: PiAuthState): string {
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "backend">("chat");
+  const [section, setSection] = useState<ShellSection>("home");
 
   const { alert, sink } = useSystemAlert();
   const network = useNetworkStatus(networkClient);
@@ -90,6 +98,7 @@ export default function App() {
   const healthRefresh = health.refresh;
   const networkRefresh = network.refresh;
   const refreshWorkspaces = workspaces.refresh;
+  const workspaceFocus = workspaces.focus;
 
   const handleTurnSettled = useCallback(() => {
     void Promise.allSettled([sessionRefresh(), refreshWorkspaces()]);
@@ -166,6 +175,15 @@ export default function App() {
     };
   }, [healthRefresh, networkRefresh, refreshWorkspaces, restoreConversation, sessionRefresh]);
 
+  const focusWorkspace = useCallback(
+    (workspace: AgentWorkspaceNumber) => {
+      void workspaceFocus(workspace);
+    },
+    [workspaceFocus],
+  );
+
+  const openSystemSection = useCallback(() => setSection("system"), []);
+
   const refreshAgentExperience = useCallback(() => {
     resetConversationError();
     void Promise.allSettled([
@@ -226,26 +244,17 @@ export default function App() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
       <VideoBackground />
-      <header className="fixed left-0 right-0 top-0 z-40 border-b border-line bg-black/55 backdrop-blur-xl">
-        <div className="mx-auto grid h-12 w-full max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 sm:px-6">
-          <div className="font-display text-sm font-medium text-ink">AgenOS</div>
-          <WorkspaceSwitcher
-            activeWorkspace={workspaces.activeWorkspace}
-            live={workspaces.live}
-            onFocus={(workspace) => {
-              void workspaces.focus(workspace);
-            }}
-            workspaces={workspaces.workspaces}
-          />
-          <div className="min-w-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
-            <span className="hidden sm:inline">
-              {session.authState === "connected" ? session.modelId : session.authState}
-            </span>
-            <span className="sm:hidden">{workspaces.activeWorkspace}</span>
-          </div>
-        </div>
-      </header>
-      <AgentDiagnosticsButton />
+      <TopBar
+        actions={diagnosticsAction}
+        activeWorkspace={workspaces.activeWorkspace}
+        authState={session.authState}
+        modelId={session.modelId}
+        onChangeSection={setSection}
+        onFocusWorkspace={focusWorkspace}
+        section={section}
+        workspaces={workspaces.workspaces}
+        workspacesLive={workspaces.live}
+      />
 
       {alert ? (
         <div className="fixed left-1/2 top-16 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
@@ -261,14 +270,7 @@ export default function App() {
       ) : null}
 
       {isLoading ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 px-6 backdrop-blur-sm">
-          <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
-            <LoaderCircle className="h-6 w-6 animate-spin text-ink-faint" />
-            <p className="font-mono text-sm uppercase tracking-widest text-ink-faint">
-              Iniciando AgenOS
-            </p>
-          </div>
-        </div>
+        <BootScreen />
       ) : network.online !== true ? (
         <NetworkConnectionPanel
           client={networkClient}
@@ -279,29 +281,7 @@ export default function App() {
         />
       ) : (
         <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 pb-20 pt-28 sm:pb-28 sm:pt-32">
-          <div className="mb-8 inline-flex rounded-control border border-line bg-black/25 p-1">
-            <button
-              className={[
-                "rounded px-4 py-2 text-sm transition-colors",
-                activeTab === "chat" ? "bg-white text-black" : "text-ink-muted hover:text-ink",
-              ].join(" ")}
-              onClick={() => setActiveTab("chat")}
-              type="button"
-            >
-              Chat
-            </button>
-            <button
-              className={[
-                "rounded px-4 py-2 text-sm transition-colors",
-                activeTab === "backend" ? "bg-white text-black" : "text-ink-muted hover:text-ink",
-              ].join(" ")}
-              onClick={() => setActiveTab("backend")}
-              type="button"
-            >
-              Backend
-            </button>
-          </div>
-          {activeTab === "backend" ? (
+          {section === "system" ? (
             <div className="grid w-full gap-4">
               <AgentAdminPanel client={agentAdminClient} />
             </div>
@@ -352,7 +332,7 @@ export default function App() {
                     backendError={health.error}
                     harnessAvailable={session.ready}
                     onConnectCodex={() => handleStartAuth("device")}
-                    onOpenBackend={() => setActiveTab("backend")}
+                    onOpenBackend={openSystemSection}
                     onRefresh={refreshAgentExperience}
                   />
                 </div>
