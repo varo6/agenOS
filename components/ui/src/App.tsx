@@ -19,9 +19,10 @@ import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
 import { BootScreen } from "./components/shell/BootScreen";
+import { SystemAlertBanner } from "./components/shell/SystemAlertBanner";
 import { TopBar, type ShellSection } from "./components/shell/TopBar";
 import { VoiceConsole } from "./components/voice/VoiceConsole";
-import { Alert, Button } from "./components/ui";
+import { Button } from "./components/ui";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
 import { createNetworkClient } from "../../network/client";
 import { createAgentAdminClient } from "./lib/agent-admin-client";
@@ -95,6 +96,8 @@ export default function App() {
    * arranque, el micrófono y los sondeos.
    */
   const sessionRefresh = session.refresh;
+  const startAuth = session.startAuth;
+  const sessionLogout = session.logout;
   const healthRefresh = health.refresh;
   const networkRefresh = network.refresh;
   const refreshWorkspaces = workspaces.refresh;
@@ -154,6 +157,8 @@ export default function App() {
     agentIssue: alert?.hint ?? null,
   });
 
+  const resetVoice = voice.reset;
+
   // Arranque del shell: micrófono, estado del sistema, historial y red.
   useEffect(() => {
     let cancelled = false;
@@ -193,7 +198,7 @@ export default function App() {
     ]);
   }, [healthRefresh, refreshWorkspaces, resetConversationError, sessionRefresh]);
 
-  function handleStartAuth(method: "device" | "browser" = "device") {
+  const connect = useCallback(() => {
     if (network.online !== true) {
       sink.raise("Sin conexión a internet.", { kind: "offline" });
       return;
@@ -203,18 +208,22 @@ export default function App() {
       return;
     }
 
-    void session.startAuth(method);
-  }
+    void startAuth("device");
+  }, [conversation.state, network.online, session.ready, sink, startAuth]);
 
-  function handleLogout() {
+  const checkNetwork = useCallback(() => {
+    void networkRefresh();
+  }, [networkRefresh]);
+
+  const logout = useCallback(() => {
     if (!session.ready) {
       return;
     }
 
-    void session.logout();
+    void sessionLogout();
     resetConversationError();
-    voice.reset();
-  }
+    resetVoice();
+  }, [resetConversationError, resetVoice, session.ready, sessionLogout]);
 
   function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -257,16 +266,14 @@ export default function App() {
       />
 
       {alert ? (
-        <div className="fixed left-1/2 top-16 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2">
-          <Alert
-            details={alert.details}
-            onDismiss={sink.clear}
-            title={alert.title}
-            tone={alert.tone}
-          >
-            {alert.hint}
-          </Alert>
-        </div>
+        <SystemAlertBanner
+          alert={alert}
+          onCheckNetwork={checkNetwork}
+          onDismiss={sink.clear}
+          onOpenSystem={openSystemSection}
+          onReconnect={connect}
+          onRetry={refreshAgentExperience}
+        />
       ) : null}
 
       {isLoading ? (
@@ -331,7 +338,7 @@ export default function App() {
                     authState={session.authState}
                     backendError={health.error}
                     harnessAvailable={session.ready}
-                    onConnectCodex={() => handleStartAuth("device")}
+                    onConnectCodex={connect}
                     onOpenBackend={openSystemSection}
                     onRefresh={refreshAgentExperience}
                   />
@@ -354,7 +361,7 @@ export default function App() {
                       disabled={!session.ready || session.authState === "authorizing" || isProcessing}
                       icon={<ArrowUpRight className="h-4 w-4" />}
                       loading={session.authState === "authorizing"}
-                      onClick={() => handleStartAuth("device")}
+                      onClick={connect}
                       variant="primary"
                     >
                       {connectLabel} con codigo
@@ -363,7 +370,7 @@ export default function App() {
                     <Button
                       disabled={!session.ready || session.authState === "authorizing"}
                       icon={<LogOut className="h-4 w-4" />}
-                      onClick={handleLogout}
+                      onClick={logout}
                     >
                       Logout
                     </Button>
