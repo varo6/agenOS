@@ -12,6 +12,18 @@ export type CliDependencies = {
   console?: Pick<Console, "log" | "error">;
 };
 
+const HEALTHY_WORKER_POLL_MS = 5 * 60_000;
+const FAILED_WORKER_POLL_MIN_MS = 30_000;
+
+export function workerHealthPollDelayMs(ok: boolean, consecutiveFailures: number): number {
+  if (ok) {
+    return HEALTHY_WORKER_POLL_MS;
+  }
+
+  const exponent = Math.min(4, Math.max(0, Math.floor(consecutiveFailures)));
+  return Math.min(HEALTHY_WORKER_POLL_MS, FAILED_WORKER_POLL_MIN_MS * (2 ** exponent));
+}
+
 function profileArg(args: string[]): string {
   const index = args.indexOf("--profile");
   if (index === -1 || !args[index + 1]) {
@@ -142,17 +154,38 @@ async function runAgentWorkerLoop(): Promise<void> {
     }
   }
 
-  const interval = setInterval(async () => {
+  let consecutiveFailures = 0;
+  let healthTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopping = false;
+
+  const pollHealth = async () => {
+    let ok = false;
     try {
-      await adapter.health();
+      ok = (await adapter.health()).ok;
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
     }
-  }, 30_000);
+
+    consecutiveFailures = ok ? 0 : consecutiveFailures + 1;
+    if (!stopping) {
+      healthTimer = setTimeout(
+        () => void pollHealth(),
+        workerHealthPollDelayMs(ok, consecutiveFailures),
+      );
+    }
+  };
+
+  healthTimer = setTimeout(
+    () => void pollHealth(),
+    workerHealthPollDelayMs(health.ok, consecutiveFailures),
+  );
 
   await new Promise<void>((resolve) => {
     const stop = () => {
-      clearInterval(interval);
+      stopping = true;
+      if (healthTimer) {
+        clearTimeout(healthTimer);
+      }
       gateway?.stop();
       resolve();
     };

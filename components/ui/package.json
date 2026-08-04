@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:electron": "rm -rf build/electron && mkdir -p build/electron && bun build --target=node --format=esm --external electron ./src/electron/main.ts --outfile build/electron/main.mjs && bun build --target=node --format=cjs --external electron ./src/electron/preload.ts --outfile build/electron/preload.cjs && install -m 0644 ./src/electron/package.json ./build/electron/package.json",
+    "build:electron": "rm -rf build/electron && mkdir -p build/electron && bun build --target=node --format=esm --external electron --splitting --minify --entry-naming main.mjs --chunk-naming chunks/[name]-[hash].[ext] ./src/electron/main.ts --outdir build/electron && bun build --target=node --format=cjs --external electron --minify ./src/electron/preload.ts --outfile build/electron/preload.cjs && install -m 0644 ./src/electron/package.json ./build/electron/package.json",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && bun run build:electron && vite build",
     "dev": "vite",
     "dev:live": "AGENOS_UI_DEV_LIVE_SESSION=1 vite",
