@@ -103,7 +103,7 @@ export function HomeView({
             backendError={health.error}
             harnessAvailable={session.ready}
             onConnectCodex={actions.connect}
-            onOpenBackend={actions.openSystem}
+            onOpenSystem={actions.openSystem}
             onRefresh={actions.refresh}
           />
 

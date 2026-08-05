@@ -31,7 +31,7 @@ const readyStatus: AgentAdminStatus = {
 describe("AgentOnboardingPanel", () => {
   test("prioritizes backend recovery when the broker is unavailable", () => {
     const onRefresh = vi.fn();
-    const onOpenBackend = vi.fn();
+    const onOpenSystem = vi.fn();
 
     render(
       <AgentOnboardingPanel
@@ -40,17 +40,17 @@ describe("AgentOnboardingPanel", () => {
         backendError="Failed to fetch"
         harnessAvailable={false}
         onConnectCodex={vi.fn()}
-        onOpenBackend={onOpenBackend}
+        onOpenSystem={onOpenSystem}
         onRefresh={onRefresh}
       />,
     );
 
     expect(screen.getByText("Backend no disponible")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refrescar salud" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Backend" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir Sistema" }));
 
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onOpenBackend).toHaveBeenCalledTimes(1);
+    expect(onOpenSystem).toHaveBeenCalledTimes(1);
   });
 
   test("guides the user to connect Codex after the backend is ready", () => {
@@ -63,7 +63,7 @@ describe("AgentOnboardingPanel", () => {
         backendError={null}
         harnessAvailable
         onConnectCodex={onConnectCodex}
-        onOpenBackend={vi.fn()}
+        onOpenSystem={vi.fn()}
         onRefresh={vi.fn()}
       />,
     );
@@ -75,7 +75,7 @@ describe("AgentOnboardingPanel", () => {
   });
 
   test("prioritizes backend Codex setup items before foreground login", () => {
-    const onOpenBackend = vi.fn();
+    const onOpenSystem = vi.fn();
     render(
       <AgentOnboardingPanel
         adminStatus={{
@@ -95,14 +95,14 @@ describe("AgentOnboardingPanel", () => {
         backendError={null}
         harnessAvailable
         onConnectCodex={vi.fn()}
-        onOpenBackend={onOpenBackend}
+        onOpenSystem={onOpenSystem}
         onRefresh={vi.fn()}
       />,
     );
 
     expect(screen.getByText("Setup del backend")).toBeInTheDocument();
     expect(screen.getByText("Connect backend Codex auth for OpenClaw.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Backend" }));
-    expect(onOpenBackend).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Abrir Sistema" }));
+    expect(onOpenSystem).toHaveBeenCalledTimes(1);
   });
 });
