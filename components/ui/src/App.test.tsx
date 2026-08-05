@@ -194,6 +194,10 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+
+    // La checklist técnica vive en Sistema: Inicio solo enseña el siguiente paso.
+    fireEvent.click(screen.getByRole("button", { name: "Sistema" }));
+
     expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
     expect(screen.getByText("Worker listo")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();

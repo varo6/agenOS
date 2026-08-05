@@ -1,64 +1,33 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  ArrowUpRight,
-  Clipboard,
-  ExternalLink,
-  LoaderCircle,
-  LogOut,
-  MessageSquareText,
-  Mic,
-  RefreshCcw,
-  ShieldCheck,
-  ShieldX,
-  XCircle,
-} from "lucide-react";
+import { useCallback, useState } from "react";
 
 import { AgentDiagnosticsButton } from "./components/AgentDiagnosticsButton";
-import { AgentAdminPanel } from "./components/AgentAdminPanel";
-import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
-import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
-import { BootScreen } from "./components/shell/BootScreen";
-import { Composer } from "./components/shell/Composer";
-import { ConnectionPanel } from "./components/shell/ConnectionPanel";
-import { ConversationPanel } from "./components/shell/ConversationPanel";
-import { SystemAlertBanner } from "./components/shell/SystemAlertBanner";
-import { TopBar, type ShellSection } from "./components/shell/TopBar";
-import { VoiceConsole } from "./components/voice/VoiceConsole";
-import { Button } from "./components/ui";
-import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
-import { createNetworkClient } from "../../network/client";
-import { createAgentAdminClient } from "./lib/agent-admin-client";
-import { createAgentClient } from "./lib/agent-client";
-import { createPiClient } from "./lib/pi-client";
-import { describeTurnActivity } from "./lib/agent-activity";
 import {
-  describeComposerBlock,
-  isAgentBusy,
-  resolveAgentState,
-  resolveBlockedReason,
-} from "./lib/shell-state";
-import { resolveWorkspaceSubscription } from "./lib/workspace-source";
+  BootScreen,
+  HomeView,
+  SystemAlertBanner,
+  SystemView,
+  TopBar,
+  type ShellSection,
+} from "./components/shell";
+import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
+import {
+  agentAdminClient,
+  agentClient,
+  networkClient,
+  piClient,
+  workspaceSubscription,
+} from "./lib/clients";
+import { isAgentBusy, resolveAgentState, resolveBlockedReason } from "./lib/shell-state";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { usePiSession } from "./hooks/usePiSession";
+import { useShellActions } from "./hooks/useShellActions";
+import { useShellBoot } from "./hooks/useShellBoot";
 import { useSystemAlert } from "./hooks/useSystemAlert";
 import { useVoice } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
-import type { PiAuthState } from "./lib/pi-types";
-import type { AgentWorkspaceNumber } from "./lib/system-types";
-
-const piClient = createPiClient();
-const agentClient = createAgentClient();
-const agentAdminClient = createAgentAdminClient();
-const networkClient = createNetworkClient();
-
-/*
- * Empuje del escritorio activo desde el compositor. Se resuelve una sola vez:
- * si el puente aún no existe, la barra sigue funcionando con la lectura HTTP.
- */
-const workspaceSubscription = resolveWorkspaceSubscription(agentClient);
 
 /*
  * El botón de diagnóstico no recibe props: se crea una sola vez para que la
@@ -66,41 +35,30 @@ const workspaceSubscription = resolveWorkspaceSubscription(agentClient);
  */
 const diagnosticsAction = <AgentDiagnosticsButton />;
 
+/**
+ * Shell de AgenOS.
+ *
+ * Aquí no se pinta nada: se conectan los hooks de estado (red, sesión, salud,
+ * conversación, voz) con las acciones y con las dos vistas que las muestran.
+ * La presentación vive en `components/shell` y las reglas, en `lib/shell-state`.
+ */
 export default function App() {
-  const [isLoading, setIsLoading] = useState(true);
   const [section, setSection] = useState<ShellSection>("home");
+  const openSystem = useCallback(() => setSection("system"), []);
 
   const { alert, sink } = useSystemAlert();
   const network = useNetworkStatus(networkClient);
   const health = useAgentHealth(agentAdminClient);
   const session = usePiSession({ client: piClient, alert: sink });
-
-  const workspaces = useWorkspaces({
-    client: agentClient,
-    alert: sink,
-    subscribe: workspaceSubscription,
-  });
+  const workspaces = useWorkspaces({ client: agentClient, alert: sink, subscribe: workspaceSubscription });
 
   const isOffline = useCallback(() => network.online !== true, [network.online]);
   const isDisconnected = useCallback(() => session.authState !== "connected", [session.authState]);
 
-  /*
-   * Los hooks devuelven objetos nuevos en cada render, pero sus funciones son
-   * estables. Los efectos y callbacks dependen solo de las funciones: si
-   * dependieran del objeto entero, cada pulsación de tecla reiniciaría el
-   * arranque, el micrófono y los sondeos.
-   */
-  const sessionRefresh = session.refresh;
-  const startAuth = session.startAuth;
-  const sessionLogout = session.logout;
-  const healthRefresh = health.refresh;
-  const networkRefresh = network.refresh;
-  const refreshWorkspaces = workspaces.refresh;
-  const workspaceFocus = workspaces.focus;
-
   const handleTurnSettled = useCallback(() => {
-    void Promise.allSettled([sessionRefresh(), refreshWorkspaces()]);
-  }, [refreshWorkspaces, sessionRefresh]);
+    // Un turno puede haber abierto una app o cambiado de escritorio.
+    void Promise.allSettled([session.refresh(), workspaces.refresh()]);
+  }, [session.refresh, workspaces.refresh]);
 
   const conversation = useConversation({
     piClient,
@@ -113,25 +71,20 @@ export default function App() {
     onSettled: handleTurnSettled,
   });
 
-  const sendMessage = conversation.send;
-  const restoreConversation = conversation.restore;
-  const resetConversationError = conversation.resetError;
-
   const handleTranscript = useCallback(
     (transcript: string) => {
-      void sendMessage(transcript, "voice");
+      void conversation.send(transcript, "voice");
     },
-    [sendMessage],
+    [conversation.send],
   );
 
   const currentTool = conversation.activeTurn?.progress.currentTool ?? null;
   const activity = { conversationState: conversation.state, sessionBusy: session.busy, currentTool };
-  const isProcessing = isAgentBusy(activity);
-
+  const busy = isAgentBusy(activity);
   const blockedReason = resolveBlockedReason({
     online: network.online,
     authState: session.authState,
-    busy: isProcessing,
+    busy,
   });
 
   const voice = useVoice({
@@ -142,93 +95,43 @@ export default function App() {
     agentIssue: alert?.hint ?? null,
   });
 
-  const resetVoice = voice.reset;
+  const actions = useShellActions({
+    session,
+    network,
+    health,
+    workspaces,
+    conversation,
+    voice,
+    alert: sink,
+    openSystem,
+  });
 
-  // Arranque del shell: micrófono, estado del sistema, historial y red.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function bootstrap() {
-      void Promise.allSettled([sessionRefresh(), healthRefresh(), refreshWorkspaces()]);
-      await restoreConversation();
-      await networkRefresh();
-
-      if (!cancelled) {
-        setIsLoading(false);
-      }
-    }
-
-    void bootstrap();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [healthRefresh, networkRefresh, refreshWorkspaces, restoreConversation, sessionRefresh]);
-
-  const focusWorkspace = useCallback(
-    (workspace: AgentWorkspaceNumber) => {
-      void workspaceFocus(workspace);
-    },
-    [workspaceFocus],
-  );
-
-  const openSystemSection = useCallback(() => setSection("system"), []);
-
-  const refreshAgentExperience = useCallback(() => {
-    resetConversationError();
-    void Promise.allSettled([
-      sessionRefresh({ clearErrors: true }),
-      healthRefresh(),
-      refreshWorkspaces(),
-    ]);
-  }, [healthRefresh, refreshWorkspaces, resetConversationError, sessionRefresh]);
-
-  const connect = useCallback(() => {
-    if (network.online !== true) {
-      sink.raise("Sin conexión a internet.", { kind: "offline" });
-      return;
-    }
-
-    if (!session.ready || conversation.state === "processing") {
-      return;
-    }
-
-    void startAuth("device");
-  }, [conversation.state, network.online, session.ready, sink, startAuth]);
-
-  const checkNetwork = useCallback(() => {
-    void networkRefresh();
-  }, [networkRefresh]);
-
-  const logout = useCallback(() => {
-    if (!session.ready) {
-      return;
-    }
-
-    void sessionLogout();
-    resetConversationError();
-    resetVoice();
-  }, [resetConversationError, resetVoice, session.ready, sessionLogout]);
-
-  const draft = conversation.draft;
-
-  const sendDraft = useCallback(() => {
-    void sendMessage(draft, "text");
-  }, [draft, sendMessage]);
-
-  const textDisabled = !session.ready || blockedReason !== null || session.authState === "authorizing";
-  const composerBlock = describeComposerBlock(blockedReason, session.ready);
+  const booting = useShellBoot({
+    refreshSession: session.refresh,
+    refreshHealth: health.refresh,
+    refreshWorkspaces: workspaces.refresh,
+    restoreConversation: conversation.restore,
+    refreshNetwork: network.refresh,
+  });
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
       <VideoBackground />
+      {/* Primer tabulador de la pantalla: saltarse la barra fija. */}
+      <a
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:rounded-control focus:bg-surface-strong focus:px-4 focus:py-2 focus:text-sm"
+        href="#contenido"
+      >
+        Saltar al contenido
+      </a>
+
       <TopBar
         actions={diagnosticsAction}
         activeWorkspace={workspaces.activeWorkspace}
         authState={session.authState}
         modelId={session.modelId}
         onChangeSection={setSection}
-        onFocusWorkspace={focusWorkspace}
+        onFocusWorkspace={actions.focusWorkspace}
         section={section}
         workspaces={workspaces.workspaces}
         workspacesLive={workspaces.live}
@@ -237,112 +140,42 @@ export default function App() {
       {alert ? (
         <SystemAlertBanner
           alert={alert}
-          onCheckNetwork={checkNetwork}
+          onCheckNetwork={actions.checkNetwork}
           onDismiss={sink.clear}
-          onOpenSystem={openSystemSection}
-          onReconnect={connect}
-          onRetry={refreshAgentExperience}
+          onOpenSystem={openSystem}
+          onReconnect={actions.connect}
+          onRetry={actions.refresh}
         />
       ) : null}
 
-      {isLoading ? (
+      {booting ? (
         <BootScreen />
       ) : network.online !== true ? (
         <NetworkConnectionPanel
           client={networkClient}
           onOnline={() => {
             network.markOnline();
-            refreshAgentExperience();
+            actions.refresh();
           }}
         />
+      ) : section === "system" ? (
+        <SystemView
+          actions={actions}
+          adminClient={agentAdminClient}
+          busy={busy}
+          health={health}
+          session={session}
+        />
       ) : (
-        <div className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-6xl flex-col items-center justify-center px-6 pb-20 pt-28 sm:pb-28 sm:pt-32">
-          {section === "system" ? (
-            <div className="grid w-full gap-4">
-              <AgentAdminPanel client={agentAdminClient} />
-            </div>
-          ) : (
-            <div className="flex w-full flex-col items-center gap-12 text-center">
-              <div className="space-y-6">
-                <div className="inline-flex items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.2em] text-ink-faint backdrop-blur-md">
-                  <span
-                    className={[
-                      "h-1.5 w-1.5 rounded-pill",
-                      session.authState === "connected"
-                        ? "bg-accent"
-                        : session.authState === "error"
-                          ? "bg-danger"
-                          : "bg-ink-faint",
-                    ].join(" ")}
-                  />
-                  {session.ready ? "Sistema listo" : "Sistema sin respuesta"}
-                </div>
-
-                <h1 className="font-display text-5xl font-medium tracking-tight text-ink sm:text-7xl lg:text-8xl">
-                  AgenOS
-                </h1>
-
-                <p className="mx-auto max-w-xl text-base text-ink-muted sm:text-lg">
-                  Habla con Pi para abrir aplicaciones, buscar archivos y organizar tu equipo.
-                </p>
-              </div>
-
-              <VoiceConsole
-                buttonLabel={voice.buttonLabel}
-                onActivate={voice.start}
-                onCancel={voice.cancel}
-                status={voice.status}
-              />
-
-              <div className="grid w-full gap-4 text-left lg:grid-cols-[1.1fr_0.9fr]">
-                <div className="grid gap-4 lg:col-span-2">
-                  <AgentHealthChecklist
-                    adminStatus={health.status}
-                    authState={session.authState}
-                    backendError={health.error}
-                    harnessAvailable={session.ready}
-                  />
-                  <AgentOnboardingPanel
-                    adminStatus={health.status}
-                    authState={session.authState}
-                    backendError={health.error}
-                    harnessAvailable={session.ready}
-                    onConnectCodex={connect}
-                    onOpenBackend={openSystemSection}
-                    onRefresh={refreshAgentExperience}
-                  />
-                </div>
-
-                <ConnectionPanel
-                  authState={session.authState}
-                  busy={isProcessing}
-                  manualCode={session.manualCode}
-                  modelId={session.modelId}
-                  onCancelAuth={session.cancelAuth}
-                  onConnect={connect}
-                  onLogout={logout}
-                  onManualCodeChange={session.setManualCode}
-                  onRefresh={refreshAgentExperience}
-                  onSubmitManualCode={session.submitManualCode}
-                  pendingAttempt={session.pendingAttempt}
-                  providerName={session.providerName}
-                  ready={session.ready}
-                />
-
-                <Composer
-                  busy={isProcessing}
-                  disabled={textDisabled}
-                  disabledReason={textDisabled ? composerBlock : null}
-                  onChange={conversation.setDraft}
-                  onSubmit={sendDraft}
-                  value={conversation.draft}
-                />
-
-                <ConversationPanel turns={conversation.turns} />
-              </div>
-            </div>
-          )}
-        </div>
+        <HomeView
+          actions={actions}
+          blockedReason={blockedReason}
+          busy={busy}
+          conversation={conversation}
+          health={health}
+          session={session}
+          voice={voice}
+        />
       )}
     </div>
   );
