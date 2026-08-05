@@ -11,7 +11,7 @@ describe("agent policy", () => {
   test("allows explicit UI memory writes but asks OpenClaw to confirm memory writes", () => {
     expect(decidePolicy({ tool: "memory.write", source: "ui", explicitUserIntent: true })).toMatchObject({
       decision: "allow",
-      ruleId: "agent.ui.superuser.allow",
+      ruleId: "agent.memory.ui.allow",
     });
     expect(decidePolicy({ tool: "memory.write", source: "openclaw", explicitUserIntent: false })).toMatchObject({
       decision: "confirm",
@@ -41,25 +41,32 @@ describe("agent policy", () => {
     });
   });
 
-  test("allows admin mutations from the frontend superuser", () => {
+  test("requires confirmation for admin mutations from the frontend", () => {
     expect(decidePolicy({ tool: "admin.config.write", source: "ui" })).toMatchObject({
-      decision: "allow",
-      ruleId: "agent.ui.superuser.allow",
+      decision: "confirm",
+      ruleId: "agent.admin.config.confirm",
     });
     expect(decidePolicy({ tool: "admin.service.restart", source: "ui" })).toMatchObject({
-      decision: "allow",
-      ruleId: "agent.ui.superuser.allow",
+      decision: "confirm",
+      ruleId: "agent.admin.restart.confirm",
     });
     expect(decidePolicy({ tool: "admin.queue.clear", source: "ui" })).toMatchObject({
-      decision: "allow",
-      ruleId: "agent.ui.superuser.allow",
+      decision: "confirm",
+      ruleId: "agent.admin.queue.clear.confirm",
     });
   });
 
   test("allows shell from the frontend superuser", () => {
     expect(decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true })).toMatchObject({
       decision: "allow",
-      ruleId: "agent.ui.superuser.allow",
+      ruleId: "agent.shell.local.allow",
+    });
+  });
+
+  test("requires confirmation for destructive shell from the frontend too", () => {
+    expect(decidePolicy({ tool: "shell.exec", source: "ui", input: { command: "rm -rf ~/Documentos" } })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.shell.destructive.confirm",
     });
   });
 });

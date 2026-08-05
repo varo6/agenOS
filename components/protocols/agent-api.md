@@ -10,7 +10,8 @@ Convenciones:
 - Los payloads del agente usan `schemaVersion: 1`, `correlationId` e ISO timestamps.
 - Los endpoints worker-only exigen bearer token de `~/.agenos/broker/worker-token` (modo 0600).
 - Errores: `400` validación, `403` denegado por política, `405` método, `409` pendiente de
-  confirmación, `503` subsistema no disponible.
+  confirmación/estado incompatible, `500` efecto confirmado fallido, `501` tool sin ejecutor y
+  `503` subsistema no disponible.
 - Las señales de aprendizaje se pueden registrar sin confirmación, pero activar una memoria
   destilada usa `memory.write` con origen `system` y siempre crea una confirmación pendiente.
 
@@ -66,6 +67,17 @@ POST /api/agent/confirmations/:confirmationId/confirm
 POST /api/agent/confirmations/:confirmationId/deny
 ```
 
+`POST /api/agent/tasks` solo devuelve `202` cuando un worker real ha aceptado la tarea. Si el
+modo resuelto es `local-simulated`, devuelve `503 { ok:false, message }` y no crea una tarea
+`queued`: el resto del broker sigue disponible, pero no se simula trabajo que nadie consumirá.
+
+Confirmar es idempotente y ejecuta la acción persistida antes de responder. El `202` incluye
+`{ ok:true, confirmation, execution, task? }`; si pertenecía a una tarea Bun en
+`waiting_confirmation`, el broker reanuda su continuación persistida desde el paso siguiente.
+Una segunda resolución devuelve `409` y no repite el efecto. Denegar finaliza una tarea en espera.
+Las tools sin ejecutor no crean confirmaciones; si aparece un registro antiguo de una tool no
+soportada, su confirmación devuelve `501` sin afirmar éxito.
+
 Admin (solo UI local):
 
 ```http
@@ -79,6 +91,16 @@ POST /api/agent/admin/export-diagnostics
 POST /api/agent/admin/tasks/:taskId/retry
 POST /api/agent/admin/tasks/:taskId/clear
 ```
+
+- `POST /admin/config`, `/admin/restart` y `/admin/tasks/:id/clear` devuelven primero `409` con
+  `confirmationId`. Al confirmar, config escribe atómicamente el override de usuario con modo
+  `0600`, restart invoca la acción cerrada `agenos-shell-helper restart-agent`, y clear elimina
+  realmente los registros de una tarea terminal.
+- `retry` crea una tarea nueva con el mensaje/origen de la tarea terminal; si no puede hacerlo,
+  responde `409 { ok:false }`.
+- `test-connection` hace el probe real del gateway cuando el modo es `openclaw-process`. En
+  `agenos-bun-worker` o `local-simulated` devuelve `503` explicando que no existe una conexión
+  remota comprobable.
 
 Setup y canales (onboarding OpenClaw; los usa la tool `openclaw_setup` de Pi):
 

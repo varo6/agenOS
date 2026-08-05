@@ -29,8 +29,10 @@ describe("confirmation store", () => {
       status: "pending",
     });
     expect(store.confirm("conf_test", "ui")).toMatchObject({ status: "confirmed" });
+    expect(store.confirm("conf_test", "ui")).toMatchObject({ status: "confirmed" });
 
     const audit = readFileSync(join(rootDir, "confirmations.ndjson"), "utf8");
     expect(audit).toContain("\"action\":\"confirmation.confirm\"");
+    expect(audit.trim().split("\n")).toHaveLength(2);
   });
 });

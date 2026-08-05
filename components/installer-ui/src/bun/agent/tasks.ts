@@ -34,5 +34,8 @@ export function createTaskQueue(options: TaskQueueOptions = {}) {
     status: adapter.status,
     events: adapter.events,
     list: adapter.list,
+    retry: adapter.retry,
+    clear: adapter.clear,
+    resolveConfirmation: adapter.resolveConfirmation,
   };
 }

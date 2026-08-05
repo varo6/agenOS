@@ -14,6 +14,10 @@ import type { NetworkStatusResponse } from "../../../network/types";
 import { createInstallerApiHandler } from "./server";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createLearnedMemoryStore } from "./agent/learned-memory";
+import { createMemoryStore } from "./agent/memory";
+import { createTaskQueue } from "./agent/tasks";
+import { createToolRunner } from "./agent/tool-runner";
+import { createAgenosWorkerDaemonAdapter } from "./agent/worker/agenos-worker-daemon";
 
 const validProfile: InstallerProfilePayload = {
   schemaVersion: 1,
@@ -704,6 +708,91 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("confirmed shell executes once and resumes the persisted worker continuation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-confirm-resume-"));
+    const confirmations = createConfirmationStore({
+      rootDir: join(root, "confirmations"),
+      idFactory: () => "conf_shell_resume",
+      now: () => new Date("2026-08-13T10:00:00.000Z"),
+    });
+    const memoryStore = createMemoryStore({ rootDir: join(root, "memory") });
+    const commands: string[] = [];
+    const toolRunner = createToolRunner({
+      confirmations,
+      memoryStore,
+      shellTool: async (input) => {
+        commands.push(input.command);
+        return {
+          ok: true,
+          command: input.command,
+          cwd: root,
+          exitCode: 0,
+          signal: null,
+          stdout: "ok\n",
+          stderr: "",
+          timedOut: false,
+          message: "Comando completado.",
+        };
+      },
+    });
+    const adapter = createAgenosWorkerDaemonAdapter({
+      stateDir: root,
+      idFactory: () => "task_confirm_resume",
+      correlationIdFactory: () => "corr_confirm_resume",
+      config: {
+        schemaVersion: 1,
+        mode: "agenos-bun-worker",
+        provider: "local",
+        model: "planner",
+        apiAuth: { type: "none" },
+        stateDir: root,
+        channels: { email: false, telegram: false, whatsapp: false },
+        policyDefaults: { memoryWrite: "confirm", outboundSend: "confirm" },
+      },
+      planner: {
+        mode: "model-backed",
+        plan: async () => ({
+          ok: true,
+          steps: [
+            { tool: "shell.exec", input: { command: "rm -rf ~/Documentos" }, summary: "Borrar documentos" },
+            { tool: "shell.exec", input: { command: "id" }, summary: "Consultar usuario" },
+          ],
+        }),
+      },
+      runToolCall: (call) => toolRunner.run({
+        source: "openclaw",
+        taskId: call.taskId,
+        correlationId: call.correlationId,
+        tool: call.tool,
+        input: call.input,
+      }),
+    });
+    const taskQueue = createTaskQueue({ adapter });
+    const handler = createHandler({ confirmations, memoryStore, toolRunner, taskQueue });
+
+    await expect(taskQueue.enqueue({ message: "haz dos pasos", source: "ui" })).resolves.toMatchObject({
+      ok: true,
+      taskId: "task_confirm_resume",
+    });
+    await expect(taskQueue.status("task_confirm_resume")).resolves.toMatchObject({ status: "waiting_confirmation" });
+    expect(commands).toEqual([]);
+
+    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_shell_resume/confirm", { method: "POST" }));
+    expect(confirmed.status).toBe(202);
+    expect(await jsonPayload(confirmed)).toMatchObject({
+      ok: true,
+      execution: { ok: true, shell: { command: "rm -rf ~/Documentos" } },
+      task: { ok: true, taskId: "task_confirm_resume" },
+    });
+    expect(commands).toEqual(["rm -rf ~/Documentos", "id"]);
+    await expect(taskQueue.status("task_confirm_resume")).resolves.toMatchObject({ status: "succeeded", progress: 100 });
+
+    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_shell_resume/confirm", { method: "POST" }));
+    expect(duplicate.status).toBe(409);
+    expect(await jsonPayload(duplicate)).toMatchObject({ ok: false, message: expect.stringContaining("no se ha repetido") });
+    expect(commands).toEqual(["rm -rf ~/Documentos", "id"]);
+  });
+
   test("agent memory events route returns redacted audit entries", async () => {
     const memory = {
       read: () => ({ namespace: "facts", content: "" }),
@@ -826,6 +915,24 @@ describe("createInstallerApiHandler", () => {
       taskId: "task_test",
       message: "Tarea enviada al worker de fondo.",
     });
+  });
+
+  test("agent task route returns 503 when only the simulated worker is available", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-local-simulated-api-"));
+    const taskQueue = createTaskQueue({ rootDir: root, configMode: "local-simulated" });
+    const handler = createHandler({ taskQueue });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/tasks", {
+      method: "POST",
+      body: JSON.stringify({ message: "prepara un informe", source: "ui" }),
+    }));
+
+    expect(response.status).toBe(503);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Configura OpenClaw"),
+    });
+    expect(await taskQueue.list()).toEqual([]);
   });
 
   test("agent worker health reports real backend details", async () => {

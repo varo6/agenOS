@@ -30,7 +30,7 @@ import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
 import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
-import { applyMemoryWrite, createToolRunner } from "./agent/tool-runner";
+import { createToolRunner } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createSupportBundle } from "./diagnostics/support-bundle";
 import { createSttService, type SttService } from "./speech/stt";
@@ -995,7 +995,7 @@ export function createInstallerApiHandler(
           if (request.method === "POST") {
             const payload = await readJsonBody(request) as Record<string, unknown>;
             const response = await deps.agentAdmin.writeConfig(payload, "ui");
-            return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+            return json(response, { status: response.decision === "confirm" ? 409 : response.ok ? 202 : 403 });
           }
           return methodNotAllowed(["GET", "POST", "OPTIONS"]);
         }
@@ -1012,7 +1012,7 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const response = await deps.agentAdmin.restart("ui");
-          return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+          return json(response, { status: response.decision === "confirm" ? 409 : response.ok ? 202 : 403 });
         }
 
         if (url.pathname === "/api/agent/admin/test-connection") {
@@ -1043,7 +1043,13 @@ export function createInstallerApiHandler(
           if (action === "retry") {
             await deps.selfImprovement.captureRetry(taskId);
           }
-          return json(response, { status: "decision" in response && response.decision === "confirm" ? 409 : 202 });
+          return json(response, {
+            status: "decision" in response && response.decision === "confirm"
+              ? 409
+              : response.ok
+                ? 202
+                : 409,
+          });
         }
 
         const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
@@ -1123,6 +1129,18 @@ export function createInstallerApiHandler(
 
           const confirmationId = decodeURIComponent(confirmationActionMatch[1] ?? "");
           const action = confirmationActionMatch[2];
+          const pending = deps.confirmations.get(confirmationId);
+          if (!pending) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+          if (pending.status !== "pending") {
+            return json({
+              ok: false,
+              message: `La confirmacion ya fue ${pending.status === "confirmed" ? "confirmada" : "denegada"}; no se ha repetido la accion.`,
+              confirmation: pending,
+            }, { status: 409 });
+          }
+
           const record = action === "confirm"
             ? deps.confirmations.confirm(confirmationId, "ui")
             : deps.confirmations.deny(confirmationId, "ui");
@@ -1130,19 +1148,41 @@ export function createInstallerApiHandler(
             return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
           }
 
-          if (record.status === "confirmed" && record.tool === "memory.write") {
-            applyMemoryWrite({ memoryStore: deps.memoryStore, learnedMemory: deps.learnedMemory }, record.input, {
-              source: record.source,
-              taskId: record.taskId,
-              correlationId: record.correlationId,
-              confirmationId: record.confirmationId,
-            });
-          }
           if (record.status === "denied") {
             await deps.selfImprovement.captureDenied(record);
+            const taskResolution = record.taskId
+              ? await deps.taskQueue.resolveConfirmation(record.taskId, {
+                ok: false,
+                message: `El usuario denego la accion ${record.tool}.`,
+              })
+              : null;
+            return json({
+              ok: taskResolution?.ok !== false,
+              confirmation: record,
+              task: taskResolution,
+              message: taskResolution?.message ?? "Accion denegada; no se ejecuto ningun efecto.",
+            }, { status: taskResolution?.ok === false ? 409 : 202 });
           }
 
-          return json({ ok: true, confirmation: record }, { status: 202 });
+          const execution = record.tool.startsWith("admin.")
+            ? await deps.agentAdmin.executeConfirmed(record)
+            : await deps.toolRunner.executeConfirmed(record);
+          const taskResolution = record.taskId
+            ? await deps.taskQueue.resolveConfirmation(record.taskId, {
+              ok: execution.ok,
+              message: execution.message,
+            })
+            : null;
+          const ok = execution.ok && taskResolution?.ok !== false;
+          const unsupported = execution.ok === false && /no esta disponible|no esta implementada|no tiene un ejecutor/i.test(execution.message ?? "");
+
+          return json({
+            ok,
+            confirmation: record,
+            execution,
+            task: taskResolution,
+            message: taskResolution?.message ?? execution.message,
+          }, { status: ok ? 202 : unsupported ? 501 : 500 });
         }
 
         const confirmationMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)$/);
@@ -1176,7 +1216,7 @@ export function createInstallerApiHandler(
             message: typeof payload.message === "string" ? payload.message : "",
             source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
           });
-          return json(response, { status: response.ok ? 202 : 400 });
+          return json(response, { status: response.ok ? 202 : 503 });
         }
 
         const taskEventsMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)\/events$/);

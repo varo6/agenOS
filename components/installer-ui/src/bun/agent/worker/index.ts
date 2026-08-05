@@ -113,6 +113,15 @@ function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, 
     async list() {
       return [];
     },
+    async retry(taskId) {
+      return { ok: false, taskId, message: reason ?? `${mode} worker adapter is not available.` };
+    },
+    async clear(taskId) {
+      return { ok: false, taskId, message: `No existe la tarea ${taskId}.` };
+    },
+    async resolveConfirmation(taskId) {
+      return { ok: false, taskId, message: reason ?? `${mode} worker adapter is not available.` };
+    },
   };
 }
 

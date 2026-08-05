@@ -83,6 +83,9 @@ export function createConfirmationStore(options: ConfirmationStoreOptions = {}) 
       if (!pending) {
         return null;
       }
+      if (pending.status !== "pending") {
+        return pending;
+      }
       return append({
         ...pending,
         schemaVersion: AGENT_PROTOCOL_SCHEMA_VERSION,
@@ -96,6 +99,9 @@ export function createConfirmationStore(options: ConfirmationStoreOptions = {}) 
       const pending = latest().find((record) => record.confirmationId === confirmationId);
       if (!pending) {
         return null;
+      }
+      if (pending.status !== "pending") {
+        return pending;
       }
       return append({
         ...pending,

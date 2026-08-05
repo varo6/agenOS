@@ -56,4 +56,10 @@ export type WorkerAdapter = {
   status(taskId: string): Promise<WorkerTask | null>;
   events(taskId: string): Promise<WorkerProgressEvent[]>;
   list(limit?: number): Promise<WorkerTask[]>;
+  retry(taskId: string): Promise<{ ok: boolean; taskId?: string; correlationId?: string; message?: string }>;
+  clear(taskId: string): Promise<{ ok: boolean; taskId: string; message: string }>;
+  resolveConfirmation(
+    taskId: string,
+    result: { ok: boolean; message?: string },
+  ): Promise<{ ok: boolean; taskId: string; message: string }>;
 };

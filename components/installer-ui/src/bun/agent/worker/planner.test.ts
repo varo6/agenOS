@@ -13,7 +13,7 @@ describe("worker planner adapter", () => {
     })).resolves.toEqual({
       ok: false,
       steps: [],
-      degradedReason: "Provider/auth is not configured.",
+      degradedReason: "El proveedor o la autenticacion no estan configurados.",
     });
   });
 

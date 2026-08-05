@@ -14,9 +14,13 @@ The preferred mode is `openclaw-process` when all gates pass:
 - Stores mutable state under `~/.agenos/openclaw`.
 - Exposes task enqueue/status/progress without requiring shell access.
 - Routes memory writes, outbound sends, browser actions, diagnostics, and service changes through the AgenOS broker.
-- Fails closed to `local-simulated` when the real process is missing or unhealthy.
+- Fails closed to `local-simulated` when the real process is missing or unhealthy. This mode keeps
+  the broker available but rejects task delegation explicitly; it never records work that no
+  process can consume.
 
-The fallbacks are not a separate product direction; they are minimal workers behind the same `WorkerAdapter` contract.
+The fallbacks are not a separate product direction. They keep the same `WorkerAdapter` read API,
+but availability is honest: the Bun adapter reports unhealthy unless a real planner is injected,
+and `local-simulated` reports degraded/unavailable for execution.
 
 ## Selected Mode
 
@@ -28,6 +32,11 @@ Mode resolution in `auto` (see `components/installer-ui/src/bun/agent/worker/ind
 2. `agenos-bun-worker` (bundled daemon) when OpenClaw is missing but the bundled worker exists.
 3. `local-simulated` otherwise.
 
+Selection and readiness are separate: finding the bundled Bun daemon does not make it usable by
+itself. Without an injected model planner its health and enqueue calls fail with an actionable
+reason. The simulated final fallback also returns an actionable error rather than an immortal
+`queued` record.
+
 Onboarding is automatic and opinionated: the Pi tool `openclaw_setup` (backed by `/api/agent/setup/*`) installs/configures the runtime without questions. The only user-supplied secrets are the Codex OAuth device login (`codex_login` / `/api/agent/auth/codex/start`) and, optionally, a Telegram bot token (`/api/agent/channels/telegram/*`).
 
 ## Broker Boundary
@@ -35,6 +44,11 @@ Onboarding is automatic and opinionated: the Pi tool `openclaw_setup` (backed by
 The broker on `127.0.0.1:4173` is the authority for policy, memory, outbound-send preparation, admin actions, and diagnostics. The worker receives tasks and reports progress; it does not execute arbitrary shell commands. Worker-only broker calls require a bearer token stored at `~/.agenos/broker/worker-token` with mode `0600`.
 
 The public task API remains a broker facade. `POST /api/agent/tasks` enqueues work, `GET /api/agent/tasks/:taskId` returns status, and `GET /api/agent/tasks/:taskId/events` returns progress events. Worker tool calls use `/api/agent/worker/tool-call` and are rejected without the local `worker-token`.
+
+For Bun-planned tasks, the remaining plan and next step are persisted. A confirmed tool is executed
+once by the broker and `resolveConfirmation` continues from that index, including after recreating
+the adapter. Duplicate confirm/deny requests return a conflict and never repeat the effect.
+Unsupported tools fail before policy can create a meaningless confirmation.
 
 ## Confirmed Self-Improvement Loop
 
@@ -73,18 +87,26 @@ Runtime config is read from `/etc/agenos/openclaw.json` and `~/.agenos/openclaw/
 The foreground UI calls only local broker endpoints:
 
 - `GET /api/agent/admin/status` returns readiness, worker health, config, heartbeat age, queue depth, degraded reason, and last error correlation ID.
-- `GET /api/agent/admin/config` and `POST /api/agent/admin/config` read and update broker-mediated config.
+- `GET /api/agent/admin/config` and `POST /api/agent/admin/config` read and, after confirmation,
+  atomically persist the user config with mode `0600`.
 - `GET /api/agent/admin/policy` returns policy defaults and stable rule IDs.
-- `POST /api/agent/admin/restart` requests a service restart through policy.
-- `POST /api/agent/admin/test-connection` checks provider/auth readiness without exposing secrets.
+- `POST /api/agent/admin/restart` requests confirmation and then calls the privileged helper's
+  closed `restart-agent` action; helper/polkit failures are returned as errors.
+- `POST /api/agent/admin/test-connection` probes the real OpenClaw gateway without exposing secrets;
+  non-OpenClaw modes fail explicitly because they have no remote connection to test.
 - `POST /api/agent/admin/export-diagnostics` exports a redacted status/config/log bundle.
 - `GET /api/agent/confirmations`, `POST /api/agent/confirmations/:confirmationId/confirm`, and `POST /api/agent/confirmations/:confirmationId/deny` handle pending sensitive actions.
 
 ## Degraded Mode
 
-AgenOS remains usable when provider auth, network, or the real worker is unavailable. The local-simulated worker, memory, app/browser tools, admin status, and diagnostics must still work.
+AgenOS remains usable when provider auth, network, or the real worker is unavailable. Memory,
+app/browser tools, admin status, diagnostics, and foreground conversation remain available.
+`local-simulated` preserves task/status API compatibility for reads and legacy state, but new
+delegations fail with `ok:false` because there is no executor.
 
-The UI treats `local-simulated` as usable degraded mode rather than fatal failure. First-run provider/auth gaps surface as `needs_setup` with safe actions to test the connection or switch modes.
+The UI treats `local-simulated` as degraded rather than a broker-fatal condition. First-run
+provider/auth gaps surface with safe actions to configure OpenClaw or keep working locally; no
+background completion is claimed.
 
 ## Admin UI Decision
 

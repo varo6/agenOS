@@ -103,4 +103,28 @@ describe("agent tool runner", () => {
       shell: { stdout: "uid=1000\n" },
     });
   });
+
+  test("fails unsupported outbound tools without creating a useless confirmation", async () => {
+    const created: unknown[] = [];
+    const runner = createToolRunner({
+      confirmations: {
+        create: (request) => {
+          created.push(request);
+          return { confirmationId: "conf_outbound", status: "pending" };
+        },
+      } as never,
+    });
+
+    await expect(runner.run({
+      source: "openclaw",
+      taskId: "task_outbound",
+      tool: "outbound.send",
+      input: { channel: "email", body: "hola" },
+    })).resolves.toMatchObject({
+      ok: false,
+      decision: "deny",
+      message: expect.stringContaining("no esta disponible"),
+    });
+    expect(created).toHaveLength(0);
+  });
 });

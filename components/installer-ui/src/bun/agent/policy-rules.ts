@@ -23,14 +23,6 @@ function all(...predicates: Array<(request: PolicyRequest) => boolean>): (reques
 
 export const POLICY_RULES: PolicyRule[] = [
   {
-    ruleId: "agent.ui.superuser.allow",
-    tool: "*",
-    source: "ui",
-    decision: "allow",
-    reason: "Accion local explicita desde el frontend de AgenOS.",
-    matches: sourceIs("ui"),
-  },
-  {
     ruleId: "agent.shell.destructive.confirm",
     tool: "shell.exec",
     source: "*",
@@ -114,6 +106,14 @@ export const POLICY_RULES: PolicyRule[] = [
     decision: "allow",
     reason: "Herramienta local de bajo riesgo permitida.",
     matches: (request) => LOW_RISK_TOOLS.has(request.tool),
+  },
+  {
+    ruleId: "agent.ui.superuser.allow",
+    tool: "*",
+    source: "ui",
+    decision: "allow",
+    reason: "Accion local explicita desde el frontend de AgenOS.",
+    matches: sourceIs("ui"),
   },
 ];
 

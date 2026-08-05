@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readWorkerConfig, redactWorkerConfig } from "./config";
+import { readWorkerConfig, redactWorkerConfig, writeWorkerConfig } from "./config";
 
 describe("worker config", () => {
   test("merges system defaults with user config", () => {
@@ -94,5 +94,26 @@ describe("worker config", () => {
       stateDir: "/home/agenos/.agenos/openclaw",
       apiAuth: { type: "env", envVar: "OPENAI_API_KEY" },
     });
+  });
+
+  test("writes validated user config atomically with private permissions", () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-openclaw-write-config-"));
+    const userConfigPath = join(root, "nested", "config.json");
+    const current = readWorkerConfig({
+      systemConfigPath: "/missing-system.json",
+      userConfigPath,
+      env: {},
+    });
+
+    const written = writeWorkerConfig({ mode: "local-simulated", channels: { ...current.channels, telegram: true } }, {
+      current,
+      userConfigPath,
+      env: {},
+    });
+
+    expect(written).toMatchObject({ mode: "local-simulated", channels: { telegram: true } });
+    expect(JSON.parse(readFileSync(userConfigPath, "utf8"))).toMatchObject({ mode: "local-simulated" });
+    expect(statSync(userConfigPath).mode & 0o777).toBe(0o600);
+    expect(() => writeWorkerConfig({ mode: "invented" as never }, { current, userConfigPath, env: {} })).toThrow("modo");
   });
 });
