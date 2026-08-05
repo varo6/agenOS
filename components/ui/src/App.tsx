@@ -30,15 +30,15 @@ import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
 import { createPiClient } from "./lib/pi-client";
 import { describeTurnActivity } from "./lib/agent-activity";
+import { isAgentBusy, resolveAgentState, resolveBlockedReason } from "./lib/shell-state";
 import { resolveWorkspaceSubscription } from "./lib/workspace-source";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { usePiSession } from "./hooks/usePiSession";
 import { useSystemAlert } from "./hooks/useSystemAlert";
-import { useVoice, type VoiceAgentState } from "./hooks/useVoice";
+import { useVoice } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
-import type { VoiceBlockedReason } from "./lib/voice-status";
 import type { PiAuthState } from "./lib/pi-types";
 import type { AgentWorkspaceNumber } from "./lib/system-types";
 
@@ -117,30 +117,20 @@ export default function App() {
     [sendMessage],
   );
 
-  const isProcessing = conversation.state === "processing" || session.busy;
+  const currentTool = conversation.activeTurn?.progress.currentTool ?? null;
+  const activity = { conversationState: conversation.state, sessionBusy: session.busy, currentTool };
+  const isProcessing = isAgentBusy(activity);
 
-  // Estado del agente traducido al ciclo de voz.
-  const agentState: VoiceAgentState = isProcessing
-    ? conversation.activeTurn?.progress.currentTool
-      ? "working"
-      : "thinking"
-    : conversation.state === "error"
-      ? "error"
-      : "idle";
-
-  const blockedReason: VoiceBlockedReason | null =
-    network.online !== true
-      ? "offline"
-      : session.authState !== "connected"
-        ? "disconnected"
-        : isProcessing
-          ? "busy"
-          : null;
+  const blockedReason = resolveBlockedReason({
+    online: network.online,
+    authState: session.authState,
+    busy: isProcessing,
+  });
 
   const voice = useVoice({
     onTranscript: handleTranscript,
-    agentState,
-    currentTool: conversation.activeTurn?.progress.currentTool ?? null,
+    agentState: resolveAgentState(activity),
+    currentTool,
     blockedReason,
     agentIssue: alert?.hint ?? null,
   });
