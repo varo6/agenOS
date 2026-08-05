@@ -114,7 +114,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
 
   if (!status) {
     return (
-      <section className="glass-panel p-6 text-left">
+      <section className="panel p-6 text-left">
         <button className="btn-secondary inline-flex items-center gap-2" onClick={refresh} type="button">
           <RefreshCcw className="h-4 w-4" />
           Cargar backend
@@ -125,14 +125,14 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
   }
 
   return (
-    <section className="glass-panel grid w-full gap-5 p-5 text-left sm:p-6">
+    <section className="panel grid w-full gap-5 p-5 text-left sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">
+          <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ink-faint">
             Agent Backend
           </p>
-          <h2 className="mt-2 text-2xl font-medium text-white">{status.worker.mode}</h2>
-          <p className="mt-1 text-sm text-white/55">
+          <h2 className="mt-2 text-2xl font-medium text-ink">{status.worker.mode}</h2>
+          <p className="mt-1 text-sm text-ink-muted">
             {status.worker.serviceActive ? "Servicio activo" : "Servicio inactivo"} / version {status.worker.version}
           </p>
           <p className="sr-only">{status.worker.serviceActive ? "Servicio activo" : "Servicio inactivo"}</p>
@@ -168,33 +168,33 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
       ) : null}
 
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Cola</p>
-          <p className="mt-2 text-xl text-white">{status.worker.queueDepth}</p>
-          <p className="mt-1 text-xs text-white/45">heartbeat {formatHeartbeat(status.worker.lastHeartbeatAt, now)}</p>
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Cola</p>
+          <p className="mt-2 text-xl text-ink">{status.worker.queueDepth}</p>
+          <p className="mt-1 text-xs text-ink-faint">heartbeat {formatHeartbeat(status.worker.lastHeartbeatAt, now)}</p>
         </div>
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Provider</p>
-          <p className="mt-2 text-sm text-white">{status.config.provider} / {status.config.model}</p>
-          <p className="mt-1 text-xs text-white/45">
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Provider</p>
+          <p className="mt-2 text-sm text-ink">{status.config.provider} / {status.config.model}</p>
+          <p className="mt-1 text-xs text-ink-faint">
             auth {status.config.apiAuth.type === "env" ? `${status.config.apiAuth.envVar}: ${status.config.apiAuth.configured ? "configurada" : "pendiente"}` : "none"}
           </p>
         </div>
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Canales</p>
-          <p className="mt-2 text-sm text-white">
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Canales</p>
+          <p className="mt-2 text-sm text-ink">
             email {status.config.channels.email ? "on" : "off"} / telegram {status.config.channels.telegram ? "on" : "off"} / whatsapp {status.config.channels.whatsapp ? "on" : "off"}
           </p>
-          <p className="mt-1 text-xs text-white/45">memoria {status.config.policyDefaults.memoryWrite}, envio {status.config.policyDefaults.outboundSend}</p>
+          <p className="mt-1 text-xs text-ink-faint">memoria {status.config.policyDefaults.memoryWrite}, envio {status.config.policyDefaults.outboundSend}</p>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <label className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35" htmlFor="agent-state-dir">
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <label className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint" htmlFor="agent-state-dir">
             State dir
           </label>
-          <input aria-label="State dir" className="glass-input mt-2" id="agent-state-dir" readOnly value={status.config.stateDir} />
+          <input aria-label="State dir" className="field-input mt-2" id="agent-state-dir" readOnly value={status.config.stateDir} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary px-3 py-2 text-sm" onClick={() => void runAction(() => client.updateConfig({ mode: "auto" }), "Modo auto solicitado.")} type="button">
               Auto
@@ -207,9 +207,9 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
           {status.worker.degradedReason ? <p className="mt-3 text-sm text-accent-light">{status.worker.degradedReason}</p> : null}
         </div>
 
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Tarea</p>
-          <input aria-label="Task id" className="glass-input mt-2" onChange={(event) => setSelectedTaskId(event.target.value)} placeholder="task id" value={selectedTaskId} />
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Tarea</p>
+          <input aria-label="Task id" className="field-input mt-2" onChange={(event) => setSelectedTaskId(event.target.value)} placeholder="task id" value={selectedTaskId} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" disabled={!selectedTaskId} onClick={() => void runAction(() => client.retryTask(selectedTaskId), "Retry solicitado.")} type="button">
               <RefreshCcw className="h-4 w-4" />
@@ -223,11 +223,11 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
         </div>
       </div>
 
-      <div className="rounded-lg border border-white/8 bg-black/20 p-4">
+      <div className="rounded-control border border-line bg-sunken p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Shell local</p>
-            <p className="mt-1 text-xs text-white/45">bash access desde el frontend</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Shell local</p>
+            <p className="mt-1 text-xs text-ink-faint">bash access desde el frontend</p>
           </div>
           <button
             aria-label="Ejecutar comando shell"
@@ -241,10 +241,10 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
           </button>
         </div>
         <div className="mt-3 flex items-center gap-2">
-          <Terminal className="h-4 w-4 text-white/45" />
+          <Terminal className="h-4 w-4 text-ink-faint" />
           <input
             aria-label="Comando shell"
-            className="glass-input font-mono"
+            className="field-input font-mono"
             onChange={(event) => setShellCommand(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -256,32 +256,32 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
           />
         </div>
         {shellOutput ? (
-          <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-black/35 p-3 font-mono text-xs leading-relaxed text-white/70">
+          <pre className="mt-3 max-h-64 overflow-auto rounded-control bg-sunken p-3 font-mono text-xs leading-relaxed text-ink-muted">
             {shellOutput}
           </pre>
         ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Policy rules</p>
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Policy rules</p>
           <div className="mt-3 grid gap-2">
             {policyRules.map((rule) => (
-              <div className="rounded-md bg-white/[0.03] p-3" key={rule.ruleId}>
-                <p className="font-mono text-xs text-white/75">{rule.ruleId}</p>
-                <p className="mt-1 text-xs text-white/45">{rule.tool} / {rule.source} / {rule.decision}</p>
+              <div className="rounded-control bg-surface p-3" key={rule.ruleId}>
+                <p className="font-mono text-xs text-ink-muted">{rule.ruleId}</p>
+                <p className="mt-1 text-xs text-ink-faint">{rule.tool} / {rule.source} / {rule.decision}</p>
               </div>
             ))}
           </div>
         </div>
-        <div className="rounded-lg border border-white/8 bg-black/20 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">Confirmaciones</p>
+        <div className="rounded-control border border-line bg-sunken p-4">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Confirmaciones</p>
           <div className="mt-3 grid gap-2">
-            {pendingConfirmations.length === 0 ? <p className="text-sm text-white/50">Sin confirmaciones pendientes.</p> : null}
+            {pendingConfirmations.length === 0 ? <p className="text-sm text-ink-faint">Sin confirmaciones pendientes.</p> : null}
             {pendingConfirmations.map((confirmation) => (
-              <div className="rounded-md bg-white/[0.03] p-3" key={confirmation.confirmationId}>
-                <p className="text-sm text-white/80">{confirmation.summary}</p>
-                <p className="mt-1 font-mono text-xs text-white/45">{confirmation.confirmationId}</p>
+              <div className="rounded-control bg-surface p-3" key={confirmation.confirmationId}>
+                <p className="text-sm text-ink-muted">{confirmation.summary}</p>
+                <p className="mt-1 font-mono text-xs text-ink-faint">{confirmation.confirmationId}</p>
                 <div className="mt-2 flex gap-2">
                   <button aria-label={`Confirmar ${confirmation.confirmationId}`} className="btn-secondary px-3 py-2 text-sm" onClick={() => void runAction(() => client.confirm(confirmation.confirmationId), "Confirmado.")} type="button">
                     <Check className="h-4 w-4" />
@@ -296,7 +296,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
         </div>
       </div>
 
-      {message ? <p className="text-sm text-white/65">{message}</p> : null}
+      {message ? <p className="text-sm text-ink-muted">{message}</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </section>
   );

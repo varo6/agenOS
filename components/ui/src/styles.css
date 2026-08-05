@@ -269,34 +269,6 @@
   .btn-danger:hover:not(:disabled) {
     background: rgba(255, 144, 128, 0.24);
   }
-
-  /*
-   * Alias heredados. Los paneles antiguos todavía usan estos nombres; apuntan a
-   * los tokens nuevos para que la migración sea progresiva y sin regresiones
-   * visuales. Se retiran cuando ningún componente los referencie.
-   */
-  .glass-panel {
-    background: var(--color-surface);
-    border: 1px solid var(--color-line);
-    border-radius: var(--radius-panel);
-    box-shadow: var(--shadow-panel);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-  }
-
-  .glass-input {
-    width: 100%;
-    border-radius: var(--radius-control);
-    border: 1px solid var(--color-line);
-    background: var(--color-sunken);
-    color: var(--color-ink);
-    padding: 0.7rem 0.95rem;
-    outline: none;
-  }
-
-  .glass-input::placeholder {
-    color: rgba(255, 255, 255, 0.38);
-  }
 }
 
 @layer utilities {
