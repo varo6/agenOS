@@ -52,17 +52,17 @@ export function AgentBackendSetupPanel({
   }
 
   return (
-    <section className="rounded-lg border border-white/10 bg-black/20 p-4 text-left">
+    <section className="rounded-control border border-line bg-sunken p-4 text-left">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/35">
+          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">
             Backend
           </p>
-          <h3 className="mt-2 text-lg font-medium text-white">
+          <h3 className="mt-2 text-lg font-medium text-ink">
             {readiness === "needs_setup" ? "Setup requerido" : readiness === "degraded" ? "Modo degradado usable" : "Listo"}
           </h3>
         </div>
-        <span className="rounded-md border border-white/10 px-2 py-1 font-mono text-[11px] uppercase text-white/55">
+        <span className="rounded-control border border-line px-2 py-1 font-mono text-[11px] uppercase text-ink-muted">
           {readiness}
         </span>
       </div>
@@ -70,16 +70,16 @@ export function AgentBackendSetupPanel({
       {setupItems.length > 0 ? (
         <div className="mt-4 grid gap-2">
           {setupItems.map((item) => (
-            <div className="rounded-md border border-white/8 bg-white/[0.03] px-3 py-2" key={item.id}>
-              <p className="text-sm text-white/85">{item.label}</p>
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
+            <div className="rounded-control border border-line bg-surface px-3 py-2" key={item.id}>
+              <p className="text-sm text-ink">{item.label}</p>
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
                 {item.severity} / {item.action}
               </p>
             </div>
           ))}
         </div>
       ) : (
-        <p className="mt-4 text-sm text-white/55">
+        <p className="mt-4 text-sm text-ink-muted">
           No hay acciones de setup pendientes.
         </p>
       )}
@@ -136,12 +136,12 @@ export function AgentBackendSetupPanel({
       </div>
 
       {setupItems.some((item) => item.action === "configure_telegram" || item.action === "test_telegram" || item.action === "enable_telegram") ? (
-        <div className="mt-4 rounded-md border border-white/8 bg-white/[0.03] p-3">
-          <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35" htmlFor="telegram-token">
+        <div className="mt-4 rounded-control border border-line bg-surface p-3">
+          <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint" htmlFor="telegram-token">
             Telegram bot token
           </label>
           <input
-            className="glass-input mt-2"
+            className="field-input mt-2"
             id="telegram-token"
             onChange={(event) => setTelegramToken(event.target.value)}
             placeholder="123456:token de BotFather"
@@ -184,7 +184,7 @@ export function AgentBackendSetupPanel({
       ) : null}
 
       {message ? (
-        <p className="mt-3 text-sm text-white/65">{message}</p>
+        <p className="mt-3 text-sm text-ink-muted">{message}</p>
       ) : null}
     </section>
   );

@@ -190,7 +190,7 @@ describe("App chat recovery", () => {
       expect(mocks.piClient.listTurns).toHaveBeenCalledWith(20);
       expect(mocks.networkClient.getStatus).toHaveBeenCalledOnce();
     });
-    expect(screen.getByText("Iniciando AgenOS")).toBeInTheDocument();
+    expect(screen.getByText("Preparando AgenOS")).toBeInTheDocument();
 
     releaseHistory([]);
     expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
@@ -204,7 +204,7 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conectar ChatGPT" })).not.toBeInTheDocument();
   });
 
   test("shows agent onboarding and health checklist on first load", async () => {
@@ -214,6 +214,10 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+
+    // La checklist técnica vive en Sistema: Inicio solo enseña el siguiente paso.
+    fireEvent.click(screen.getByRole("button", { name: "Sistema" }));
+
     expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
     expect(screen.getByText("Worker listo")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();
@@ -227,7 +231,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT con codigo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT" }));
 
     await waitFor(() => {
       expect(mocks.piClient.startAuth).toHaveBeenCalledWith("device");
@@ -280,7 +284,7 @@ describe("App chat recovery", () => {
     await waitFor(() => {
       expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).not.toBeDisabled();
   });
 
   test("sends app launch requests to the foreground model as async turns", async () => {
@@ -313,7 +317,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    const input = await screen.findByLabelText("Texto");
+    const input = await screen.findByLabelText("Escribe a Pi");
     fireEvent.change(input, { target: { value: "abre Chrome" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
@@ -368,7 +372,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    const input = await screen.findByLabelText("Texto");
+    const input = await screen.findByLabelText("Escribe a Pi");
     await waitFor(() => {
       expect(mocks.piClient.listTurns).toHaveBeenCalled();
     });

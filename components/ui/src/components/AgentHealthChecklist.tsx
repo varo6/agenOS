@@ -1,6 +1,8 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, XCircle } from "lucide-react";
+import { cx } from "../lib/cx";
 import type { PiAuthState } from "../lib/pi-types";
 import type { AgentAdminStatus } from "../lib/system-types";
+import { Panel, PanelInset, TONE_SURFACE, type Tone } from "./ui";
 
 type HealthTone = "ok" | "warning" | "error" | "pending";
 
@@ -19,30 +21,25 @@ export type AgentHealthChecklistProps = {
   harnessAvailable: boolean;
 };
 
-function toneClasses(tone: HealthTone): string {
-  switch (tone) {
-    case "ok":
-      return "border-accent/35 bg-accent/10 text-accent-light";
-    case "warning":
-      return "border-accent-light/35 bg-accent-light/10 text-accent-light";
-    case "error":
-      return "border-danger/40 bg-danger/10 text-danger";
-    default:
-      return "border-white/12 bg-white/[0.04] text-white/55";
-  }
-}
+/** Cada estado de salud se pinta con el tono compartido del sistema. */
+const HEALTH_TONE: Record<HealthTone, Tone> = {
+  ok: "positive",
+  warning: "warning",
+  error: "danger",
+  pending: "neutral",
+};
 
 function ToneIcon({ tone }: { tone: HealthTone }) {
   if (tone === "ok") {
-    return <CheckCircle2 className="h-4 w-4" />;
+    return <CheckCircle2 aria-hidden="true" className="h-4 w-4" />;
   }
   if (tone === "warning") {
-    return <AlertTriangle className="h-4 w-4" />;
+    return <AlertTriangle aria-hidden="true" className="h-4 w-4" />;
   }
   if (tone === "error") {
-    return <XCircle className="h-4 w-4" />;
+    return <XCircle aria-hidden="true" className="h-4 w-4" />;
   }
-  return <CircleDashed className="h-4 w-4" />;
+  return <CircleDashed aria-hidden="true" className="h-4 w-4" />;
 }
 
 function backendItem(harnessAvailable: boolean, backendError: string | null): HealthItem {
@@ -189,30 +186,23 @@ export function AgentHealthChecklist({
   ];
 
   return (
-    <section aria-label="Salud del agente" className="glass-panel w-full p-5 text-left">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase text-white/35">Salud del agente</p>
-          <h2 className="mt-2 text-xl font-medium text-white">Checklist operativo</h2>
-        </div>
-      </div>
-
+    <Panel ariaLabel="Salud del agente" className="w-full" eyebrow="Salud del agente" title="Checklist operativo">
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         {items.map((item) => (
-          <div className="rounded-lg border border-white/8 bg-black/20 p-3" key={item.id}>
+          <PanelInset className="p-3" key={item.id}>
             <div className="flex items-start gap-3">
-              <div className={`mt-0.5 rounded-md border p-1 ${toneClasses(item.tone)}`}>
+              <span className={cx("mt-0.5 rounded-control border p-1", TONE_SURFACE[HEALTH_TONE[item.tone]])}>
                 <ToneIcon tone={item.tone} />
-              </div>
+              </span>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-white">{item.label}</p>
-                <p className="mt-1 text-sm text-white/75">{item.status}</p>
-                <p className="mt-1 break-words text-xs leading-5 text-white/45">{item.detail}</p>
+                <p className="text-sm font-medium text-ink">{item.label}</p>
+                <p className="mt-1 text-sm text-ink-muted">{item.status}</p>
+                <p className="mt-1 break-words text-xs leading-5 text-ink-faint">{item.detail}</p>
               </div>
             </div>
-          </div>
+          </PanelInset>
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }
