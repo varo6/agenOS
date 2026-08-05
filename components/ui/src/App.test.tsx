@@ -184,7 +184,7 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conectar ChatGPT" })).not.toBeInTheDocument();
   });
 
   test("shows agent onboarding and health checklist on first load", async () => {
@@ -207,7 +207,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT con codigo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT" }));
 
     await waitFor(() => {
       expect(mocks.piClient.startAuth).toHaveBeenCalledWith("device");
@@ -260,7 +260,7 @@ describe("App chat recovery", () => {
     await waitFor(() => {
       expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Conectar ChatGPT con codigo" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).not.toBeDisabled();
   });
 
   test("sends app launch requests to the foreground model as async turns", async () => {

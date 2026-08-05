@@ -19,6 +19,7 @@ import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
 import { BootScreen } from "./components/shell/BootScreen";
+import { ConnectionPanel } from "./components/shell/ConnectionPanel";
 import { SystemAlertBanner } from "./components/shell/SystemAlertBanner";
 import { TopBar, type ShellSection } from "./components/shell/TopBar";
 import { VoiceConsole } from "./components/voice/VoiceConsole";
@@ -57,19 +58,6 @@ const workspaceSubscription = resolveWorkspaceSubscription(agentClient);
  * barra de sistema siga siendo memoizable.
  */
 const diagnosticsAction = <AgentDiagnosticsButton />;
-
-function describeAuthState(authState: PiAuthState): string {
-  switch (authState) {
-    case "connected":
-      return "Conexion local lista para ChatGPT/Codex.";
-    case "authorizing":
-      return "Esperando a que termine el login del navegador.";
-    case "error":
-      return "La autenticacion necesita atencion.";
-    default:
-      return "Conecta ChatGPT para empezar.";
-  }
-}
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
@@ -225,11 +213,6 @@ export default function App() {
     resetVoice();
   }, [resetConversationError, resetVoice, session.ready, sessionLogout]);
 
-  function handleManualCodeSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void session.submitManualCode();
-  }
-
   function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isProcessing) {
@@ -245,10 +228,6 @@ export default function App() {
     || agentsBlockedByNetwork
     || isProcessing
     || session.authState === "authorizing";
-  const connectLabel = session.authState === "disconnected" ? "Conectar ChatGPT" : "Reconectar";
-  const authHint = session.pendingAttempt
-    ? session.pendingAttempt.instructions
-    : describeAuthState(session.authState);
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
@@ -344,162 +323,38 @@ export default function App() {
                   />
                 </div>
 
-                <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="eyebrow">Estado de conexion</p>
-                      <h2 className="mt-3 text-2xl font-medium text-ink">{session.providerName}</h2>
-                      <p className="mt-2 text-sm text-ink-muted">{authHint}</p>
-                    </div>
-                    <div className="rounded-pill border border-line bg-black/20 px-3 py-1 font-mono text-[11px] text-ink-muted">
-                      {session.modelId}
-                    </div>
-                  </div>
+                <ConnectionPanel
+                  authState={session.authState}
+                  busy={isProcessing}
+                  manualCode={session.manualCode}
+                  modelId={session.modelId}
+                  onCancelAuth={session.cancelAuth}
+                  onConnect={connect}
+                  onLogout={logout}
+                  onManualCodeChange={session.setManualCode}
+                  onRefresh={refreshAgentExperience}
+                  onSubmitManualCode={session.submitManualCode}
+                  pendingAttempt={session.pendingAttempt}
+                  providerName={session.providerName}
+                  ready={session.ready}
+                />
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      disabled={!session.ready || session.authState === "authorizing" || isProcessing}
-                      icon={<ArrowUpRight className="h-4 w-4" />}
-                      loading={session.authState === "authorizing"}
-                      onClick={connect}
-                      variant="primary"
-                    >
-                      {connectLabel} con codigo
-                    </Button>
-
-                    <Button
-                      disabled={!session.ready || session.authState === "authorizing"}
-                      icon={<LogOut className="h-4 w-4" />}
-                      onClick={logout}
-                    >
-                      Logout
-                    </Button>
-
-                    {session.pendingAttempt ? (
-                      <Button
-                        disabled={!session.ready}
-                        icon={<XCircle className="h-4 w-4" />}
-                        onClick={() => {
-                          void session.cancelAuth();
-                        }}
-                      >
-                        Cancelar login
-                      </Button>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="panel-inset p-4">
-                      <div className="flex items-center gap-2 text-sm text-ink-muted">
-                        {session.authState === "connected" ? (
-                          <ShieldCheck className="h-4 w-4 text-positive" />
-                        ) : (
-                          <ShieldX className="h-4 w-4 text-danger" />
-                        )}
-                        Cuenta
-                      </div>
-                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-ink-faint">
-                        {session.authState}
-                      </p>
-                    </div>
-
-                    <div className="panel-inset p-4">
-                      <div className="flex items-center gap-2 text-sm text-ink-muted">
-                        <MessageSquareText className="h-4 w-4 text-ink-muted" />
-                        Turno
-                      </div>
-                      <p className="mt-2 font-mono text-xs uppercase tracking-[0.24em] text-ink-faint">
-                        {isProcessing ? "processing" : conversation.state}
-                      </p>
-                    </div>
-                  </div>
-
-                  {session.pendingAttempt ? (
-                    session.pendingAttempt.method === "device" ? (
-                      <div className="panel-inset grid gap-3 p-4">
-                        <div>
-                          <p className="eyebrow">Device auth</p>
-                          <a
-                            className="mt-2 inline-flex min-w-0 items-center gap-2 break-all text-sm text-accent-light hover:text-ink"
-                            href={session.pendingAttempt.url}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            {session.pendingAttempt.url}
-                            <ExternalLink className="h-4 w-4 shrink-0" />
-                          </a>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-3">
-                          <code className="rounded-control border border-line bg-black/30 px-3 py-2 font-mono text-lg tracking-[0.18em] text-ink">
-                            {session.pendingAttempt.userCode ?? "Esperando codigo..."}
-                          </code>
-                          <Button
-                            disabled={!session.pendingAttempt.userCode}
-                            icon={<Clipboard className="h-4 w-4" />}
-                            onClick={() => {
-                              const code = session.pendingAttempt?.userCode;
-                              if (code) {
-                                void navigator.clipboard?.writeText(code);
-                              }
-                            }}
-                          >
-                            Copiar
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <form className="flex flex-col gap-3" onSubmit={handleManualCodeSubmit}>
-                        <div>
-                          <label className="eyebrow" htmlFor="manual-code">
-                            Pegar URL o Codigo Manual
-                          </label>
-                          <input
-                            className="glass-input mt-3"
-                            id="manual-code"
-                            onChange={(event) => session.setManualCode(event.target.value)}
-                            placeholder="http://localhost:1455/auth/callback?... o el code"
-                            value={session.manualCode}
-                          />
-                        </div>
-
-                        <Button className="self-start" type="submit">
-                          Enviar fallback manual
-                        </Button>
-                      </form>
-                    )
-                  ) : null}
-
-                  <form className="flex flex-col gap-3" onSubmit={handleTextSubmit}>
-                    <div>
-                      <label className="eyebrow" htmlFor="message">
-                        Texto
-                      </label>
-                      <input
-                        className="glass-input mt-3"
-                        disabled={textDisabled}
-                        id="message"
-                        onChange={(event) => conversation.setDraft(event.target.value)}
-                        placeholder="Escribe una frase corta en espanol"
-                        value={conversation.draft}
-                      />
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                      <Button disabled={textDisabled} type="submit" variant="primary">
-                        {isProcessing ? "Procesando..." : "Enviar"}
-                      </Button>
-
-                      <Button
-                        disabled={!session.ready}
-                        icon={<RefreshCcw className="h-4 w-4" />}
-                        onClick={refreshAgentExperience}
-                      >
-                        Refrescar estado
-                      </Button>
-                    </div>
-                  </form>
-                </div>
+                <form className="glass-panel flex flex-col gap-3 p-7 sm:p-8" onSubmit={handleTextSubmit}>
+                  <label className="eyebrow" htmlFor="message">
+                    Texto
+                  </label>
+                  <input
+                    className="glass-input"
+                    disabled={textDisabled}
+                    id="message"
+                    onChange={(event) => conversation.setDraft(event.target.value)}
+                    placeholder="Escribe una frase corta en espanol"
+                    value={conversation.draft}
+                  />
+                  <Button className="self-start" disabled={textDisabled} type="submit" variant="primary">
+                    {isProcessing ? "Procesando..." : "Enviar"}
+                  </Button>
+                </form>
 
                 <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
                   <div>
