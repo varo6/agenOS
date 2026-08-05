@@ -19,7 +19,9 @@ import { AgentHealthChecklist } from "./components/AgentHealthChecklist";
 import { AgentOnboardingPanel } from "./components/AgentOnboardingPanel";
 import { VideoBackground } from "./components/VideoBackground";
 import { BootScreen } from "./components/shell/BootScreen";
+import { Composer } from "./components/shell/Composer";
 import { ConnectionPanel } from "./components/shell/ConnectionPanel";
+import { ConversationPanel } from "./components/shell/ConversationPanel";
 import { SystemAlertBanner } from "./components/shell/SystemAlertBanner";
 import { TopBar, type ShellSection } from "./components/shell/TopBar";
 import { VoiceConsole } from "./components/voice/VoiceConsole";
@@ -30,7 +32,12 @@ import { createAgentAdminClient } from "./lib/agent-admin-client";
 import { createAgentClient } from "./lib/agent-client";
 import { createPiClient } from "./lib/pi-client";
 import { describeTurnActivity } from "./lib/agent-activity";
-import { isAgentBusy, resolveAgentState, resolveBlockedReason } from "./lib/shell-state";
+import {
+  describeComposerBlock,
+  isAgentBusy,
+  resolveAgentState,
+  resolveBlockedReason,
+} from "./lib/shell-state";
 import { resolveWorkspaceSubscription } from "./lib/workspace-source";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
@@ -203,21 +210,14 @@ export default function App() {
     resetVoice();
   }, [resetConversationError, resetVoice, session.ready, sessionLogout]);
 
-  function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (isProcessing) {
-      return;
-    }
+  const draft = conversation.draft;
 
-    void sendMessage(conversation.draft, "text");
-  }
+  const sendDraft = useCallback(() => {
+    void sendMessage(draft, "text");
+  }, [draft, sendMessage]);
 
-  const agentsBlockedByNetwork = network.online !== true;
-  const textDisabled =
-    !session.ready
-    || agentsBlockedByNetwork
-    || isProcessing
-    || session.authState === "authorizing";
+  const textDisabled = !session.ready || blockedReason !== null || session.authState === "authorizing";
+  const composerBlock = describeComposerBlock(blockedReason, session.ready);
 
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
@@ -329,69 +329,16 @@ export default function App() {
                   ready={session.ready}
                 />
 
-                <form className="glass-panel flex flex-col gap-3 p-7 sm:p-8" onSubmit={handleTextSubmit}>
-                  <label className="eyebrow" htmlFor="message">
-                    Texto
-                  </label>
-                  <input
-                    className="glass-input"
-                    disabled={textDisabled}
-                    id="message"
-                    onChange={(event) => conversation.setDraft(event.target.value)}
-                    placeholder="Escribe una frase corta en espanol"
-                    value={conversation.draft}
-                  />
-                  <Button className="self-start" disabled={textDisabled} type="submit" variant="primary">
-                    {isProcessing ? "Procesando..." : "Enviar"}
-                  </Button>
-                </form>
+                <Composer
+                  busy={isProcessing}
+                  disabled={textDisabled}
+                  disabledReason={textDisabled ? composerBlock : null}
+                  onChange={conversation.setDraft}
+                  onSubmit={sendDraft}
+                  value={conversation.draft}
+                />
 
-                <div className="glass-panel flex flex-col gap-6 p-7 sm:p-8">
-                  <div>
-                    <p className="eyebrow">Conversacion</p>
-                    <h2 className="mt-3 text-2xl font-medium text-ink">Historial con Pi</h2>
-                    <p className="mt-2 text-sm text-ink-muted">
-                      Los turnos se guardan en este equipo y sobreviven reinicios del shell.
-                    </p>
-                  </div>
-
-                  <div className="flex max-h-[30rem] flex-col gap-3 overflow-y-auto pr-1">
-                    {conversation.turns.length === 0 ? (
-                      <div className="panel-inset p-5 text-sm text-ink-muted">
-                        Todavia no hay conversacion. Escribe o usa el microfono para hablar con Pi.
-                      </div>
-                    ) : (
-                      conversation.turns.map((turn) => (
-                        <div className="panel-inset p-5" key={turn.turnId}>
-                          <p className="eyebrow">Tu</p>
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink-muted">
-                            {turn.input}
-                          </p>
-                          <p className="eyebrow mt-4">Pi</p>
-                          {turn.status === "processing" ? (
-                            <>
-                              <p className="mt-2 inline-flex items-center gap-2 text-xs text-accent-light">
-                                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                                {describeTurnActivity(turn.progress) ?? "Pi está trabajando…"}
-                              </p>
-                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">
-                                {turn.progress.streamedText || "Esperando la primera respuesta de Pi..."}
-                              </p>
-                            </>
-                          ) : turn.status === "failed" ? (
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-danger">
-                              {turn.error ?? "El turno fallo."}
-                            </p>
-                          ) : (
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">
-                              {turn.reply ?? ""}
-                            </p>
-                          )}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
+                <ConversationPanel turns={conversation.turns} />
               </div>
             </div>
           )}

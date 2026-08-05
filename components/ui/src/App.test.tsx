@@ -293,7 +293,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    const input = await screen.findByLabelText("Texto");
+    const input = await screen.findByLabelText("Escribe a Pi");
     fireEvent.change(input, { target: { value: "abre Chrome" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
 
@@ -348,7 +348,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    const input = await screen.findByLabelText("Texto");
+    const input = await screen.findByLabelText("Escribe a Pi");
     await waitFor(() => {
       expect(mocks.piClient.listTurns).toHaveBeenCalled();
     });
