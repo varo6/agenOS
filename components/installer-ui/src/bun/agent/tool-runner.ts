@@ -22,6 +22,7 @@ export type ToolRunInput = {
   correlationId?: string;
   tool: string;
   input: unknown;
+  explicitUserIntent?: boolean;
 };
 
 export type ToolRunResult = {
@@ -31,7 +32,13 @@ export type ToolRunResult = {
   message?: string;
   confirmationId?: string;
   shell?: ShellExecResult;
+  output?: unknown;
 };
+
+export type ToolEffectHandler = (
+  input: unknown,
+  context: { source: AgentSource; taskId?: string; correlationId: string },
+) => unknown | Promise<unknown>;
 
 export type ToolRunnerOptions = {
   confirmations?: ConfirmationStoreLike;
@@ -39,6 +46,7 @@ export type ToolRunnerOptions = {
   learnedMemory?: ReturnType<typeof createLearnedMemoryStore>;
   shellTool?: typeof runShellCommand;
   correlationIdFactory?: () => string;
+  handlers?: Record<string, ToolEffectHandler>;
 };
 
 const SHELL_DENIED_MESSAGE = "La ejecucion shell arbitraria no esta permitida en AgenOS.";
@@ -54,6 +62,7 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         tool: input.tool,
         source: input.source,
         input: input.input,
+        explicitUserIntent: input.explicitUserIntent,
       });
 
       if (policy.decision === "deny") {
@@ -116,11 +125,34 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         };
       }
 
+      const handler = options.handlers?.[input.tool];
+      if (handler) {
+        const output = await handler(input.input, {
+          source: input.source,
+          taskId: input.taskId,
+          correlationId,
+        });
+        const effectOk = !output || typeof output !== "object" || !("ok" in output)
+          ? true
+          : (output as { ok?: unknown }).ok !== false;
+        const effectMessage = output && typeof output === "object" && "message" in output
+          && typeof (output as { message?: unknown }).message === "string"
+          ? (output as { message: string }).message
+          : undefined;
+        return {
+          ok: effectOk,
+          decision: "allow",
+          ...(includeCorrelationId ? { correlationId } : {}),
+          message: effectMessage,
+          output,
+        };
+      }
+
       return {
-        ok: true,
-        decision: "allow",
+        ok: false,
+        decision: "deny",
         ...(includeCorrelationId ? { correlationId } : {}),
-        message: "Tool call accepted.",
+        message: `No hay un ejecutor registrado para ${input.tool}.`,
       };
     },
   };

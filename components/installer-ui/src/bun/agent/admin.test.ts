@@ -44,7 +44,7 @@ describe("agent admin service", () => {
     });
   });
 
-  test("config writes and restart are allowed for the frontend superuser", async () => {
+  test("config writes and restart require confirmation from the frontend", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
     const service = createAgentAdminService({
       stateDir: rootDir,
@@ -55,12 +55,14 @@ describe("agent admin service", () => {
     });
 
     await expect(service.writeConfig({ mode: "local-simulated" }, "ui")).resolves.toMatchObject({
-      ok: true,
-      decision: "allow",
+      ok: false,
+      decision: "confirm",
+      confirmationId: "conf_admin.config.write",
     });
     await expect(service.restart("ui")).resolves.toMatchObject({
-      ok: true,
-      decision: "allow",
+      ok: false,
+      decision: "confirm",
+      confirmationId: "conf_admin.service.restart",
     });
   });
 

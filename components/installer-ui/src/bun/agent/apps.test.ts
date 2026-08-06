@@ -223,65 +223,10 @@ describe("app tool", () => {
     ]);
   });
 
-  test("installs packages with apt and can open them afterwards", async () => {
-    const calls: Array<[string, string[]]> = [];
-    const tool = createAppTool({
-      skipAptUpdate: true,
-      commandExists: (command) => ["apt-get", "sudo", "vlc"].includes(command),
-      runCommand: async (command, args) => {
-        calls.push([command, args]);
-        return {
-          exitCode: 0,
-          signal: null,
-          stdout: "installed",
-          stderr: "",
-        };
-      },
-      spawnCommand: (command, args) => {
-        calls.push([command, args]);
-      },
-    });
+  test("does not expose generic package installation or privilege escalation", () => {
+    const tool = createAppTool();
 
-    await expect(tool.installApp("vlc", { openAfterInstall: true })).resolves.toMatchObject({
-      ok: true,
-      packageName: "vlc",
-    });
-    expect(calls.some(([, args]) => args.includes("install") && args.includes("vlc"))).toBe(true);
-  });
-
-  test("falls back to pkexec when sudo cannot run non-interactively", async () => {
-    const calls: Array<[string, string[]]> = [];
-    const tool = createAppTool({
-      skipAptUpdate: true,
-      commandExists: (command) => ["apt-get", "sudo", "pkexec"].includes(command),
-      runCommand: async (command, args) => {
-        calls.push([command, args]);
-        if (command === "sudo") {
-          return {
-            exitCode: 1,
-            signal: null,
-            stdout: "",
-            stderr: "sudo: a password is required",
-          };
-        }
-
-        return {
-          exitCode: 0,
-          signal: null,
-          stdout: "installed",
-          stderr: "",
-        };
-      },
-    });
-
-    await expect(tool.installApp("gimp", { openAfterInstall: false })).resolves.toMatchObject({
-      ok: true,
-      packageName: "gimp",
-    });
-    expect(calls).toEqual([
-      ["sudo", ["-n", "apt-get", "install", "-y", "--", "gimp"]],
-      ["pkexec", ["apt-get", "install", "-y", "--", "gimp"]],
-    ]);
+    expect("installApp" in tool).toBe(false);
   });
 
   test("rejects unknown apps instead of running arbitrary commands", async () => {

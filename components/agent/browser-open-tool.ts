@@ -15,7 +15,7 @@ export type BrowserOpenResponse = {
 type BrowserLauncherLike = (
   url: string,
   options?: BrowserLauncherOptions,
-) => BrowserLaunchResult | Promise<BrowserLaunchResult>;
+) => BrowserLaunchResult | BrowserOpenResponse | Promise<BrowserLaunchResult | BrowserOpenResponse>;
 
 type ToolUpdateCallback = (update: {
   content: Array<{ type: "text"; text: string }>;

@@ -52,6 +52,7 @@ AGENOS_OPENCLAW_SYSTEM_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chro
 AGENOS_OPENCLAW_USER_CONFIG="${RUNTIME_ROOT}/worker.json" \
 AGENOS_OPENCLAW_STATE_DIR="${RUNTIME_ROOT}/openclaw" \
 AGENOS_WORKER_TOKEN_PATH="${RUNTIME_ROOT}/broker/worker-token" \
+AGENOS_UI_TOKEN_PATH="${RUNTIME_ROOT}/broker/ui-token" \
 "${INSTALLER_WRAPPER}" server >"${SERVER_LOG}" 2>&1 &
 PID="$!"
 
@@ -68,10 +69,12 @@ for _ in $(seq 1 40); do
 done
 
 curl --silent --fail --max-time 2 http://127.0.0.1:4173/health >/dev/null
-curl --silent --fail --max-time 2 http://127.0.0.1:4173/api/agent/admin/status >/dev/null
-curl --silent --fail --max-time 2 http://127.0.0.1:4173/api/agent/admin/policy >/dev/null
-curl --silent --fail --max-time 2 http://127.0.0.1:4173/api/agent/confirmations >/dev/null
-curl --silent --fail --max-time 15 http://127.0.0.1:4173/api/diagnostics/support-bundle >/dev/null
+curl --silent --max-time 2 http://127.0.0.1:4173/api/agent/admin/status >/dev/null || true
+UI_TOKEN="$(tr -d '\n' < "${RUNTIME_ROOT}/broker/ui-token")"
+curl --silent --fail --max-time 2 -H "Authorization: Bearer ${UI_TOKEN}" http://127.0.0.1:4173/api/agent/admin/status >/dev/null
+curl --silent --fail --max-time 2 -H "Authorization: Bearer ${UI_TOKEN}" http://127.0.0.1:4173/api/agent/admin/policy >/dev/null
+curl --silent --fail --max-time 2 -H "Authorization: Bearer ${UI_TOKEN}" http://127.0.0.1:4173/api/agent/confirmations >/dev/null
+curl --silent --fail --max-time 15 -H "Authorization: Bearer ${UI_TOKEN}" http://127.0.0.1:4173/api/diagnostics/support-bundle >/dev/null
 
 HOME="${RUNTIME_ROOT}/home" \
 AGENOS_OPENCLAW_SYSTEM_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/openclaw.json" \
@@ -98,6 +101,7 @@ AGENOS_OPENCLAW_SYSTEM_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chro
 AGENOS_OPENCLAW_USER_CONFIG="${RUNTIME_ROOT}/worker.json" \
 AGENOS_OPENCLAW_STATE_DIR="${RUNTIME_ROOT}/openclaw" \
 AGENOS_WORKER_TOKEN_PATH="${RUNTIME_ROOT}/broker/worker-token" \
+AGENOS_UI_TOKEN_PATH="${RUNTIME_ROOT}/broker/ui-token" \
 "${INSTALLER_WRAPPER}" server >>"${SERVER_LOG}" 2>&1 &
 PID="$!"
 
@@ -114,7 +118,8 @@ for _ in $(seq 1 40); do
 done
 
 curl --silent --fail --max-time 2 http://127.0.0.1:4173/health >/dev/null
-curl --silent --fail --max-time 2 http://127.0.0.1:4173/api/pi/status >"${BLOCKED_PI_STATUS}"
+UI_TOKEN="$(tr -d '\n' < "${RUNTIME_ROOT}/broker/ui-token")"
+curl --silent --fail --max-time 2 -H "Authorization: Bearer ${UI_TOKEN}" http://127.0.0.1:4173/api/pi/status >"${BLOCKED_PI_STATUS}"
 grep --silent '"authState"' "${BLOCKED_PI_STATUS}"
 
 echo "agent runtime smoke ok"

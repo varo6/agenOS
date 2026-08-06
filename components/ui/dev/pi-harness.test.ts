@@ -47,7 +47,6 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
   };
   let createSessionOptions: unknown;
   const openedApps: unknown[] = [];
-  const installedApps: string[] = [];
   const traceRecords: unknown[] = [];
 
   const session = {
@@ -165,10 +164,6 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
             : "app";
         return { ok: true, appId: "browser", message: `Abriendo ${appName}.` };
       },
-      installApp: async (app: string) => {
-        installedApps.push(app);
-        return { ok: true, packageName: app, message: `Instalado ${app}.` };
-      },
     },
     agentTaskClient: fixtureOptions.agentTaskClient,
     learningMemoryClient: fixtureOptions.learningMemoryClient,
@@ -242,7 +237,6 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     getLoginOptions: () => loginOptions,
     getCreateSessionOptions: () => createSessionOptions,
     getOpenedApps: () => openedApps,
-    getInstalledApps: () => installedApps,
     getTraceRecords: () => traceRecords,
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
@@ -270,9 +264,10 @@ describe("PiHarness", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("browser_open");
     expect(PI_SYSTEM_PROMPT).toContain("apps_open");
-    expect(PI_SYSTEM_PROMPT).toContain("apps_install");
+    expect(PI_SYSTEM_PROMPT).not.toContain("apps_install");
     expect(PI_SYSTEM_PROMPT).toContain("files_open");
     expect(PI_SYSTEM_PROMPT).toContain("openclaw_setup");
+    expect(PI_SYSTEM_PROMPT).not.toContain("<<<<<<<");
     expect(PI_SYSTEM_PROMPT).not.toContain("[object");
   });
 
@@ -508,7 +503,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(options.tools).toEqual(["browser_open", "apps_open", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -517,35 +512,6 @@ describe("PiHarness", () => {
       details: { ok: true, appId: "browser", message: "Abriendo Chrome." },
     });
     expect(getOpenedApps()).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
-  });
-
-  test("registers an app-installing tool for the foreground model", async () => {
-    const { harness, authData, getCreateSessionOptions, getInstalledApps } = createHarnessFixture();
-    authData.set("openai-codex", {
-      type: "oauth",
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: Date.parse("2026-04-22T12:00:00.000Z"),
-      accountId: "acct_123",
-    });
-
-    await harness.chat({
-      message: "hola",
-      source: "text",
-    });
-
-    const options = getCreateSessionOptions() as {
-      customTools?: Array<{
-        name: string;
-        execute: (toolCallId: string, params: { package: string; openAfterInstall?: boolean }) => Promise<{ content: Array<{ type: string; text: string }>; details: unknown }>;
-      }>;
-    };
-    const installAppTool = options.customTools?.find((tool) => tool.name === "apps_install");
-    await expect(installAppTool?.execute("tool_1", { package: "vlc", openAfterInstall: false })).resolves.toEqual({
-      content: [{ type: "text", text: "Instalado vlc." }],
-      details: { ok: true, packageName: "vlc", message: "Instalado vlc." },
-    });
-    expect(getInstalledApps()).toEqual(["vlc"]);
   });
 
   test("registers the file-open and openclaw setup tools for the foreground model", async () => {
@@ -567,7 +533,7 @@ describe("PiHarness", () => {
       customTools?: Array<{ name: string }>;
     };
     const names = options.customTools?.map((tool) => tool.name) ?? [];
-    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(names).toEqual(["browser_open", "apps_open", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
   });
 
   test("injects bounded learned context and records exactly which memories were used", async () => {
@@ -887,7 +853,7 @@ describe("PiHarness", () => {
     });
   });
 
-  test("uses built-in tool output as the chat reply when bash returns output", async () => {
+  test("uses mediated tool output as the chat reply and redacts its trace", async () => {
     const { harness, authData, emitToolResult, getTraceRecords, setPromptImpl } = createHarnessFixture();
     authData.set("openai-codex", {
       type: "oauth",
@@ -898,15 +864,15 @@ describe("PiHarness", () => {
     });
 
     setPromptImpl(async () => {
-      emitToolResult("bash", "uid=1000(agenos) token=sk-secret");
+      emitToolResult("files_open", "Archivo abierto token=sk-secret");
     });
 
     await expect(harness.chat({
-      message: "ejecuta id",
+      message: "abre el archivo",
       source: "text",
     })).resolves.toMatchObject({
       ok: true,
-      reply: "uid=1000(agenos) token=sk-secret",
+      reply: "Archivo abierto token=sk-secret",
     });
     expect(getTraceRecords()).toHaveLength(1);
     expect(JSON.stringify(getTraceRecords()[0])).not.toContain("sk-secret");
@@ -917,13 +883,13 @@ describe("PiHarness", () => {
       status: "succeeded",
       provider: "openai-codex",
       modelId: "gpt-5.5-instant",
-      input: { text: "ejecuta id" },
-      output: { text: "uid=1000(agenos) token=[redacted]" },
+      input: { text: "abre el archivo" },
+      output: { text: "Archivo abierto token=[redacted]" },
       toolEvents: [
         {
-          toolName: "bash",
+          toolName: "files_open",
           ok: true,
-          output: { text: "uid=1000(agenos) token=[redacted]" },
+          output: { text: "Archivo abierto token=[redacted]" },
         },
       ],
     });

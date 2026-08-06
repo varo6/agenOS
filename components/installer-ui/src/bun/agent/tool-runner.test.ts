@@ -77,7 +77,7 @@ describe("agent tool runner", () => {
     expect(created).toHaveLength(1);
   });
 
-  test("executes shell from the frontend superuser", async () => {
+  test("executes ordinary shell from the authenticated frontend path", async () => {
     const runner = createToolRunner({
       shellTool: async (input) => ({
         ok: true,
@@ -101,6 +101,45 @@ describe("agent tool runner", () => {
       decision: "allow",
       message: "Comando completado.",
       shell: { stdout: "uid=1000\n" },
+    });
+  });
+
+  test("executes allowlisted effects only through registered broker handlers", async () => {
+    const calls: unknown[] = [];
+    const runner = createToolRunner({
+      handlers: {
+        "apps.open": async (input, context) => {
+          calls.push({ input, context });
+          return { ok: true, message: "App abierta." };
+        },
+      },
+      correlationIdFactory: () => "corr_handler",
+    });
+
+    await expect(runner.run({
+      source: "ui",
+      tool: "apps.open",
+      input: { app: "Fotos" },
+    })).resolves.toMatchObject({
+      ok: true,
+      decision: "allow",
+      output: { ok: true, message: "App abierta." },
+    });
+    expect(calls).toEqual([{
+      input: { app: "Fotos" },
+      context: { source: "ui", correlationId: "corr_handler" },
+    }]);
+  });
+
+  test("fails closed when policy allows a tool without an executor", async () => {
+    await expect(createToolRunner().run({
+      source: "ui",
+      tool: "apps.open",
+      input: { app: "Fotos" },
+    })).resolves.toMatchObject({
+      ok: false,
+      decision: "deny",
+      message: "No hay un ejecutor registrado para apps.open.",
     });
   });
 });

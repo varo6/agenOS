@@ -34,7 +34,7 @@ import {
   type LearnedContextResponse,
   type LearningMemoryClient,
 } from "../../agent/learning-memory-tool";
-import { createAppTool, type AppInstallResponse, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
+import { createAppTool, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
 import { createOpenBrowserModelTool } from "../../agent/browser-open-tool";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
 import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
@@ -96,8 +96,7 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
-const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
+const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
 function emptyLearningContext(): LearnedContextResponse {
@@ -177,7 +176,6 @@ type AppToolLike = {
     input: string | { app?: unknown; workspace?: unknown; focus?: unknown },
     options?: AppLaunchOptions,
   ): Promise<AppOpenResponse>;
-  installApp(input: string, options?: { openAfterInstall?: boolean; openAs?: string }): Promise<AppInstallResponse>;
 };
 
 type PiToolUpdateCallback = (update: {
@@ -185,7 +183,7 @@ type PiToolUpdateCallback = (update: {
   details: unknown;
 }) => void;
 
-type PiCustomToolLike = {
+export type PiCustomToolLike = {
   name: string;
   label: string;
   description: string;
@@ -224,6 +222,8 @@ type PiHarnessDependencies = {
   learningMemoryClient?: LearningMemoryClient;
   traceRecorder?: HarnessTraceRecorder;
   modelPreference?: string[];
+  modelTools?: string[];
+  customTools?: PiCustomToolLike[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   loginOpenAICodexDevice: (options: CodexDeviceAuthOptions) => Promise<OAuthCredentials>;
   now: () => number;
@@ -360,27 +360,7 @@ const OPEN_APP_TOOL_PARAMETERS = {
   additionalProperties: false,
 };
 
-const INSTALL_APP_TOOL_PARAMETERS = {
-  type: "object",
-  properties: {
-    package: {
-      type: "string",
-      description: "Nombre del paquete Debian a instalar, por ejemplo vlc, gimp o libreoffice.",
-    },
-    app: {
-      type: "string",
-      description: "Nombre de la aplicacion a abrir despues de instalar si difiere del paquete.",
-    },
-    openAfterInstall: {
-      type: "boolean",
-      description: "Abrir la aplicacion despues de instalarla. Por defecto true.",
-    },
-  },
-  required: ["package"],
-  additionalProperties: false,
-};
-
-function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
+export function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
   return {
     name: "apps_open",
     label: "Abrir app",
@@ -407,34 +387,6 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
       });
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
-        details: response,
-      };
-    },
-  };
-}
-
-function createInstallAppModelTool(appTool: AppToolLike): PiCustomToolLike {
-  return {
-    name: "apps_install",
-    label: "Instalar app",
-    description: "Instala un paquete Debian y opcionalmente abre la aplicacion instalada.",
-    promptSnippet: "apps_install: instala paquetes Debian cuando el usuario lo pide, y puede abrir la app al terminar.",
-    promptGuidelines: [
-      "Si el usuario pide instalar una app o paquete, llama apps_install con el nombre del paquete Debian.",
-      "Si el usuario pide instalar y abrir una app, deja openAfterInstall en true y usa app si el nombre de apertura difiere del paquete.",
-      "No uses apps_install para paquetes que el usuario no haya pedido instalar.",
-    ],
-    parameters: INSTALL_APP_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
-      const response = await appTool.installApp(
-        typeof params.package === "string" ? params.package : "",
-        {
-          openAfterInstall: typeof params.openAfterInstall === "boolean" ? params.openAfterInstall : true,
-          openAs: typeof params.app === "string" ? params.app : undefined,
-        },
-      );
-      return {
-        content: [{ type: "text", text: response.message ?? "Solicitud de instalacion procesada." }],
         details: response,
       };
     },
@@ -702,7 +654,6 @@ function createDefaultDependencies(): PiHarnessDependencies {
         customTools: (customTools ?? [
           createOpenBrowserModelTool(),
           createOpenAppModelTool(appTool),
-          createInstallAppModelTool(appTool),
           createOpenFileModelTool(),
           createOpenClawSetupModelTool(setupService),
           createAgentTaskModelTool(agentTaskClient),
@@ -720,6 +671,10 @@ function createDefaultDependencies(): PiHarnessDependencies {
     agentTaskClient,
     learningMemoryClient,
     traceRecorder,
+    // A standalone harness is deliberately capability-free. The broker is
+    // the only runtime allowed to inject system-effecting custom tools.
+    modelTools: [],
+    customTools: [],
     modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,
     loginOpenAICodexDevice,
@@ -1049,7 +1004,7 @@ export class PiHarness {
           }
         }
 
-        if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName)) {
+        if (event.type === "tool_execution_end" && event.toolName && this.foregroundToolNames().has(event.toolName)) {
           const toolOutput = extractTextContent(extractToolResultContent(event.result));
           toolEvents.push({
             toolName: event.toolName,
@@ -1171,7 +1126,7 @@ export class PiHarness {
         durationMs: Math.max(0, this.deps.now() - input.startedAtMs),
         harness: {
           promptHash: hashHarnessPrompt(systemPrompt),
-          tools: [...FOREGROUND_MODEL_TOOLS],
+          tools: [...this.foregroundToolNames()],
           learningContext: {
             itemIds: [...input.learningContext.itemIds],
             estimatedTokens: input.learningContext.estimatedTokens,
@@ -1300,16 +1255,8 @@ export class PiHarness {
     const created = await this.deps.createAgentSession({
       model,
       sessionManager: this.sessionManager,
-      tools: FOREGROUND_MODEL_TOOLS,
-      customTools: [
-        createOpenBrowserModelTool(),
-        createOpenAppModelTool(this.deps.appTool),
-        createInstallAppModelTool(this.deps.appTool),
-        createOpenFileModelTool(),
-        createOpenClawSetupModelTool(this.deps.setupService),
-        createAgentTaskModelTool(this.deps.agentTaskClient),
-        createLearningMemoryModelTool(this.deps.learningMemoryClient),
-      ],
+      tools: this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS,
+      customTools: this.deps.customTools ?? this.defaultCustomTools(),
       systemPrompt: composePiSystemPrompt(learningContext.text),
     });
 
@@ -1317,6 +1264,21 @@ export class PiHarness {
     this.sessionModelId = model.id;
     this.sessionContextKey = contextKey;
     return created.session;
+  }
+
+  private defaultCustomTools(): PiCustomToolLike[] {
+    return [
+      createOpenBrowserModelTool(),
+      createOpenAppModelTool(this.deps.appTool),
+      createOpenFileModelTool(),
+      createOpenClawSetupModelTool(this.deps.setupService),
+      createAgentTaskModelTool(this.deps.agentTaskClient),
+      createLearningMemoryModelTool(this.deps.learningMemoryClient),
+    ];
+  }
+
+  private foregroundToolNames(): Set<string> {
+    return new Set(this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS);
   }
 
   private resetSession(): void {
