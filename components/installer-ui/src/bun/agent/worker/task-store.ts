@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { migrateEventRecord, migrateTaskRecord } from "./migrations";
 import type { WorkerProgressEvent, WorkerTask, WorkerTaskStatus } from "./types";
@@ -36,11 +36,30 @@ export function createWorkerTaskStore(rootDir: string) {
     queueDepth(): number {
       return this.list(Number.MAX_SAFE_INTEGER).filter((task) => !TERMINAL_STATUSES.has(task.status)).length;
     },
+    clearTask(taskId: string): boolean {
+      const found = readTasks(outboxPath).some((task) => task.taskId === taskId);
+      if (!found) {
+        return false;
+      }
+      rewriteJsonLines(outboxPath, readJsonLines(outboxPath).filter((record) => record.taskId !== taskId));
+      rewriteJsonLines(eventsPath, readJsonLines(eventsPath).filter((record) => record.taskId !== taskId));
+      return true;
+    },
   };
 }
 
 function appendJsonLine(path: string, record: unknown): void {
   appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
+}
+
+function rewriteJsonLines(path: string, records: Record<string, unknown>[]): void {
+  if (!existsSync(path)) {
+    return;
+  }
+  const temporaryPath = `${path}.tmp-${process.pid}`;
+  const contents = records.length > 0 ? `${records.map((record) => JSON.stringify(record)).join("\n")}\n` : "";
+  writeFileSync(temporaryPath, contents, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporaryPath, path);
 }
 
 function readTasks(path: string): WorkerTask[] {

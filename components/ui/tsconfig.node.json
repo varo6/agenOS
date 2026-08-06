@@ -14,5 +14,6 @@
     "../network/types.ts",
     "../network/node/**/*.ts",
     "vite.config.ts"
-  ]
+  ],
+  "exclude": ["src/**/*.test.ts"]
 }

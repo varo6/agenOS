@@ -141,6 +141,19 @@ fn power(action: &str) -> ! {
     }
 }
 
+fn restart_agent() -> i32 {
+    match Command::new("/usr/bin/systemctl")
+        .args(["restart", "agenos-openclaw.service"])
+        .status()
+    {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(error) => {
+            eprintln!("Failed to restart agenos-openclaw.service: {}", error);
+            1
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -154,6 +167,7 @@ fn main() {
     match args[1].as_str() {
         "terminal" => exit(terminal()),
         "reload-shell" => reload_shell(),
+        "restart-agent" => exit(restart_agent()),
         "poweroff" => power("poweroff"),
         "reboot" => power("reboot"),
         _ => exit(2),

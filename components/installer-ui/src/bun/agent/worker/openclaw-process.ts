@@ -5,6 +5,8 @@ import { createWorkerTaskStore } from "./task-store";
 import { createOpenClawRuntime, type OpenClawRuntime } from "./openclaw-runtime";
 import type { WorkerAdapter, WorkerProgressEvent, WorkerTask, WorkerTaskStatus } from "./types";
 
+const TERMINAL_STATUSES = new Set<WorkerTaskStatus>(["succeeded", "failed", "cancelled"]);
+
 export type OpenClawProcessAdapterOptions = {
   binaryPath?: string;
   stateDir: string;
@@ -61,7 +63,7 @@ export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOpti
     }
   }
 
-  return {
+  const adapter: WorkerAdapter & { superviseGateway: () => { stop: () => void } } = {
     async health() {
       const correlationId = correlationIdFactory();
       const binary = runtime.resolveBinary();
@@ -89,6 +91,15 @@ export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOpti
         queueDepth: store.queueDepth(),
         ...observability.snapshot(),
       };
+    },
+    async testConnection() {
+      if (!runtime.resolveBinary()) {
+        return { ok: false, message: "OpenClaw no esta instalado; ejecuta el setup del backend." };
+      }
+      const result = await runtime.chat("Responde unicamente con OK para verificar la conexion del proveedor.", { timeoutMs: 15_000 });
+      return result.ok
+        ? { ok: true, message: "Conexion real con el proveedor verificada mediante OpenClaw." }
+        : { ok: false, message: result.message ?? "El proveedor no completo la prueba de conexion." };
     },
     async enqueue(input) {
       const message = input.message.trim();
@@ -135,10 +146,40 @@ export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOpti
     async list(limit) {
       return store.list(limit);
     },
+    async retry(taskId) {
+      const task = store.getTask(taskId);
+      if (!task) {
+        return { ok: false, taskId, message: `No existe la tarea ${taskId}.` };
+      }
+      if (!TERMINAL_STATUSES.has(task.status)) {
+        return { ok: false, taskId, message: `La tarea ${taskId} sigue activa y no se puede reintentar.` };
+      }
+      return adapter.enqueue({ message: task.message, source: task.source });
+    },
+    async clear(taskId) {
+      const task = store.getTask(taskId);
+      if (!task) {
+        return { ok: false, taskId, message: `No existe la tarea ${taskId}.` };
+      }
+      if (!TERMINAL_STATUSES.has(task.status)) {
+        return { ok: false, taskId, message: `La tarea ${taskId} sigue activa y no se puede limpiar.` };
+      }
+      const cleared = store.clearTask(taskId);
+      return {
+        ok: cleared,
+        taskId,
+        message: cleared ? `Tarea ${taskId} eliminada.` : `No existe la tarea ${taskId}.`,
+      };
+    },
+    async resolveConfirmation(taskId) {
+      return { ok: false, taskId, message: `OpenClaw no tiene una continuacion pendiente para la tarea ${taskId}.` };
+    },
     superviseGateway() {
       return runtime.startGateway();
     },
   };
+
+  return adapter;
 }
 
 function expandHomeDir(path: string): string {

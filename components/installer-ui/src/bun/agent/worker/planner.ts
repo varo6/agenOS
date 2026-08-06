@@ -24,16 +24,18 @@ export type PlannerAdapter = {
 export type CreatePlannerAdapterOptions = {
   mode: PlannerMode;
   planWithModel?: PlannerAdapter["plan"];
+  disabledReason?: string;
 };
 
-const PROVIDER_AUTH_MISSING = "Provider/auth is not configured.";
+const PROVIDER_AUTH_MISSING = "El proveedor o la autenticacion no estan configurados.";
+const BUN_PLANNER_UNAVAILABLE = "El worker Bun no tiene un planner de modelo configurado; usa OpenClaw o configura un planner real.";
 
 export function createPlannerAdapter(options: CreatePlannerAdapterOptions): PlannerAdapter {
   if (options.mode === "disabled") {
     return {
       mode: "disabled",
       async plan() {
-        return { ok: false, steps: [], degradedReason: PROVIDER_AUTH_MISSING };
+        return { ok: false, steps: [], degradedReason: options.disabledReason ?? PROVIDER_AUTH_MISSING };
       },
     };
   }
@@ -49,4 +51,4 @@ export function createPlannerAdapter(options: CreatePlannerAdapterOptions): Plan
   };
 }
 
-export { PROVIDER_AUTH_MISSING };
+export { BUN_PLANNER_UNAVAILABLE, PROVIDER_AUTH_MISSING };

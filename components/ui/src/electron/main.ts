@@ -13,9 +13,10 @@ import {
   type SpeechCapturePhase,
 } from "./ipc";
 import type { PiChatSource } from "../lib/pi-types";
-import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
+import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
 import { createNetworkManagerService } from "../../../network/node/network-manager";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
+import { createSystemIpcServices } from "./system-ipc-services";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
@@ -39,6 +40,10 @@ type CommandResult = {
 
 let mainWindow: BrowserWindow | null = null;
 const networkService = createNetworkManagerService();
+const systemServices = createSystemIpcServices();
+
+// El harness de Pi se carga bajo demanda: importarlo de forma estatica metia
+// todo su arbol en el bundle inicial de Electron y retrasaba el primer frame.
 type PiHarnessModule = typeof import("../../dev/pi-harness");
 type PiHarnessInstance = ReturnType<PiHarnessModule["createPiHarness"]>;
 let piHarnessPromise: Promise<PiHarnessInstance> | null = null;
@@ -478,16 +483,6 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
   }
 }
 
-function createVisualPreflight(): PreflightResponse {
-  return {
-    firmware: existsSync("/sys/firmware/efi") ? "UEFI" : "BIOS",
-    isLiveSession: existsSync("/run/live/medium"),
-    totalRamBytes: 0,
-    installableDiskBytes: 0,
-    checks: [],
-  };
-}
-
 function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
   return Promise.resolve()
     .then(operation)
@@ -502,15 +497,13 @@ function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => createVisualPreflight());
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.runMaintenance, async (): Promise<ApiMessageResponse> => normalizeApiMessageResponse({
-    ok: true,
-    message: "Mantenimiento no implementado en la shell visual nativa.",
-  }));
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.switchMode, async (_event, mode: ShellMode): Promise<ApiMessageResponse> => normalizeApiMessageResponse({
-    ok: mode === "installer" || mode === "system",
-    message: mode === "installer" || mode === "system" ? `Modo ${mode} solicitado.` : "El modo debe ser installer o system.",
-  }));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => systemServices.getPreflight());
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.runMaintenance, async (_event, action: unknown): Promise<ApiMessageResponse> => (
+    normalizeApiMessageResponse(await systemServices.runMaintenance(action))
+  ));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.switchMode, async (_event, mode: unknown): Promise<ApiMessageResponse> => (
+    normalizeApiMessageResponse(await systemServices.switchMode(mode))
+  ));
   ipcMain.handle(SYSTEM_IPC_CHANNELS.getRuntimeInfo, async (): Promise<SystemRuntimeInfo> => ({
     mode: BRIDGE_MODE,
     host: "electron",

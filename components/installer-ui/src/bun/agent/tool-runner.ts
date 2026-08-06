@@ -2,6 +2,7 @@ import { decidePolicy, type AgentSource, type PolicyDecision } from "./policy";
 import { isMemoryNamespace, type createMemoryStore } from "./memory";
 import { isLearnedMemoryCandidate, type createLearnedMemoryStore, type LearnedMemoryWriteMetadata } from "./learned-memory";
 import { runShellCommand, type ShellExecResult } from "../../../../agent/shell";
+import type { ConfirmationRecord } from "./confirmations";
 
 export type ConfirmationRequestInput = {
   source: AgentSource;
@@ -22,6 +23,7 @@ export type ToolRunInput = {
   correlationId?: string;
   tool: string;
   input: unknown;
+  confirmationId?: string;
 };
 
 export type ToolRunResult = {
@@ -50,6 +52,9 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
     async run(input: ToolRunInput): Promise<ToolRunResult> {
       const correlationId = input.correlationId ?? correlationIdFactory();
       const includeCorrelationId = typeof input.correlationId === "string";
+      if (!SUPPORTED_TOOLS.has(input.tool)) {
+        return unsupportedTool(input.tool, correlationId, includeCorrelationId);
+      }
       const policy = decidePolicy({
         tool: input.tool,
         source: input.source,
@@ -84,11 +89,30 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         };
       }
 
+      return executeAllowed(input, correlationId, includeCorrelationId);
+    },
+    async executeConfirmed(record: ConfirmationRecord): Promise<ToolRunResult> {
+      if (!SUPPORTED_TOOLS.has(record.tool)) {
+        return unsupportedTool(record.tool, record.correlationId, true);
+      }
+      return executeAllowed({
+        source: record.source,
+        taskId: record.taskId,
+        correlationId: record.correlationId,
+        tool: record.tool,
+        input: record.input,
+        confirmationId: record.confirmationId,
+      }, record.correlationId, true);
+    },
+  };
+
+  async function executeAllowed(input: ToolRunInput, correlationId: string, includeCorrelationId: boolean): Promise<ToolRunResult> {
       if (input.tool === "memory.write" && input.input && typeof input.input === "object") {
         const response = applyMemoryWrite(options, input.input, {
           source: input.source,
           taskId: input.taskId,
           correlationId,
+          confirmationId: input.confirmationId,
         });
         if (response) {
           return {
@@ -98,6 +122,12 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
             message: response.message,
           };
         }
+        return {
+          ok: false,
+          decision: "deny",
+          ...(includeCorrelationId ? { correlationId } : {}),
+          message: "La escritura de memoria no contiene un namespace o registro aprendido valido; no se guardo nada.",
+        };
       }
 
       if (input.tool === "shell.exec" && input.input && typeof input.input === "object") {
@@ -117,12 +147,22 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
       }
 
       return {
-        ok: true,
-        decision: "allow",
+        ok: false,
+        decision: "deny",
         ...(includeCorrelationId ? { correlationId } : {}),
-        message: "Tool call accepted.",
+        message: `La herramienta ${input.tool} no tiene un ejecutor disponible; no se realizo ninguna accion.`,
       };
-    },
+  }
+}
+
+const SUPPORTED_TOOLS = new Set(["memory.write", "shell.exec"]);
+
+function unsupportedTool(tool: string, correlationId: string, includeCorrelationId: boolean): ToolRunResult {
+  return {
+    ok: false,
+    decision: "deny",
+    ...(includeCorrelationId ? { correlationId } : {}),
+    message: `La herramienta ${tool || "desconocida"} no esta disponible en el broker; no se realizo ninguna accion.`,
   };
 }
 

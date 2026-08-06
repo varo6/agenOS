@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTaskQueue } from "./tasks";
 
 describe("agent task queue", () => {
-  test("enqueues a simulated OpenClaw task", async () => {
+  test("reports unavailable simulated work without creating a queued record", async () => {
     const root = mkdtempSync(join(tmpdir(), "agenos-tasks-"));
     const queue = createTaskQueue({
       rootDir: root,
@@ -15,14 +15,23 @@ describe("agent task queue", () => {
 
     const result = await queue.enqueue({ message: "prepara un email a Pablo", source: "ui" });
 
-    expect(result.ok).toBe(true);
-    expect(result.taskId).toMatch(/^task_/);
-    const outbox = readFileSync(join(root, "outbox.ndjson"), "utf8").trim();
-    expect(JSON.parse(outbox)).toMatchObject({
-      timestamp: "2026-05-15T12:00:00.000Z",
-      source: "ui",
-      message: "prepara un email a Pablo",
-      status: "queued",
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("No hay un worker real disponible") });
+    expect(existsSync(join(root, "outbox.ndjson"))).toBe(false);
+  });
+
+  test("reloads the broker adapter from the persisted config", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agenos-task-reload-"));
+    const configPath = join(root, "config.json");
+    const queue = createTaskQueue({
+      rootDir: root,
+      env: { AGENOS_OPENCLAW_USER_CONFIG: configPath },
+    });
+
+    writeFileSync(configPath, JSON.stringify({ schemaVersion: 1, mode: "local-simulated" }));
+    await expect(queue.reload()).resolves.toMatchObject({
+      ok: true,
+      health: { mode: "local-simulated", ok: false },
+      message: expect.stringContaining("aplicada"),
     });
   });
 });
