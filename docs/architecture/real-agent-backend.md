@@ -88,7 +88,7 @@ The foreground UI calls only local broker endpoints:
 
 - `GET /api/agent/admin/status` returns readiness, worker health, config, heartbeat age, queue depth, degraded reason, and last error correlation ID.
 - `GET /api/agent/admin/config` and `POST /api/agent/admin/config` read and, after confirmation,
-  atomically persist the user config with mode `0600`.
+  atomically persist the user config with mode `0600` and reload the broker's adapter immediately.
 - `GET /api/agent/admin/policy` returns policy defaults and stable rule IDs.
 - `POST /api/agent/admin/restart` requests confirmation and then calls the privileged helper's
   closed `restart-agent` action; helper/polkit failures are returned as errors.

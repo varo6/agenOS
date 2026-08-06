@@ -94,8 +94,8 @@ POST /api/agent/admin/tasks/:taskId/clear
 
 - `POST /admin/config`, `/admin/restart` y `/admin/tasks/:id/clear` devuelven primero `409` con
   `confirmationId`. Al confirmar, config escribe atómicamente el override de usuario con modo
-  `0600`, restart invoca la acción cerrada `agenos-shell-helper restart-agent`, y clear elimina
-  realmente los registros de una tarea terminal.
+  `0600` y recarga el adaptador del broker desde ese fichero, restart invoca la acción cerrada
+  `agenos-shell-helper restart-agent`, y clear elimina realmente los registros de una tarea terminal.
 - `retry` crea una tarea nueva con el mensaje/origen de la tarea terminal; si no puede hacerlo,
   responde `409 { ok:false }`.
 - `test-connection` hace el probe real del gateway cuando el modo es `openclaw-process`. En

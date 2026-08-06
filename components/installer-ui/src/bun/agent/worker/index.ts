@@ -12,6 +12,7 @@ import type { WorkerAdapter, WorkerMode } from "./types";
 
 export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOptions> & {
   config?: WorkerConfig;
+  env?: Record<string, string | undefined>;
   configMode?: WorkerConfiguredMode;
   openClawBinaryPath?: string;
   bundledWorkerPath?: string;
@@ -20,7 +21,7 @@ export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOpti
 };
 
 export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): WorkerAdapter {
-  const config = options.config ?? readWorkerConfig();
+  const config = options.config ?? readWorkerConfig({ env: options.env });
   const configuredMode = options.configMode ?? config.mode;
   const rootDir = options.rootDir ?? config.stateDir;
 
@@ -39,6 +40,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
       idFactory: options.idFactory,
       correlationIdFactory: options.correlationIdFactory,
       config,
+      env: options.env,
       runToolCall: options.runToolCall,
       learnedContextProvider: options.learnedContextProvider,
     });
@@ -55,6 +57,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
         idFactory: options.idFactory,
         correlationIdFactory: options.correlationIdFactory,
         config,
+        env: options.env,
         runToolCall: options.runToolCall,
         learnedContextProvider: options.learnedContextProvider,
       });

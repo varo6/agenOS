@@ -22,7 +22,7 @@ function defaultRootDir(): string {
 
 export function createTaskQueue(options: TaskQueueOptions = {}) {
   const rootDir = options.rootDir ?? defaultRootDir();
-  const adapter = options.adapter ?? createWorkerAdapter({ ...options, rootDir });
+  let adapter = options.adapter ?? createWorkerAdapter({ ...options, rootDir });
 
   return {
     async health() {
@@ -31,11 +31,35 @@ export function createTaskQueue(options: TaskQueueOptions = {}) {
     async enqueue(input: EnqueueTaskInput) {
       return adapter.enqueue(input);
     },
-    status: adapter.status,
-    events: adapter.events,
-    list: adapter.list,
-    retry: adapter.retry,
-    clear: adapter.clear,
-    resolveConfirmation: adapter.resolveConfirmation,
+    async status(taskId: string) {
+      return adapter.status(taskId);
+    },
+    async events(taskId: string) {
+      return adapter.events(taskId);
+    },
+    async list(limit?: number) {
+      return adapter.list(limit);
+    },
+    async retry(taskId: string) {
+      return adapter.retry(taskId);
+    },
+    async clear(taskId: string) {
+      return adapter.clear(taskId);
+    },
+    async resolveConfirmation(taskId: string, result: { ok: boolean; message?: string }) {
+      return adapter.resolveConfirmation(taskId, result);
+    },
+    async reload() {
+      if (options.adapter) {
+        return { ok: false, message: "No se puede recargar un adaptador inyectado externamente." };
+      }
+      adapter = createWorkerAdapter({ ...options, rootDir, config: undefined });
+      const health = await adapter.health();
+      return {
+        ok: true,
+        message: `Configuracion aplicada al broker en modo ${health.mode}.`,
+        health,
+      };
+    },
   };
 }

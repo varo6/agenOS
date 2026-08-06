@@ -84,7 +84,7 @@ describe("agent admin service", () => {
       summary: "config",
       input: { mode: "local-simulated", explicitUserIntent: true },
       actor: "ui",
-    })).resolves.toMatchObject({ ok: true, message: expect.stringContaining("guardada") });
+    })).resolves.toMatchObject({ ok: true, message: expect.stringContaining("guardada y aplicada") });
     expect(JSON.parse(readFileSync(userConfigPath, "utf8"))).toMatchObject({ mode: "local-simulated" });
     await expect(service.readConfig()).resolves.toMatchObject({ mode: "local-simulated" });
 

@@ -54,7 +54,7 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
   const worker = options.worker ?? options.taskQueue ?? createTaskQueue();
   const setup = options.setup ?? createOpenClawSetupService({ stateDir: config.stateDir, env });
   const memoryStore = options.memoryStore ?? createMemoryStore({ rootDir: join(expandHome(config.stateDir), "memory") });
-  const taskQueue = options.taskQueue ?? createTaskQueue({ rootDir: expandHome(config.stateDir) });
+  const taskQueue = options.taskQueue ?? createTaskQueue({ rootDir: expandHome(config.stateDir), env });
   const confirmations = options.confirmations ?? createConfirmationStore(options.confirmationOptions);
   const restartWorker = options.restartWorker ?? restartAgentWorker;
 
@@ -174,7 +174,11 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
       try {
         if (record.tool === "admin.config.write") {
           config = writeWorkerConfig(record.input as Partial<WorkerConfig>, { env, current: config });
-          return { ok: true, message: "Configuracion guardada. Reinicia el worker para aplicar el cambio de modo." };
+          const reloaded = await taskQueue.reload();
+          if (!reloaded.ok) {
+            return { ok: false, message: `La configuracion se guardo, pero el broker no pudo recargarla: ${reloaded.message}` };
+          }
+          return { ok: true, message: `Configuracion guardada y aplicada. ${reloaded.message}` };
         }
         if (record.tool === "admin.service.restart") {
           return restartWorker();
