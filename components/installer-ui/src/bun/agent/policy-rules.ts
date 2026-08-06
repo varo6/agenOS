@@ -23,14 +23,6 @@ function all(...predicates: Array<(request: PolicyRequest) => boolean>): (reques
 
 export const POLICY_RULES: PolicyRule[] = [
   {
-    ruleId: "agent.ui.superuser.allow",
-    tool: "*",
-    source: "ui",
-    decision: "allow",
-    reason: "Accion local explicita desde el frontend de AgenOS.",
-    matches: sourceIs("ui"),
-  },
-  {
     ruleId: "agent.shell.destructive.confirm",
     tool: "shell.exec",
     source: "*",
@@ -108,6 +100,14 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: (request) => request.tool === "memory.write" && request.source === "ui" && request.explicitUserIntent === true,
   },
   {
+    ruleId: "agent.memory.delete.ui.allow",
+    tool: "memory.delete",
+    source: "ui",
+    decision: "allow",
+    reason: "Olvidar una memoria requiere una peticion explicita del usuario.",
+    matches: (request) => request.tool === "memory.delete" && request.source === "ui" && request.explicitUserIntent === true,
+  },
+  {
     ruleId: "agent.low-risk.allow",
     tool: "local.low-risk",
     source: "*",
@@ -121,10 +121,18 @@ const LOW_RISK_TOOLS = new Set([
   "apps.list",
   "apps.open",
   "browser.open_url",
+  "files.open",
   "workspaces.focus",
   "memory.read",
   "contacts.lookup",
   "tasks.enqueue",
+  "tasks.read",
+  "setup.status",
+  "setup.run",
+  "auth.codex.start",
+  "telegram.configure",
+  "telegram.test",
+  "telegram.enable",
 ]);
 
 function isDestructiveShellInput(input: unknown): boolean {
