@@ -28,6 +28,9 @@ export function createTaskQueue(options: TaskQueueOptions = {}) {
     async health() {
       return adapter.health();
     },
+    async testConnection() {
+      return adapter.testConnection();
+    },
     async enqueue(input: EnqueueTaskInput) {
       return adapter.enqueue(input);
     },

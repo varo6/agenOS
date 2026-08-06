@@ -36,6 +36,9 @@ export function createLocalSimulatedWorkerAdapter(options: LocalSimulatedWorkerA
         ...observability.snapshot(),
       };
     },
+    async testConnection() {
+      return { ok: false, message: LOCAL_SIMULATED_UNAVAILABLE };
+    },
     async enqueue(input) {
       const message = input.message.trim();
       if (!message) {

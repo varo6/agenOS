@@ -84,6 +84,12 @@ export function createAgenosWorkerDaemonAdapter(options: AgenosWorkerDaemonAdapt
         ...observability.snapshot(),
       };
     },
+    async testConnection() {
+      return {
+        ok: false,
+        message: degradedReason ?? "El worker Bun no expone una prueba remota del proveedor; usa OpenClaw para verificar una conexion real.",
+      };
+    },
     async enqueue(input) {
       const message = input.message.trim();
       if (!message) {

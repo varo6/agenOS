@@ -62,6 +62,20 @@ describe("openclaw process adapter", () => {
     });
   });
 
+  test("tests provider connectivity with a real minimal chat round trip", async () => {
+    const runtime = fakeRuntime();
+    const adapter = createOpenClawProcessAdapter({ stateDir: temporaryStateDir(), runtime });
+
+    await expect(adapter.testConnection()).resolves.toEqual({
+      ok: true,
+      message: "Conexion real con el proveedor verificada mediante OpenClaw.",
+    });
+    expect(runtime.chat).toHaveBeenCalledWith(
+      "Responde unicamente con OK para verificar la conexion del proveedor.",
+      { timeoutMs: 15_000 },
+    );
+  });
+
   test("rejects enqueue when the gateway probe fails", async () => {
     const runtime = fakeRuntime({
       probeGateway: mock(async () => ({ ok: false, reachable: false, message: "gateway down" })),

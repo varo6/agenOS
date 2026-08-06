@@ -119,15 +119,18 @@ describe("agent admin service", () => {
     });
   });
 
-  test("test connection uses the real OpenClaw health probe", async () => {
+  test("test connection performs a real OpenClaw provider round trip", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
     let probes = 0;
     const service = createAgentAdminService({
       stateDir: rootDir,
       worker: {
         health: async () => {
-          probes += 1;
           return { ok: true, mode: "openclaw-process", serviceActive: true };
+        },
+        testConnection: async () => {
+          probes += 1;
+          return { ok: true, message: "proveedor verificado" };
         },
       } as never,
     });
@@ -136,7 +139,7 @@ describe("agent admin service", () => {
       ok: true,
       status: 200,
       readiness: "ready",
-      message: expect.stringContaining("verificada"),
+      message: "proveedor verificado",
     });
     expect(probes).toBe(1);
   });

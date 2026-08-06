@@ -92,6 +92,15 @@ export function createOpenClawProcessAdapter(options: OpenClawProcessAdapterOpti
         ...observability.snapshot(),
       };
     },
+    async testConnection() {
+      if (!runtime.resolveBinary()) {
+        return { ok: false, message: "OpenClaw no esta instalado; ejecuta el setup del backend." };
+      }
+      const result = await runtime.chat("Responde unicamente con OK para verificar la conexion del proveedor.", { timeoutMs: 15_000 });
+      return result.ok
+        ? { ok: true, message: "Conexion real con el proveedor verificada mediante OpenClaw." }
+        : { ok: false, message: result.message ?? "El proveedor no completo la prueba de conexion." };
+    },
     async enqueue(input) {
       const message = input.message.trim();
       if (!message) {

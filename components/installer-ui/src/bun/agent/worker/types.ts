@@ -48,6 +48,7 @@ export type WorkerProgressEvent = {
 
 export type WorkerAdapter = {
   health(): Promise<WorkerHealth>;
+  testConnection(): Promise<{ ok: boolean; message: string }>;
   enqueue(input: {
     message: string;
     source: WorkerTaskSource;

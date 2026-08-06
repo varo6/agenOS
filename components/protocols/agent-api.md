@@ -98,7 +98,8 @@ POST /api/agent/admin/tasks/:taskId/clear
   `agenos-shell-helper restart-agent`, y clear elimina realmente los registros de una tarea terminal.
 - `retry` crea una tarea nueva con el mensaje/origen de la tarea terminal; si no puede hacerlo,
   responde `409 { ok:false }`.
-- `test-connection` hace el probe real del gateway cuando el modo es `openclaw-process`. En
+- `test-connection` hace una completación mínima real contra el proveedor a través del gateway
+  cuando el modo es `openclaw-process` (timeout de 15 s). En
   `agenos-bun-worker` o `local-simulated` devuelve `503` explicando que no existe una conexión
   remota comprobable.
 

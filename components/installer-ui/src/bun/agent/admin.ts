@@ -35,7 +35,7 @@ export type AgentAdminServiceOptions = {
   stateDir?: string;
   env?: Record<string, string | undefined>;
   config?: WorkerConfig;
-  worker?: Pick<WorkerAdapter, "health" | "events" | "list">;
+  worker?: Pick<WorkerAdapter, "health" | "testConnection" | "events" | "list">;
   setup?: Pick<ReturnType<typeof createOpenClawSetupService>, "status">;
   memoryStore?: ReturnType<typeof createMemoryStore>;
   taskQueue?: ReturnType<typeof createTaskQueue>;
@@ -137,14 +137,22 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
         };
       }
 
-      const ready = health.ok && health.serviceActive;
+      if (!health.ok || !health.serviceActive) {
+        return {
+          ok: false,
+          status: 503,
+          readiness: "degraded" as const,
+          message: health.degradedReason ?? health.lastError ?? "El gateway de OpenClaw no esta disponible.",
+          setupItems: setupItemsFor(health, redactWorkerConfig(config, env)),
+        };
+      }
+
+      const probe = await worker.testConnection();
       return {
-        ok: ready,
-        status: ready ? 200 : 503,
-        readiness: ready ? "ready" as const : "degraded" as const,
-        message: ready
-          ? "Conexion real con el gateway de OpenClaw verificada."
-          : health.degradedReason ?? health.lastError ?? "El gateway de OpenClaw no esta disponible.",
+        ok: probe.ok,
+        status: probe.ok ? 200 : 503,
+        readiness: probe.ok ? "ready" as const : "degraded" as const,
+        message: probe.message,
         setupItems: setupItemsFor(health, redactWorkerConfig(config, env)),
       };
     },

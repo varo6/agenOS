@@ -92,7 +92,8 @@ The foreground UI calls only local broker endpoints:
 - `GET /api/agent/admin/policy` returns policy defaults and stable rule IDs.
 - `POST /api/agent/admin/restart` requests confirmation and then calls the privileged helper's
   closed `restart-agent` action; helper/polkit failures are returned as errors.
-- `POST /api/agent/admin/test-connection` probes the real OpenClaw gateway without exposing secrets;
+- `POST /api/agent/admin/test-connection` performs a minimal provider completion through the real
+  OpenClaw gateway (15 s timeout) without exposing secrets;
   non-OpenClaw modes fail explicitly because they have no remote connection to test.
 - `POST /api/agent/admin/export-diagnostics` exports a redacted status/config/log bundle.
 - `GET /api/agent/confirmations`, `POST /api/agent/confirmations/:confirmationId/confirm`, and `POST /api/agent/confirmations/:confirmationId/deny` handle pending sensitive actions.

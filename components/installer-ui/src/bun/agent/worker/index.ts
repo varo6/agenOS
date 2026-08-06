@@ -104,6 +104,9 @@ function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, 
         ...observability.snapshot(),
       };
     },
+    async testConnection() {
+      return { ok: false, message: reason ?? `${mode} worker adapter is not available.` };
+    },
     async enqueue() {
       return { ok: false, message: reason ?? `${mode} worker adapter is not available.` };
     },
