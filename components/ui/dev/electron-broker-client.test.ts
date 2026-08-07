@@ -48,4 +48,21 @@ describe("Electron Pi broker client", () => {
       new BrokerApiError(409, "Confirmacion requerida."),
     );
   });
+
+  test("opens OAuth and external links through the broker instead of a local adapter", async () => {
+    const calls: Array<{ url: string; body: string }> = [];
+    const client = createBrokerPiClient({
+      readToken: () => "ui-token",
+      fetchImpl: (async (input, init) => {
+        calls.push({ url: String(input), body: String(init?.body ?? "") });
+        return new Response(JSON.stringify({ ok: true, message: "Chromium abierto." }), { status: 202 });
+      }) as typeof fetch,
+    });
+
+    await expect(client.openBrowserUrl("https://auth.example/device")).resolves.toMatchObject({ ok: true });
+    expect(calls).toEqual([{
+      url: "http://127.0.0.1:4173/api/agent/browser/open-url",
+      body: JSON.stringify({ url: "https://auth.example/device" }),
+    }]);
+  });
 });

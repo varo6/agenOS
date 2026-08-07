@@ -4,9 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 
-import { launchBrowserUrl } from "../../../agent/browser-launcher";
 import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from "./broker-pi-client";
 import {
   PI_IPC_CHANNELS,
@@ -189,17 +188,14 @@ function openExternalUrl(url: string): void {
     return;
   }
 
-  void launchBrowserUrl(url)
+  void getPiClient().openBrowserUrl(url)
     .then((result) => {
       if (!result.ok) {
-        console.warn(`No se pudo confirmar Chromium: ${result.message}`);
-        return result.status === "failed" ? shell.openExternal(url) : undefined;
+        console.warn(`El broker no pudo abrir Chromium: ${result.message}`);
       }
-      return undefined;
     })
     .catch((error) => {
-      console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
-      return shell.openExternal(url);
+      console.warn(`El broker no pudo abrir la URL: ${normalizeErrorMessage(error)}`);
     });
 }
 

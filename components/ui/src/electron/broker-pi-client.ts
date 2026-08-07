@@ -31,6 +31,7 @@ export type BrokerPiClientOptions = {
 };
 
 type ErrorPayload = { message?: unknown };
+type BrokerActionResponse = { ok: boolean; message?: string };
 
 export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
   const baseUrl = options.baseUrl ?? process.env.AGENOS_AGENT_API_BASE?.trim() ?? DEFAULT_BROKER_BASE_URL;
@@ -100,6 +101,12 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
     listTurns(limit?: number): Promise<PiTurnState[]> {
       const query = typeof limit === "number" ? `?limit=${encodeURIComponent(String(limit))}` : "";
       return request(`/api/pi/turns${query}`);
+    },
+    openBrowserUrl(url: string): Promise<BrokerActionResponse> {
+      return request("/api/agent/browser/open-url", {
+        method: "POST",
+        body: JSON.stringify({ url }),
+      });
     },
   };
 }
