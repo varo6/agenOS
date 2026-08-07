@@ -23,6 +23,14 @@ function all(...predicates: Array<(request: PolicyRequest) => boolean>): (reques
 
 export const POLICY_RULES: PolicyRule[] = [
   {
+    ruleId: "agent.shell.agent.deny",
+    tool: "shell.exec",
+    source: "openclaw|system",
+    decision: "deny",
+    reason: "Los agentes no reciben shell arbitraria; deben usar tools tipadas del broker.",
+    matches: (request) => request.tool === "shell.exec" && request.source !== "ui",
+  },
+  {
     ruleId: "agent.shell.destructive.confirm",
     tool: "shell.exec",
     source: "*",
@@ -35,8 +43,8 @@ export const POLICY_RULES: PolicyRule[] = [
     tool: "shell.exec",
     source: "*",
     decision: "allow",
-    reason: "Comando shell local permitido para operar AgenOS.",
-    matches: toolIs("shell.exec"),
+    reason: "Comando shell solicitado explicitamente por la UI autenticada de AgenOS.",
+    matches: (request) => request.tool === "shell.exec" && request.source === "ui" && request.explicitUserIntent === true,
   },
   {
     ruleId: "agent.memory.background.confirm",

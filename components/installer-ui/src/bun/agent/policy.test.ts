@@ -23,21 +23,21 @@ describe("agent policy", () => {
     });
   });
 
-  test("requires confirmation for outbound sends and allows ordinary local shell", () => {
+  test("requires confirmation for outbound sends and denies agent shell", () => {
     expect(decidePolicy({ tool: "outbound.send", source: "openclaw" })).toMatchObject({
       decision: "confirm",
       ruleId: "agent.outbound.background.confirm",
     });
     expect(decidePolicy({ tool: "shell.exec", source: "openclaw", input: { command: "systemctl status ssh" } })).toMatchObject({
-      decision: "allow",
-      ruleId: "agent.shell.local.allow",
+      decision: "deny",
+      ruleId: "agent.shell.agent.deny",
     });
   });
 
-  test("requires confirmation for destructive worker shell commands", () => {
+  test("denies destructive worker shell commands instead of creating an executable request", () => {
     expect(decidePolicy({ tool: "shell.exec", source: "openclaw", input: { command: "rm -rf ~/Documentos" } })).toMatchObject({
-      decision: "confirm",
-      ruleId: "agent.shell.destructive.confirm",
+      decision: "deny",
+      ruleId: "agent.shell.agent.deny",
     });
   });
 

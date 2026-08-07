@@ -2,19 +2,23 @@ import { describe, expect, test } from "bun:test";
 import { createToolRunner } from "./tool-runner";
 
 describe("agent tool runner", () => {
-  test("executes ordinary shell from worker", async () => {
+  test("denies ordinary shell from worker", async () => {
+    const commands: string[] = [];
     const runner = createToolRunner({
-      shellTool: async (input) => ({
-        ok: true,
-        command: input.command,
-        cwd: "/tmp",
-        exitCode: 0,
-        signal: null,
-        stdout: "active\n",
-        stderr: "",
-        timedOut: false,
-        message: "Comando completado.",
-      }),
+      shellTool: async (input) => {
+        commands.push(input.command);
+        return {
+          ok: true,
+          command: input.command,
+          cwd: "/tmp",
+          exitCode: 0,
+          signal: null,
+          stdout: "active\n",
+          stderr: "",
+          timedOut: false,
+          message: "Comando completado.",
+        };
+      },
     });
 
     await expect(runner.run({
@@ -23,13 +27,13 @@ describe("agent tool runner", () => {
       tool: "shell.exec",
       input: { command: "systemctl status ssh" },
     })).resolves.toMatchObject({
-      ok: true,
-      decision: "allow",
-      shell: { stdout: "active\n" },
+      ok: false,
+      decision: "deny",
     });
+    expect(commands).toEqual([]);
   });
 
-  test("turns destructive worker shell into confirmation requests", async () => {
+  test("denies destructive worker shell without creating confirmation requests", async () => {
     const created: unknown[] = [];
     const runner = createToolRunner({
       confirmations: {
@@ -47,10 +51,9 @@ describe("agent tool runner", () => {
       input: { command: "rm -rf ~/Documentos" },
     })).resolves.toMatchObject({
       ok: false,
-      decision: "confirm",
-      confirmationId: "conf_shell",
+      decision: "deny",
     });
-    expect(created).toHaveLength(1);
+    expect(created).toHaveLength(0);
   });
 
   test("turns background memory writes into confirmation requests", async () => {
@@ -96,6 +99,7 @@ describe("agent tool runner", () => {
       source: "ui",
       tool: "shell.exec",
       input: { command: "id" },
+      explicitUserIntent: true,
     })).resolves.toMatchObject({
       ok: true,
       decision: "allow",
