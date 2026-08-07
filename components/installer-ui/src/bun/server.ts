@@ -460,7 +460,8 @@ export function createInstallerApiHandler(
     setup,
   });
   const uiAuth = dependencies.uiAuth ?? createLocalUiAuth({
-    tokenPath: join(homedir(), ".agenos", "broker", "ui-token"),
+    tokenPath: process.env.AGENOS_UI_TOKEN_PATH?.trim()
+      || join(homedir(), ".agenos", "broker", "ui-token"),
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
