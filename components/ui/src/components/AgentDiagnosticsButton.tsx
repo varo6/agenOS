@@ -62,7 +62,7 @@ export function AgentDiagnosticsButton({
     try {
       setReport(await collectDiagnostics());
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "No se pudo leer el diagnostico.");
+      setError(loadError instanceof Error ? loadError.message : "No se pudo leer el informe.");
     } finally {
       setLoading(false);
     }
@@ -79,16 +79,16 @@ export function AgentDiagnosticsButton({
 
   return (
     <>
-      {/* Vive en la barra de sistema: antes flotaba encima del contenido. */}
+      {/*
+       * Herramienta de soporte, no de uso diario: vive en Sistema y se llama
+       * por lo que produce ("informe"), no por su nombre de ingeniería.
+       */}
       <Button
-        aria-label="Diagnostico"
-        icon={<FileWarning aria-hidden="true" className="h-4 w-4" />}
+        icon={<FileWarning aria-hidden="true" className="h-5 w-5" />}
         loading={loading}
         onClick={loadDiagnostics}
-        size="sm"
-        variant="ghost"
       >
-        Diagnostico
+        Ver informe técnico
       </Button>
 
       {open ? (
@@ -96,35 +96,39 @@ export function AgentDiagnosticsButton({
           <section className="panel grid w-full max-w-3xl gap-5 p-5 text-left sm:p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-mono text-[10px] uppercase text-ink-faint">
-                  Produccion
+                <h2 className="font-display text-2xl font-medium text-ink">Informe técnico</h2>
+                <p className="mt-1 text-sm text-ink-muted">
+                  Cópialo y envíaselo a quien te dé soporte.
                 </p>
-                <h2 className="mt-2 text-2xl font-medium text-ink">Diagnostico de AgenOS</h2>
               </div>
               <button
-                aria-label="Cerrar diagnostico"
-                className="rounded-pill p-2 text-ink-muted transition-colors hover:text-ink"
+                aria-label="Cerrar informe"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-pill text-ink-muted transition-colors hover:text-ink"
                 onClick={() => setOpen(false)}
                 type="button"
               >
-                <X className="h-5 w-5" />
+                <X aria-hidden="true" className="h-6 w-6" />
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" onClick={loadDiagnostics} type="button">
-                <RefreshCcw className="h-4 w-4" />
-                Refrescar
-              </button>
-              <button className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" disabled={!reportText && !error} onClick={() => void copyReport()} type="button">
-                <Clipboard className="h-4 w-4" />
+            <div className="flex flex-wrap gap-3">
+              <Button
+                icon={<Clipboard aria-hidden="true" className="h-5 w-5" />}
+                disabled={!reportText && !error}
+                onClick={() => void copyReport()}
+                variant="primary"
+              >
                 Copiar
-              </button>
+              </Button>
+              <Button
+                icon={<RefreshCcw aria-hidden="true" className="h-5 w-5" />}
+                onClick={loadDiagnostics}
+              >
+                Actualizar
+              </Button>
             </div>
 
-            {loading ? (
-              <p className="text-sm text-ink-muted">Leyendo estado local...</p>
-            ) : null}
+            {loading ? <p className="text-sm text-ink-muted">Leyendo el estado…</p> : null}
 
             {error ? (
               <p className="text-sm text-danger">{error}</p>
@@ -147,7 +151,7 @@ export function AgentDiagnosticsButton({
                 </div>
 
                 <div className="rounded-control border border-line bg-sunken p-3">
-                  <p className="font-mono text-xs uppercase text-ink-faint">Comandos utiles</p>
+                  <p className="font-mono text-xs uppercase text-ink-faint">Comandos útiles</p>
                   <div className="mt-3 grid gap-2">
                     {commands.map((command) => (
                       <code className="block break-all rounded-control bg-surface px-3 py-2 text-xs text-ink-muted" key={command}>

@@ -142,7 +142,7 @@ describe("HomeView", () => {
   test("sin cuenta conectada ofrece el siguiente paso y el panel para hacerlo", () => {
     renderHome({ blockedReason: "disconnected", session: session({ authState: "disconnected" }) });
 
-    expect(screen.getByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+    expect(screen.getByText("Conecta tu cuenta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).toBeInTheDocument();
   });
 
@@ -153,7 +153,7 @@ describe("HomeView", () => {
       session: session({ authState: "disconnected", ready: false }),
     });
 
-    expect(screen.getByText("Backend no disponible")).toBeInTheDocument();
+    expect(screen.getByText("Pi no está disponible")).toBeInTheDocument();
   });
 
   test("mientras se lee el backend no se acusa a nadie de estar mal configurado", () => {
@@ -165,7 +165,7 @@ describe("HomeView", () => {
   test("con la cuenta conectada pero el backend a medias no se repite el panel de cuenta", () => {
     renderHome({ health: health({ status: { ...readyAdminStatus, readiness: "degraded" } }) });
 
-    expect(screen.getByText("Backend en modo degradado")).toBeInTheDocument();
+    expect(screen.getByText("Pi funciona a medias")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reconectar ChatGPT" })).not.toBeInTheDocument();
   });
 

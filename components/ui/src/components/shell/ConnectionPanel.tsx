@@ -26,11 +26,11 @@ export type ConnectionPanelProps = {
 function describeAuthState(authState: PiAuthState): string {
   switch (authState) {
     case "connected":
-      return "Tu cuenta está lista: ya puedes hablar con Pi.";
+      return "Ya puedes hablar con Pi.";
     case "authorizing":
-      return "Termina el inicio de sesión en el navegador o pega aquí el código.";
+      return "Termina de conectarla en el navegador.";
     case "error":
-      return "La conexión con tu cuenta necesita atención.";
+      return "Algo ha fallado. Vuelve a conectarla.";
     default:
       return "Conecta ChatGPT para empezar.";
   }
@@ -65,22 +65,23 @@ function ConnectionPanelComponent({
 
   return (
     <Panel
+      /* Proveedor y modelo son dato de ficha técnica: van al margen, no al título. */
       actions={
-        <span className="rounded-pill border border-line bg-sunken px-3 py-1 font-mono text-[11px] text-ink-faint">
-          {modelId}
+        <span className="rounded-pill border border-line bg-sunken px-3 py-1.5 font-mono text-xs text-ink-faint">
+          {providerName} · {modelId}
         </span>
       }
       className="w-full"
       description={pendingAttempt ? pendingAttempt.instructions : describeAuthState(authState)}
-      eyebrow="Tu cuenta"
-      title={providerName}
+      title="Tu cuenta"
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
         <Button
           disabled={!ready || busy}
-          icon={<ArrowUpRight aria-hidden="true" className="h-4 w-4" />}
+          icon={<ArrowUpRight aria-hidden="true" className="h-5 w-5" />}
           loading={authState === "authorizing"}
           onClick={onConnect}
+          size="lg"
           variant="primary"
         >
           {connectLabel}
@@ -89,24 +90,24 @@ function ConnectionPanelComponent({
         {pendingAttempt ? (
           <Button
             disabled={!ready}
-            icon={<XCircle aria-hidden="true" className="h-4 w-4" />}
+            icon={<XCircle aria-hidden="true" className="h-5 w-5" />}
             onClick={onCancelAuth}
           >
-            Cancelar login
+            Cancelar
           </Button>
         ) : null}
 
         <Button
           disabled={!ready}
-          icon={<RefreshCcw aria-hidden="true" className="h-4 w-4" />}
+          icon={<RefreshCcw aria-hidden="true" className="h-5 w-5" />}
           onClick={onRefresh}
         >
-          Refrescar estado
+          Actualizar
         </Button>
 
         <Button
           disabled={!ready || authState === "authorizing"}
-          icon={<LogOut aria-hidden="true" className="h-4 w-4" />}
+          icon={<LogOut aria-hidden="true" className="h-5 w-5" />}
           onClick={onLogout}
           variant="ghost"
         >
@@ -117,35 +118,34 @@ function ConnectionPanelComponent({
       {pendingAttempt ? (
         pendingAttempt.method === "device" ? (
           /* Los dos pasos van numerados: el código no sirve sin abrir el enlace. */
-          <PanelInset className="mt-4 grid gap-4">
+          <PanelInset className="mt-4 grid gap-5">
             <div>
-              <p className="eyebrow">Paso 1: abre este enlace</p>
+              <p className="text-base font-semibold text-ink">Paso 1: abre este enlace</p>
               <a
-                className="mt-2 inline-flex min-w-0 items-center gap-2 break-all rounded text-sm text-accent-light hover:text-ink"
+                className="mt-2 inline-flex min-w-0 items-center gap-2 break-all rounded text-base text-accent-light hover:text-ink"
                 href={pendingAttempt.url}
                 rel="noreferrer"
                 target="_blank"
               >
                 {pendingAttempt.url}
-                <ExternalLink aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <ExternalLink aria-hidden="true" className="h-5 w-5 shrink-0" />
               </a>
             </div>
 
             <div>
-              <p className="eyebrow">Paso 2: escribe este código</p>
+              <p className="text-base font-semibold text-ink">Paso 2: escribe este código</p>
               <div className="mt-2 flex flex-wrap items-center gap-3">
-                <code className="rounded-control border border-line bg-canvas px-3 py-2 font-mono text-lg tracking-[0.18em] text-ink">
+                <code className="rounded-control border border-line bg-canvas px-4 py-3 font-mono text-2xl tracking-[0.18em] text-ink">
                   {pendingAttempt.userCode ?? "Esperando código…"}
                 </code>
                 <Button
                   disabled={!pendingAttempt.userCode}
-                  icon={<Clipboard aria-hidden="true" className="h-4 w-4" />}
+                  icon={<Clipboard aria-hidden="true" className="h-5 w-5" />}
                   onClick={() => {
                     if (pendingAttempt.userCode) {
                       void navigator.clipboard?.writeText(pendingAttempt.userCode);
                     }
                   }}
-                  size="sm"
                 >
                   Copiar
                 </Button>
@@ -155,7 +155,7 @@ function ConnectionPanelComponent({
         ) : (
           <form className="mt-4 flex flex-col gap-3" onSubmit={handleManualSubmit}>
             <Field
-              hint="Si el navegador no vuelve solo, copia aquí la dirección a la que te ha llevado."
+              hint="Copia aquí la dirección que te muestre el navegador."
               label="Pegar el enlace o el código"
               onChange={(event) => onManualCodeChange(event.target.value)}
               placeholder="http://localhost:1455/auth/callback?…"

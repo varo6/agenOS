@@ -12,28 +12,27 @@ export type ConversationPanelProps = {
 function TurnCard({ turn }: { turn: PiTurnState }) {
   return (
     <article className="panel-inset p-4 sm:p-5">
-      <p className="eyebrow">Tú</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink">{turn.input}</p>
+      {/* Quién habla, en palabras normales: la etiqueta mono de antes se leía peor. */}
+      <p className="text-sm font-semibold text-ink-faint">Tú</p>
+      <p className="mt-1 whitespace-pre-wrap text-base text-ink">{turn.input}</p>
 
-      <p className="eyebrow mt-5">Pi</p>
+      <p className="mt-4 text-sm font-semibold text-ink-faint">Pi</p>
       {turn.status === "processing" ? (
         <>
-          <p className="mt-2 inline-flex items-center gap-2 text-xs text-accent-light">
-            <LoaderCircle aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+          <p className="mt-1 inline-flex items-center gap-2 text-sm text-accent-light">
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
             {describeTurnActivity(turn.progress) ?? "Pi está trabajando…"}
           </p>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink-muted">
+          <p className="mt-1 whitespace-pre-wrap text-base text-ink-muted">
             {turn.progress.streamedText || "Esperando la primera respuesta de Pi…"}
           </p>
         </>
       ) : turn.status === "failed" ? (
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-danger">
+        <p className="mt-1 whitespace-pre-wrap text-base text-danger">
           {turn.error ?? "Pi no pudo terminar esta respuesta."}
         </p>
       ) : (
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-ink-muted">
-          {turn.reply ?? ""}
-        </p>
+        <p className="mt-1 whitespace-pre-wrap text-base text-ink-muted">{turn.reply ?? ""}</p>
       )}
     </article>
   );
@@ -59,16 +58,11 @@ function ConversationPanelComponent({ turns }: ConversationPanelProps) {
   }, [turns]);
 
   return (
-    <Panel
-      className="w-full"
-      description="Se guarda en este equipo y sobrevive a los reinicios."
-      eyebrow="Conversación"
-      title="Lo que has hablado con Pi"
-    >
+    <Panel className="w-full" title="Conversación">
       {turns.length === 0 ? (
         <EmptyState
-          description="Pulsa el micrófono y pídele algo, o escríbeselo en el campo de arriba."
-          icon={<MessagesSquare aria-hidden="true" className="h-6 w-6" />}
+          description="Pulsa el micrófono y pídele algo."
+          icon={<MessagesSquare aria-hidden="true" className="h-7 w-7" />}
           title="Todavía no habéis hablado"
         />
       ) : (

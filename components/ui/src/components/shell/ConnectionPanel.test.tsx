@@ -47,7 +47,7 @@ describe("ConnectionPanel", () => {
   test("con la cuenta conectada la acción principal es reconectar", () => {
     renderPanel({ authState: "connected" });
 
-    expect(screen.getByText("Tu cuenta está lista: ya puedes hablar con Pi.")).toBeInTheDocument();
+    expect(screen.getByText("Ya puedes hablar con Pi.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconectar ChatGPT" })).toBeInTheDocument();
   });
 
@@ -113,28 +113,28 @@ describe("ConnectionPanel", () => {
   test("cancelar solo existe mientras hay un login en curso", () => {
     const props = renderPanel({ authState: "authorizing", pendingAttempt: deviceAttempt });
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(props.onCancelAuth).toHaveBeenCalledTimes(1);
   });
 
   test("sin login en curso no se ofrece cancelar", () => {
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: "Cancelar login" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancelar" })).not.toBeInTheDocument();
   });
 
   test("con el servicio caído no se ofrece ninguna acción de cuenta", () => {
     renderPanel({ ready: false });
 
     expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Refrescar estado" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Actualizar" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeDisabled();
   });
 
   test("refrescar y cerrar sesión llegan a sus manejadores", () => {
     const props = renderPanel({ authState: "connected" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Refrescar estado" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
     fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
 
     expect(props.onRefresh).toHaveBeenCalledTimes(1);

@@ -76,16 +76,16 @@ export function describeComposerBlock(
   serviceReady: boolean,
 ): string | null {
   if (!serviceReady) {
-    return "AgenOS no responde ahora mismo. Abre Sistema para revisarlo.";
+    return "Pi no responde ahora mismo.";
   }
 
   switch (reason) {
     case "offline":
       return "Sin internet no puedo enviarle nada a Pi.";
     case "disconnected":
-      return "Conecta tu cuenta de ChatGPT para escribirle a Pi.";
+      return "Conecta tu cuenta de ChatGPT.";
     case "busy":
-      return "Pi está respondiendo; espera a que termine.";
+      return "Pi está respondiendo, espera un momento.";
     default:
       return null;
   }

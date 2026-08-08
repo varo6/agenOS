@@ -35,6 +35,7 @@ describe("classifyError", () => {
 
   test("reconoce la falta de internet aunque el mensaje lleve tildes", () => {
     expect(classifyError(new Error("Sin conexión a internet."))).toBe("offline");
+    expect(classifyError(new Error("Sin internet"))).toBe("offline");
   });
 
   test("lo que no encaja cae en desconocido", () => {
@@ -57,7 +58,7 @@ describe("toUserError", () => {
   });
 
   test("no repite el detalle cuando coincide con el titular", () => {
-    expect(toUserError("Sin conexión a internet").details).toBe(null);
+    expect(toUserError("Sin internet").details).toBe(null);
   });
 
   test("respeta una clasificación forzada por quien llama", () => {

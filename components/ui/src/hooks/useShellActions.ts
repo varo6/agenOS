@@ -70,7 +70,7 @@ export function useShellActions({
 
   const connect = useCallback(() => {
     if (online !== true) {
-      alert.raise("Sin conexión a internet.", { kind: "offline" });
+      alert.raise("Sin internet", { kind: "offline" });
       return;
     }
 

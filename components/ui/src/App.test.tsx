@@ -193,7 +193,7 @@ describe("App chat recovery", () => {
     expect(screen.getByText("Preparando AgenOS")).toBeInTheDocument();
 
     releaseHistory([]);
-    expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+    expect(await screen.findByText("Conecta tu cuenta")).toBeInTheDocument();
   });
 
   test("shows the network panel and blocks ChatGPT login while offline", async () => {
@@ -213,13 +213,13 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+    expect(await screen.findByText("Conecta tu cuenta")).toBeInTheDocument();
 
     // La checklist técnica vive en Sistema: Inicio solo enseña el siguiente paso.
     fireEvent.click(screen.getByRole("button", { name: "Sistema" }));
 
-    expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
-    expect(screen.getByText("Worker listo")).toBeInTheDocument();
+    expect(screen.getByText("Servicio de Pi")).toBeInTheDocument();
+    expect(screen.getByText("Motor de tareas")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Abrir navegador" })).not.toBeInTheDocument();
   });
@@ -238,7 +238,7 @@ describe("App chat recovery", () => {
     });
     expect(await screen.findByText("codex login --device-auth termino con codigo 1.")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refrescar estado" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
 
     await waitFor(() => {
       expect(screen.queryByText("codex login --device-auth termino con codigo 1.")).not.toBeInTheDocument();
@@ -276,7 +276,7 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
 
     await waitFor(() => {
       expect(mocks.piClient.cancelAuth).toHaveBeenCalledWith("att_123");
