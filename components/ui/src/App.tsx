@@ -117,7 +117,7 @@ export default function App() {
       <VideoBackground />
       {/* Primer tabulador de la pantalla: saltarse la barra fija. */}
       <a
-        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:rounded-control focus:bg-surface-strong focus:px-4 focus:py-2 focus:text-sm"
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:inline-flex focus:min-h-12 focus:items-center focus:rounded-control focus:bg-surface-strong focus:px-5 focus:text-base"
         href="#contenido"
       >
         Saltar al contenido
