@@ -20,6 +20,13 @@ export type ConnectionPanelProps = {
   onCancelAuth: () => void;
   onLogout: () => void;
   onRefresh: () => void;
+  /**
+   * Versión de paso: solo lo necesario para terminar de conectar. Se usa en
+   * Inicio, donde este panel baja únicamente cuando hay un código que copiar y
+   * ofrecer además "actualizar" o "cerrar sesión" sería abrir caminos que no
+   * llevan a ninguna parte.
+   */
+  compact?: boolean;
 };
 
 /** Qué significa el estado de la cuenta, sin jerga de autenticación. */
@@ -55,6 +62,7 @@ function ConnectionPanelComponent({
   onCancelAuth,
   onLogout,
   onRefresh,
+  compact = false,
 }: ConnectionPanelProps) {
   const connectLabel = authState === "connected" ? "Reconectar ChatGPT" : "Conectar ChatGPT";
 
@@ -67,9 +75,11 @@ function ConnectionPanelComponent({
     <Panel
       /* Proveedor y modelo son dato de ficha técnica: van al margen, no al título. */
       actions={
-        <span className="rounded-pill border border-line bg-sunken px-3 py-1.5 font-mono text-xs text-ink-faint">
-          {providerName} · {modelId}
-        </span>
+        compact ? undefined : (
+          <span className="rounded-pill border border-line bg-sunken px-3 py-1.5 font-mono text-xs text-ink-faint">
+            {providerName} · {modelId}
+          </span>
+        )
       }
       className="w-full"
       description={pendingAttempt ? pendingAttempt.instructions : describeAuthState(authState)}
@@ -97,22 +107,26 @@ function ConnectionPanelComponent({
           </Button>
         ) : null}
 
-        <Button
-          disabled={!ready}
-          icon={<RefreshCcw aria-hidden="true" className="h-5 w-5" />}
-          onClick={onRefresh}
-        >
-          Actualizar
-        </Button>
+        {compact ? null : (
+          <>
+            <Button
+              disabled={!ready}
+              icon={<RefreshCcw aria-hidden="true" className="h-5 w-5" />}
+              onClick={onRefresh}
+            >
+              Actualizar
+            </Button>
 
-        <Button
-          disabled={!ready || authState === "authorizing"}
-          icon={<LogOut aria-hidden="true" className="h-5 w-5" />}
-          onClick={onLogout}
-          variant="ghost"
-        >
-          Cerrar sesión
-        </Button>
+            <Button
+              disabled={!ready || authState === "authorizing"}
+              icon={<LogOut aria-hidden="true" className="h-5 w-5" />}
+              onClick={onLogout}
+              variant="ghost"
+            >
+              Cerrar sesión
+            </Button>
+          </>
+        )}
       </div>
 
       {pendingAttempt ? (

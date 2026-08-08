@@ -135,7 +135,12 @@ export function resolveShellReadiness(signals: ReadinessSignals): ShellReadiness
     return "checking";
   }
 
-  if (signals.adminStatus.readiness !== "ready" || signals.authState !== "connected") {
+  /*
+   * "degraded" no bloquea. El servicio en modo degradado sigue atendiendo
+   * turnos, así que quedarse la pantalla entera por eso sería castigar a la
+   * persona por un problema que no le impide hablar. Se avisa en Sistema.
+   */
+  if (signals.adminStatus.readiness === "needs_setup" || signals.authState !== "connected") {
     return "blocked";
   }
 

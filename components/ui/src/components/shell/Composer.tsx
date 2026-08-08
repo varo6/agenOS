@@ -53,7 +53,8 @@ function ComposerComponent({
           disabled={disabled}
           id={inputId}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="Escribe aquí…"
+          /* El ejemplo enseña qué se le puede pedir sin gastar una línea más. */
+          placeholder="Por ejemplo: abre el navegador"
           value={value}
         />
         <Button

@@ -68,15 +68,6 @@ function chooseStep({
     };
   }
 
-  if (adminStatus.readiness === "degraded") {
-    return {
-      title: "Pi funciona a medias",
-      detail: "Puedes usarlo, pero conviene revisarlo.",
-      primary: { label: "Abrir Sistema", action: "system" },
-      tone: "work",
-    };
-  }
-
   if (authState === "authorizing") {
     return {
       title: "Termina de conectar tu cuenta",
@@ -91,6 +82,19 @@ function chooseStep({
       title: "Conecta tu cuenta",
       detail: "Es el último paso para poder hablar con Pi.",
       primary: { label: "Conectar", action: "connect" },
+      tone: "work",
+    };
+  }
+
+  /*
+   * Va después de la cuenta a propósito: en modo degradado se puede hablar con
+   * Pi, así que nunca debe robarle el sitio a lo que sí lo impide.
+   */
+  if (adminStatus.readiness === "degraded") {
+    return {
+      title: "Pi funciona a medias",
+      detail: "Puedes usarlo, pero conviene revisarlo.",
+      primary: { label: "Abrir Sistema", action: "system" },
       tone: "work",
     };
   }
@@ -133,45 +137,50 @@ export function AgentOnboardingPanel(props: AgentOnboardingPanelProps) {
 
   const actionIcon = (action: OnboardingStep["primary"]["action"]) =>
     action === "refresh" ? (
-      <RefreshCcw aria-hidden="true" className="h-4 w-4" />
+      <RefreshCcw aria-hidden="true" className="h-6 w-6" />
     ) : action === "system" ? (
-      <Settings aria-hidden="true" className="h-4 w-4" />
+      <Settings aria-hidden="true" className="h-6 w-6" />
     ) : (
-      <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+      <ArrowUpRight aria-hidden="true" className="h-6 w-6" />
     );
 
+  /*
+   * La acción va debajo y a lo ancho, no en la esquina de la cabecera: es lo
+   * único que hay que hacer en esta pantalla y tiene que parecerlo.
+   */
   return (
     <Panel
-      actions={
-        <>
-          <Button
-            icon={actionIcon(step.primary.action)}
-            onClick={() => runAction(step.primary.action)}
-            variant="primary"
-          >
-            {step.primary.label}
-          </Button>
-          {step.secondary ? (
-            <Button
-              icon={actionIcon(step.secondary.action)}
-              onClick={() => runAction(step.secondary!.action)}
-            >
-              {step.secondary.label}
-            </Button>
-          ) : null}
-        </>
-      }
       className="w-full"
       description={step.detail}
-      eyebrow="Siguiente paso"
       title={
         <span className="flex items-center gap-3">
-          <span className={cx("rounded-control border p-2", TONE_SURFACE[STEP_TONE[step.tone]])}>
+          <span className={cx("rounded-control border p-2.5", TONE_SURFACE[STEP_TONE[step.tone]])}>
             {iconForTone(step.tone)}
           </span>
           {step.title}
         </span>
       }
-    />
+    >
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button
+          icon={actionIcon(step.primary.action)}
+          onClick={() => runAction(step.primary.action)}
+          size="lg"
+          variant="primary"
+        >
+          {step.primary.label}
+        </Button>
+        {step.secondary ? (
+          <Button
+            icon={actionIcon(step.secondary.action)}
+            onClick={() => runAction(step.secondary!.action)}
+            size="lg"
+            variant="ghost"
+          >
+            {step.secondary.label}
+          </Button>
+        ) : null}
+      </div>
+    </Panel>
   );
 }

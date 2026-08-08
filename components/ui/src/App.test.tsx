@@ -231,13 +231,16 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT" }));
+    // En Inicio solo hay un camino: el botón del paso que falta.
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar" }));
 
     await waitFor(() => {
       expect(mocks.piClient.startAuth).toHaveBeenCalledWith("device");
     });
     expect(await screen.findByText("codex login --device-auth termino con codigo 1.")).toBeInTheDocument();
 
+    // Refrescar el estado es mantenimiento: vive en Sistema, con la cuenta.
+    fireEvent.click(screen.getByRole("button", { name: /^Sistema/ }));
     fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
 
     await waitFor(() => {
@@ -284,7 +287,8 @@ describe("App chat recovery", () => {
     await waitFor(() => {
       expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).not.toBeDisabled();
+    // Cancelado el intento, vuelve a haber un único botón para empezar de nuevo.
+    expect(screen.getByRole("button", { name: "Conectar" })).not.toBeDisabled();
   });
 
   test("sends app launch requests to the foreground model as async turns", async () => {
