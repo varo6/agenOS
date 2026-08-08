@@ -216,7 +216,7 @@ describe("App chat recovery", () => {
     expect(await screen.findByText("Conecta tu cuenta")).toBeInTheDocument();
 
     // La checklist técnica vive en Sistema: Inicio solo enseña el siguiente paso.
-    fireEvent.click(screen.getByRole("button", { name: "Sistema" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sistema/ }));
 
     expect(screen.getByText("Servicio de Pi")).toBeInTheDocument();
     expect(screen.getByText("Motor de tareas")).toBeInTheDocument();
@@ -389,7 +389,9 @@ describe("App chat recovery", () => {
     expect(mocks.piClient.getStatus.mock.calls.length).toBe(statusCalls);
   });
 
-  test("shows the workspace system bar and focuses workspace clicks", async () => {
+  // Los escritorios son cosa del gestor de ventanas, así que ya no ocupan la
+  // barra fija: se cambian desde Sistema (o hablando con Pi).
+  test("shows the workspace switcher in Sistema and focuses workspace clicks", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
     mocks.agentClient.focusWorkspace.mockResolvedValue({
@@ -399,6 +401,8 @@ describe("App chat recovery", () => {
     });
 
     render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Sistema/ }));
 
     const target = await screen.findByRole("button", { name: "Escritorio 2: Apps" });
     expect(target).not.toHaveAttribute("aria-current");
@@ -427,7 +431,8 @@ describe("App chat recovery", () => {
     mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(unsubscribe);
 
     const view = render(<App />);
-    await screen.findByRole("button", { name: "Escritorio 1: Inicio" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Sistema/ }));
+    await screen.findByRole("button", { name: /^Escritorio 1:/ });
 
     const listener = mocks.agentClient.subscribeWorkspaceChanges.mock.calls[0]?.[0];
     expect(listener).toBeTypeOf("function");

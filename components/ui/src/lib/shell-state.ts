@@ -108,6 +108,24 @@ export type ReadinessSignals = {
  * nadie de estar mal configurado, para no enseñar un aviso que desaparece solo
  * un segundo después.
  */
+/**
+ * Si merece la pena mirar Sistema. Sirve para marcar la pestaña cuando algo va
+ * mal sin llegar a impedir la conversación: sin esta señal, un fallo que no
+ * bloquea sería invisible hasta que alguien entrase por casualidad.
+ */
+export function needsSystemAttention(signals: ReadinessSignals): boolean {
+  if (!signals.harnessAvailable || signals.backendError) {
+    return true;
+  }
+
+  // Sin lectura todavía no se acusa a nadie, igual que en la readiness.
+  if (!signals.adminStatus) {
+    return false;
+  }
+
+  return signals.adminStatus.readiness !== "ready" || signals.authState !== "connected";
+}
+
 export function resolveShellReadiness(signals: ReadinessSignals): ShellReadiness {
   if (!signals.harnessAvailable || signals.backendError) {
     return "blocked";

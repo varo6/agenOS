@@ -51,6 +51,16 @@ describe("ConnectionPanel", () => {
     expect(screen.getByRole("button", { name: "Reconectar ChatGPT" })).toBeInTheDocument();
   });
 
+  // El proveedor y el modelo salieron de la barra fija: son ficha técnica y su
+  // sitio es esta tarjeta, al margen y no en el titular.
+  test("la ficha técnica de la cuenta acompaña al panel, no a la pantalla de hablar", () => {
+    renderPanel({ authState: "connected" });
+
+    expect(screen.getByRole("heading", { name: "Tu cuenta" })).toBeInTheDocument();
+    expect(screen.getByText(/gpt-5\.4-mini/)).toBeInTheDocument();
+    expect(screen.getByText(/ChatGPT\/Codex/)).toBeInTheDocument();
+  });
+
   test("mientras autoriza, el botón se anuncia como ocupado y no se puede repetir", () => {
     const props = renderPanel({ authState: "authorizing", pendingAttempt: deviceAttempt });
 
