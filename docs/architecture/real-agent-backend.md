@@ -34,6 +34,31 @@ Onboarding is automatic and opinionated: the Pi tool `openclaw_setup` (backed by
 
 The broker on `127.0.0.1:4173` is the authority for policy, memory, outbound-send preparation, admin actions, and diagnostics. The worker receives tasks and reports progress; it does not execute arbitrary shell commands. Worker-only broker calls require a bearer token stored at `~/.agenos/broker/worker-token` with mode `0600`.
 
+The packaged Electron process no longer embeds a second Pi harness. It loads the system UI from
+the broker origin and forwards every `agenosPi` IPC operation to `/api/pi/*` using the distinct
+mode-`0600` UI token at `~/.agenos/broker/ui-token`. The broker owns the only foreground Pi
+session and injects only broker-backed custom tools. This adds one loopback HTTP hop per IPC
+operation/tool call (normally negligible beside model and graphical-launch latency) while
+eliminating split conversation state and direct adapter execution.
+
+All `/api/*` routes except the worker boundary require that UI identity. Browser requests use an
+HttpOnly, strict same-site session cookie issued with the shell; native broker clients use the
+bearer token. Cross-site origins are rejected and responses do not advertise wildcard CORS.
+
+Foreground Pi deliberately has no native shell or filesystem-mutation tools. App, URL and file
+opening, setup, learning memory and delegation are registered as broker handlers and re-evaluated
+by `decidePolicy` immediately before their effect. Allowed tools without a registered handler
+fail closed rather than returning a synthetic success.
+
+Worker/system identities are also denied `shell.exec`; background work must use typed broker
+tools. The shell endpoint remains only as an authenticated, explicit administrative UI surface,
+with destructive commands converted to pending confirmations.
+
+Generic package installation is unavailable: the former `sudo -n`/`pkexec apt-get` path and the
+`apps_install` model tool were removed. Restoring installation requires a typed privileged helper
+with a closed operation/package catalog; exposing arbitrary apt arguments would contradict the
+privilege boundary claimed by the TFG.
+
 The public task API remains a broker facade. `POST /api/agent/tasks` enqueues work, `GET /api/agent/tasks/:taskId` returns status, and `GET /api/agent/tasks/:taskId/events` returns progress events. Worker tool calls use `/api/agent/worker/tool-call` and are rejected without the local `worker-token`.
 
 ## Confirmed Self-Improvement Loop

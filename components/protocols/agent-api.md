@@ -6,7 +6,15 @@ se conserva al final como referencia futura.
 
 Convenciones:
 
-- Todo es local (`127.0.0.1:4173`); la UI llega por IPC de Electron con fallback HTTP.
+- Todo es local (`127.0.0.1:4173`). Electron carga la shell desde ese origen y sus canales de Pi
+  delegan en este mismo broker; no existe un segundo harness Pi en el proceso principal.
+- Salvo `GET /health` y la frontera worker, toda ruta `/api/*` exige una sesión UI local. El
+  broker entrega una cookie `HttpOnly; SameSite=Strict` al servir la shell; los clientes nativos
+  usan `Authorization: Bearer` con el token `~/.agenos/broker/ui-token` (modo `0600`).
+- La frontera worker sigue usando un token distinto, `~/.agenos/broker/worker-token` (modo
+  `0600`). Un token no sirve para la otra identidad.
+- No se emiten cabeceras CORS permisivas. Las peticiones con `Origin` ajeno al broker o
+  `Sec-Fetch-Site: cross-site` se rechazan con `403`, incluido el preflight.
 - Los payloads del agente usan `schemaVersion: 1`, `correlationId` e ISO timestamps.
 - Los endpoints worker-only exigen bearer token de `~/.agenos/broker/worker-token` (modo 0600).
 - Errores: `400` validación, `403` denegado por política, `405` método, `409` pendiente de
@@ -105,12 +113,31 @@ DELETE /api/agent/learning/memories/:itemId           olvida una entrada por int
 GET  /api/agent/learning/context                      selección auditable (`query`, `tokenBudget`; máximo 512)
 POST /api/agent/apps/open                            { app, workspace?, focus? }
 POST /api/agent/browser/open-url                     { url }
+POST /api/agent/files/open                           { path, workspace?, focus? }
 POST /api/agent/shell/exec                           { command, cwd?, timeoutMs? }
 GET  /api/agent/workspaces
 POST /api/agent/workspaces/focus                     { workspace, source? }
 POST /api/agent/worker/tool-call                     worker-only (bearer token)
 GET  /api/agent/worker/health
 ```
+
+El Pi foreground solo recibe las custom tools mediadas `browser_open`, `apps_open`,
+`files_open`, `openclaw_setup`, `agent_task` y `learning_memory`. No recibe las tools nativas
+`bash`, `edit`, `write`, `read`, `grep`, `find` o `ls`, porque permitirían efectos fuera de la
+decisión del broker.
+
+`apps_install` no forma parte del contrato. Se ha retirado la elevación genérica
+`sudo -n`/`pkexec apt-get`; la instalación volverá a exponerse únicamente cuando exista un helper
+privilegiado tipado con catálogo cerrado de paquetes/operaciones y confirmación reanudable.
+
+`shell.exec` es una herramienta administrativa de la UI autenticada, no una capacidad del
+agente: `openclaw` y `system` reciben `403` incluso para comandos no destructivos. La UI debe
+marcar intención explícita; los comandos clasificados como destructivos pasan a `409`.
+
+La semántica de política es realmente fail-closed: solo las tools enumeradas por reglas estables
+pueden obtener `allow`; una tool desconocida devuelve `403`, incluso si declara origen `ui`. Los
+comandos shell destructivos y las mutaciones admin devuelven `409` y crean una confirmación aun
+cuando los solicita la UI.
 
 Las memorias aprendidas son registros estructurados append-only con `kind` (`preference`,
 `procedure`, `avoidance`), confianza, señales fuente, caducidad e ID visible. Corregir o borrar
