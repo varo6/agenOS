@@ -12,10 +12,14 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   danger: "btn-danger",
 };
 
+/*
+ * Ningún tamaño baja de 44px de alto. `sm` no es "pequeño" sino "secundario":
+ * sigue siendo pulsable con el dedo, solo pesa menos en la jerarquía.
+ */
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: "px-3 py-1.5 text-[0.8125rem]",
-  md: "px-4 py-2.5 text-sm",
-  lg: "px-5 py-3 text-base",
+  sm: "min-h-11 px-4 text-sm",
+  md: "min-h-12 px-5 text-sm",
+  lg: "min-h-14 px-7 text-base",
 };
 
 export type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className"> & {
@@ -58,7 +62,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {loading ? (
-        <LoaderCircle aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />
+        <LoaderCircle aria-hidden="true" className="h-5 w-5 shrink-0 animate-spin" />
       ) : (
         icon
       )}

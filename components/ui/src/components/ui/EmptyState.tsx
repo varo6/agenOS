@@ -19,10 +19,8 @@ export function EmptyState({ icon, title, description, actions, className }: Emp
       )}
     >
       {icon ? <div className="text-ink-faint">{icon}</div> : null}
-      <p className="text-sm font-medium text-ink">{title}</p>
-      {description ? (
-        <p className="max-w-sm text-sm leading-6 text-ink-muted">{description}</p>
-      ) : null}
+      <p className="text-base font-semibold text-ink">{title}</p>
+      {description ? <p className="max-w-sm text-sm text-ink-muted">{description}</p> : null}
       {actions ? <div className="mt-1 flex flex-wrap justify-center gap-2">{actions}</div> : null}
     </div>
   );

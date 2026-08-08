@@ -34,6 +34,18 @@ describe("Button", () => {
     render(<Button variant="primary">Enviar</Button>);
     expect(screen.getByRole("button", { name: "Enviar" })).toHaveClass("btn-primary");
   });
+
+  // Un botón por debajo de 44px es inalcanzable para un dedo poco preciso, así
+  // que ningún tamaño puede quedarse corto: `sm` es secundario, no pequeño.
+  test("ningún tamaño baja del objetivo táctil de 44px", () => {
+    const heights: Record<string, string> = { sm: "min-h-11", md: "min-h-12", lg: "min-h-14" };
+
+    for (const [size, expected] of Object.entries(heights)) {
+      const { unmount } = render(<Button size={size as "sm" | "md" | "lg"}>Conectar</Button>);
+      expect(screen.getByRole("button", { name: "Conectar" })).toHaveClass(expected);
+      unmount();
+    }
+  });
 });
 
 describe("Field", () => {
