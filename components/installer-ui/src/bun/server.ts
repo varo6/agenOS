@@ -22,6 +22,7 @@ import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
 import { createWorkspaceService } from "./agent/workspaces";
 import { runShellCommand } from "../../../agent/shell";
+import { createFileTool } from "../../../agent/files";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
@@ -30,12 +31,14 @@ import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
 import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
-import { createToolRunner } from "./agent/tool-runner";
+import { createToolRunner, type ToolRunResult } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
+import { createLocalUiAuth } from "./agent/ui-auth";
+import { createBrokerPiTools } from "./agent/broker-pi-tools";
 import { createSupportBundle } from "./diagnostics/support-bundle";
 import { createSttService, type SttService } from "./speech/stt";
 import { switchMode } from "../shared/system-services/switch-mode";
-import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
+import { HttpError, json, methodNotAllowed, options, readJsonBody, rejectUntrustedBrowserOrigin } from "./http";
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
@@ -43,8 +46,6 @@ import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
-import type { AgentTaskClient } from "../../../agent/agent-task-tool";
-import type { LearningMemoryClient } from "../../../agent/learning-memory-tool";
 import type { HarnessTraceRecord } from "../../../agent/harness-trace";
 import type {
   PiAuthAttemptResponse,
@@ -90,10 +91,12 @@ export type InstallerApiDependencies = {
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  fileTool: ReturnType<typeof createFileTool>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
   shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
+  uiAuth: ReturnType<typeof createLocalUiAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
   setup: ReturnType<typeof createOpenClawSetupService>;
@@ -145,6 +148,14 @@ function launchFailureStatus(response: LaunchResponse, defaultStatus: number): n
   }
 
   return defaultStatus;
+}
+
+function toolRunResponse(result: ToolRunResult, successStatus = 202, failureStatus = 400): Response {
+  if (result.decision !== "allow") {
+    return json(result, { status: result.decision === "deny" ? 403 : 409 });
+  }
+  const payload = result.shell ?? result.output ?? result;
+  return json(payload, { status: result.ok ? successStatus : failureStatus });
 }
 
 function isPathInside(rootDir: string, candidate: string): boolean {
@@ -344,7 +355,48 @@ export function createInstallerApiHandler(
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
   const learnedMemory = dependencies.learnedMemory ?? createLearnedMemoryStore();
   const shellTool = dependencies.shellTool ?? runShellCommand;
-  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, learnedMemory, shellTool });
+  const setup = dependencies.setup ?? createOpenClawSetupService();
+  const appTool = dependencies.appTool ?? createAppTool();
+  const browserTool = dependencies.browserTool ?? createBrowserTool();
+  const fileTool = dependencies.fileTool ?? createFileTool();
+  const workspaceService = dependencies.workspaceService ?? createWorkspaceService();
+  const effectHandlers: NonNullable<Parameters<typeof createToolRunner>[0]["handlers"]> = {
+    "apps.list": () => appTool.listApps(),
+    "apps.open": (input) => appTool.openApp(input as never),
+    "browser.open_url": (input) => browserTool.openUrl(
+      input && typeof input === "object" && typeof (input as { url?: unknown }).url === "string"
+        ? (input as { url: string }).url
+        : "",
+    ),
+    "files.open": (input) => fileTool.openPath(input as never),
+    "workspaces.focus": (input) => workspaceService.focusWorkspace(input as never),
+    "setup.status": () => setup.status(),
+    "setup.run": () => setup.run(),
+    "auth.codex.start": () => setup.startCodexLogin(),
+    "telegram.configure": (input) => setup.configureTelegram(
+      input && typeof input === "object" && typeof (input as { token?: unknown }).token === "string"
+        ? (input as { token: string }).token
+        : "",
+    ),
+    "telegram.test": () => setup.testTelegram(),
+    "telegram.enable": () => setup.enableTelegram(),
+    "memory.read": (input) => {
+      const record = input && typeof input === "object" ? input as { action?: unknown; query?: unknown; tokenBudget?: unknown; includeDeleted?: unknown } : {};
+      if (record.action === "context") {
+        return learnedMemory.context(
+          typeof record.query === "string" ? record.query : "",
+          typeof record.tokenBudget === "number" ? record.tokenBudget : 256,
+        );
+      }
+      return learnedMemory.list({ includeDeleted: record.includeDeleted === true });
+    },
+    "memory.delete": (input) => learnedMemory.delete(
+      input && typeof input === "object" && typeof (input as { itemId?: unknown }).itemId === "string"
+        ? (input as { itemId: string }).itemId
+        : "",
+    ),
+  };
+  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, learnedMemory, shellTool, handlers: effectHandlers });
   const selfImprovement = dependencies.selfImprovement ?? createSelfImprovementLoop({
     memory: learnedMemory,
     listConfirmations: (limit) => confirmations.list(limit),
@@ -360,57 +412,56 @@ export function createInstallerApiHandler(
       input: call.input,
     }),
   });
-  const setup = dependencies.setup ?? createOpenClawSetupService();
-  // Direct task client for the embedded Pi harness: same policy gate as the
-  // HTTP endpoint, without depending on the broker's own port being reachable.
-  const piAgentTaskClient: AgentTaskClient = {
-    async enqueue(message) {
-      const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
-      if (policy.decision !== "allow") {
-        return { ok: false, message: policy.reason };
-      }
-      return taskQueue.enqueue({ message, source: "ui" });
-    },
-    async status(taskId) {
+  effectHandlers["tasks.enqueue"] = (input) => taskQueue.enqueue({
+    message: input && typeof input === "object" && typeof (input as { message?: unknown }).message === "string"
+      ? (input as { message: string }).message
+      : "",
+    source: "ui",
+  });
+  effectHandlers["tasks.read"] = async (input) => {
+    const record = input && typeof input === "object" ? input as { action?: unknown; taskId?: unknown; limit?: unknown } : {};
+    const taskId = typeof record.taskId === "string" ? record.taskId : "";
+    if (record.action === "status") {
       const task = await taskQueue.status(taskId);
       if (task) {
         await selfImprovement.captureTask(task);
       }
       return task;
-    },
-    async events(taskId) {
+    }
+    if (record.action === "events") {
       return taskQueue.events(taskId);
-    },
-    async list(limit) {
-      return taskQueue.list(limit);
-    },
-    async health() {
+    }
+    if (record.action === "list") {
+      return taskQueue.list(typeof record.limit === "number" ? record.limit : undefined);
+    }
+    if (record.action === "health") {
       return taskQueue.health();
-    },
+    }
+    return null;
   };
-  const piLearningMemoryClient: LearningMemoryClient = {
-    async list(includeDeleted) {
-      return learnedMemory.list({ includeDeleted });
-    },
-    async correct(itemId, statement) {
-      return learnedMemory.update(itemId, { statement });
-    },
-    async forget(itemId) {
-      return learnedMemory.delete(itemId);
-    },
-    async context(query, tokenBudget) {
-      return learnedMemory.context(query, tokenBudget);
-    },
-    async captureTrace(trace) {
+  effectHandlers["memory.write"] = (input) => {
+    const record = input && typeof input === "object" ? input as { action?: unknown; itemId?: unknown; statement?: unknown } : {};
+    if (record.action !== "correct" || typeof record.itemId !== "string" || typeof record.statement !== "string") {
+      return { ok: false, message: "Correccion de memoria invalida." };
+    }
+    return learnedMemory.update(record.itemId, { statement: record.statement });
+  };
+  const brokerPiTools = createBrokerPiTools({
+    toolRunner,
+    captureTrace: async (trace) => {
       await selfImprovement.captureHarnessTrace(trace);
     },
-  };
+  });
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
     taskQueue,
     memoryStore,
     confirmations,
     setup,
+  });
+  const uiAuth = dependencies.uiAuth ?? createLocalUiAuth({
+    tokenPath: process.env.AGENOS_UI_TOKEN_PATH?.trim()
+      || join(homedir(), ".agenos", "broker", "ui-token"),
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
@@ -423,14 +474,18 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup, agentTaskClient: piAgentTaskClient, learningMemoryClient: piLearningMemoryClient })),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({
+      setupService: setup,
+      ...brokerPiTools,
+    })),
     memoryStore,
     learnedMemory,
     selfImprovement,
     taskQueue,
-    appTool: dependencies.appTool ?? createAppTool(),
-    browserTool: dependencies.browserTool ?? createBrowserTool(),
-    workspaceService: dependencies.workspaceService ?? createWorkspaceService(),
+    appTool,
+    browserTool,
+    fileTool,
+    workspaceService,
     shellTool,
     confirmations,
     agentAdmin,
@@ -442,6 +497,7 @@ export function createInstallerApiHandler(
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
+    uiAuth,
   };
 
   return {
@@ -449,8 +505,22 @@ export function createInstallerApiHandler(
       const url = new URL(request.url);
 
       try {
+        if (url.pathname.startsWith("/api/")) {
+          const rejectedOrigin = rejectUntrustedBrowserOrigin(request);
+          if (rejectedOrigin) {
+            return rejectedOrigin;
+          }
+        }
+
         if (request.method === "OPTIONS") {
           return options(["GET", "POST", "DELETE", "OPTIONS"]);
+        }
+
+        if (url.pathname.startsWith("/api/") && url.pathname !== "/api/agent/worker/tool-call") {
+          const auth = deps.uiAuth.authorizeUiRequest(request);
+          if (auth.ok === false) {
+            return json({ ok: false, message: auth.message }, { status: auth.status });
+          }
         }
 
         if (url.pathname === INSTALLER_ROUTES.health) {
@@ -946,21 +1016,21 @@ export function createInstallerApiHandler(
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
-          return json(await deps.setup.status());
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "setup.status", input: {} }), 200, 200);
         }
 
         if (url.pathname === "/api/agent/setup/run") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.run(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "setup.run", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/auth/codex/start") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.startCodexLogin(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "auth.codex.start", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/configure") {
@@ -971,21 +1041,21 @@ export function createInstallerApiHandler(
           if (typeof payload.token !== "string" || !payload.token.trim()) {
             return json({ ok: false, message: "Telegram bot token is required." }, { status: 400 });
           }
-          return json(await deps.setup.configureTelegram(payload.token), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.configure", input: { token: payload.token } }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/test") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.testTelegram(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.test", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/enable") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.enableTelegram(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.enable", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/admin/config") {
@@ -1069,7 +1139,7 @@ export function createInstallerApiHandler(
               source?: unknown;
               explicitUserIntent?: unknown;
             };
-            const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
+            const source = "ui" as const;
             const policy = decidePolicy({
               tool: "memory.write",
               source,
@@ -1207,16 +1277,12 @@ export function createInstallerApiHandler(
           if (request.method !== "POST") {
             return methodNotAllowed(["GET", "POST", "OPTIONS"]);
           }
-          const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
-          const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
-          const response = await deps.taskQueue.enqueue({
-            message: typeof payload.message === "string" ? payload.message : "",
-            source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
-          });
-          return json(response, { status: response.ok ? 202 : 503 });
+          const payload = await readJsonBody(request) as { message?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "tasks.enqueue",
+            input: { message: typeof payload.message === "string" ? payload.message : "" },
+          }), 202, 503);
         }
 
         const taskEventsMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)\/events$/);
@@ -1276,13 +1342,11 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { url?: unknown };
-          const policy = decidePolicy({ tool: "browser.open_url", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
-
-          const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
-          return json(response, { status: response.ok ? 202 : 400 });
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "browser.open_url",
+            input: { url: typeof payload.url === "string" ? payload.url : "" },
+          }));
         }
 
         if (url.pathname === "/api/agent/shell/exec") {
@@ -1290,19 +1354,32 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
-          const policy = decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, {
-              status: policy.decision === "deny" ? 403 : 409,
-            });
-          }
-
-          const response = await deps.shellTool({
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "shell.exec",
+            explicitUserIntent: true,
+            input: {
             command: typeof payload.command === "string" ? payload.command : "",
             cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
             timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined,
-          });
-          return json(response, { status: response.ok ? 202 : 400 });
+            },
+          }));
+        }
+
+        if (url.pathname === "/api/agent/files/open") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { path?: unknown; workspace?: unknown; focus?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "files.open",
+            input: {
+              path: typeof payload.path === "string" ? payload.path : "",
+              workspace: payload.workspace,
+              focus: payload.focus !== false,
+            },
+          }));
         }
 
         if (url.pathname === "/api/agent/workspaces") {
@@ -1343,7 +1420,6 @@ export function createInstallerApiHandler(
 
           return new Response(stream, {
             headers: {
-              "Access-Control-Allow-Origin": "*",
               "Cache-Control": "no-cache",
               "Content-Type": "text/event-stream; charset=utf-8",
             },
@@ -1354,15 +1430,12 @@ export function createInstallerApiHandler(
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          const payload = await readJsonBody(request) as { workspace?: unknown; source?: unknown };
-          const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
-          const policy = decidePolicy({ tool: "workspaces.focus", source });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: policy.decision === "deny" ? 403 : 409 });
-          }
-
-          const response = await deps.workspaceService.focusWorkspace({ workspace: payload.workspace, source });
-          return json(response, { status: response.ok ? 202 : 400 });
+          const payload = await readJsonBody(request) as { workspace?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "workspaces.focus",
+            input: { workspace: payload.workspace, source: "ui" },
+          }));
         }
 
         if (url.pathname === "/api/agent/apps/open") {
@@ -1370,17 +1443,15 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { app?: unknown; workspace?: unknown; focus?: unknown };
-          const policy = decidePolicy({ tool: "apps.open", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
-
-          const response = await deps.appTool.openApp({
-            app: typeof payload.app === "string" ? payload.app : "",
-            workspace: payload.workspace,
-            focus: payload.focus !== false,
-          });
-          return json(response, { status: response.ok ? 202 : 400 });
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "apps.open",
+            input: {
+              app: typeof payload.app === "string" ? payload.app : "",
+              workspace: payload.workspace,
+              focus: payload.focus !== false,
+            },
+          }));
         }
 
         const frontend = frontendResponse(request, url, {
@@ -1388,7 +1459,7 @@ export function createInstallerApiHandler(
           systemFrontendDistDir: deps.systemFrontendDistDir,
         });
         if (frontend) {
-          return frontend;
+          return deps.uiAuth.attachSession(frontend);
         }
 
         return json(

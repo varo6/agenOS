@@ -23,6 +23,14 @@ function all(...predicates: Array<(request: PolicyRequest) => boolean>): (reques
 
 export const POLICY_RULES: PolicyRule[] = [
   {
+    ruleId: "agent.shell.agent.deny",
+    tool: "shell.exec",
+    source: "openclaw|system",
+    decision: "deny",
+    reason: "Los agentes no reciben shell arbitraria; deben usar tools tipadas del broker.",
+    matches: (request) => request.tool === "shell.exec" && request.source !== "ui",
+  },
+  {
     ruleId: "agent.shell.destructive.confirm",
     tool: "shell.exec",
     source: "*",
@@ -35,8 +43,8 @@ export const POLICY_RULES: PolicyRule[] = [
     tool: "shell.exec",
     source: "*",
     decision: "allow",
-    reason: "Comando shell local permitido para operar AgenOS.",
-    matches: toolIs("shell.exec"),
+    reason: "Comando shell solicitado explicitamente por la UI autenticada de AgenOS.",
+    matches: (request) => request.tool === "shell.exec" && request.source === "ui" && request.explicitUserIntent === true,
   },
   {
     ruleId: "agent.memory.background.confirm",
@@ -100,6 +108,14 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: (request) => request.tool === "memory.write" && request.source === "ui" && request.explicitUserIntent === true,
   },
   {
+    ruleId: "agent.memory.delete.ui.allow",
+    tool: "memory.delete",
+    source: "ui",
+    decision: "allow",
+    reason: "Olvidar una memoria requiere una peticion explicita del usuario.",
+    matches: (request) => request.tool === "memory.delete" && request.source === "ui" && request.explicitUserIntent === true,
+  },
+  {
     ruleId: "agent.low-risk.allow",
     tool: "local.low-risk",
     source: "*",
@@ -107,24 +123,24 @@ export const POLICY_RULES: PolicyRule[] = [
     reason: "Herramienta local de bajo riesgo permitida.",
     matches: (request) => LOW_RISK_TOOLS.has(request.tool),
   },
-  {
-    ruleId: "agent.ui.superuser.allow",
-    tool: "*",
-    source: "ui",
-    decision: "allow",
-    reason: "Accion local explicita desde el frontend de AgenOS.",
-    matches: sourceIs("ui"),
-  },
 ];
 
 const LOW_RISK_TOOLS = new Set([
   "apps.list",
   "apps.open",
   "browser.open_url",
+  "files.open",
   "workspaces.focus",
   "memory.read",
   "contacts.lookup",
   "tasks.enqueue",
+  "tasks.read",
+  "setup.status",
+  "setup.run",
+  "auth.codex.start",
+  "telegram.configure",
+  "telegram.test",
+  "telegram.enable",
 ]);
 
 function isDestructiveShellInput(input: unknown): boolean {

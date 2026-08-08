@@ -4,15 +4,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 
+import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from "./broker-pi-client";
 import {
   PI_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
   type SpeechCapturePhase,
 } from "./ipc";
-import type { PiChatSource } from "../lib/pi-types";
 import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
 import { createNetworkManagerService } from "../../../network/node/network-manager";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
@@ -21,6 +21,7 @@ import { createSystemIpcServices } from "./system-ipc-services";
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
 const GPU_MODE = process.env.AGENOS_ELECTRON_GPU_MODE?.trim().toLowerCase() === "off" ? "off" : "on";
+const BROKER_BASE_URL = process.env.AGENOS_AGENT_API_BASE?.trim() || DEFAULT_BROKER_BASE_URL;
 
 type IpcEnvelope<T> =
   | { ok: true; value: T }
@@ -41,21 +42,8 @@ type CommandResult = {
 let mainWindow: BrowserWindow | null = null;
 const networkService = createNetworkManagerService();
 const systemServices = createSystemIpcServices();
-
-// El harness de Pi se carga bajo demanda: importarlo de forma estatica metia
-// todo su arbol en el bundle inicial de Electron y retrasaba el primer frame.
-type PiHarnessModule = typeof import("../../dev/pi-harness");
-type PiHarnessInstance = ReturnType<PiHarnessModule["createPiHarness"]>;
-let piHarnessPromise: Promise<PiHarnessInstance> | null = null;
-
-class IpcRequestError extends Error {
-  readonly status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+type PiBrokerClient = ReturnType<typeof createBrokerPiClient>;
+let piClient: PiBrokerClient | null = null;
 
 function configureCommandLine(): void {
   if (GPU_MODE === "off") {
@@ -202,38 +190,20 @@ function openExternalUrl(url: string): void {
     return;
   }
 
-  void import("../../../agent/browser-launcher")
-    .then(({ launchBrowserUrl }) => launchBrowserUrl(url))
+  void getPiClient().openBrowserUrl(url)
     .then((result) => {
       if (!result.ok) {
-        console.warn(`No se pudo confirmar Chromium: ${result.message}`);
-        return result.status === "failed" ? shell.openExternal(url) : undefined;
+        console.warn(`El broker no pudo abrir Chromium: ${result.message}`);
       }
-      return undefined;
     })
     .catch((error) => {
-      console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
-      return shell.openExternal(url);
+      console.warn(`El broker no pudo abrir la URL: ${normalizeErrorMessage(error)}`);
     });
 }
 
-function getPiHarness(): Promise<PiHarnessInstance> {
-  if (!piHarnessPromise) {
-    piHarnessPromise = import("../../dev/pi-harness")
-      .then(({ createPiHarness }) => createPiHarness(undefined, {
-        onAuth: (info, attempt) => {
-          if (attempt.method === "browser") {
-            openExternalUrl(info.url);
-          }
-        },
-      }))
-      .catch((error) => {
-        piHarnessPromise = null;
-        throw error;
-      });
-  }
-
-  return piHarnessPromise;
+function getPiClient(): PiBrokerClient {
+  piClient ??= createBrokerPiClient({ baseUrl: BROKER_BASE_URL });
+  return piClient;
 }
 
 function isHttpUrl(input: string): boolean {
@@ -489,9 +459,7 @@ function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
     .then((value) => ({ ok: true, value }) satisfies IpcEnvelope<T>)
     .catch((error) => ({
       ok: false,
-      status: error && typeof error === "object" && "status" in error && typeof error.status === "number"
-        ? error.status
-        : 500,
+      status: error instanceof BrokerApiError ? error.status : 500,
       message: normalizeErrorMessage(error),
     }) satisfies IpcEnvelope<T>);
 }
@@ -511,55 +479,59 @@ function registerIpcHandlers(): void {
     version: app.getVersion(),
   }));
 
-  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(async () => (await getPiHarness()).getStatus()));
+  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {
     const method = String(payload?.method ?? "device");
     if (method !== "device" && method !== "browser") {
-      throw new IpcRequestError(400, "El metodo de login debe ser device o browser.");
+      throw new BrokerApiError(400, "El metodo de login debe ser device o browser.");
     }
 
-    return (await getPiHarness()).startAuth(method);
+    const attempt = await getPiClient().startAuth(method);
+    if (method === "browser" && attempt.url) {
+      openExternalUrl(attempt.url);
+    }
+    return attempt;
   }));
-  ipcMain.handle(PI_IPC_CHANNELS.cancelAuth, (_event, payload: { attemptId?: unknown }) => wrapPi(async () => {
-    (await getPiHarness()).cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
+  ipcMain.handle(PI_IPC_CHANNELS.cancelAuth, (_event, payload: { attemptId?: unknown }) => wrapPi(() => {
+    return getPiClient().cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
   }));
-  ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(async () => (
-    (await getPiHarness()).getAuthAttempt(String(payload.attemptId ?? ""))
+  ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(() => (
+    getPiClient().getAuthAttempt(String(payload.attemptId ?? ""))
   )));
-  ipcMain.handle(PI_IPC_CHANNELS.submitManualCode, (_event, payload: { attemptId?: unknown; input?: unknown }) => wrapPi(async () => (
-    (await getPiHarness()).submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
+  ipcMain.handle(PI_IPC_CHANNELS.submitManualCode, (_event, payload: { attemptId?: unknown; input?: unknown }) => wrapPi(() => (
+    getPiClient().submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
   )));
-  ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(async () => {
-    (await getPiHarness()).logout();
+  ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(() => {
+    return getPiClient().logout();
   }));
   ipcMain.handle(PI_IPC_CHANNELS.sendMessage, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(async () => {
     const source = String(payload.source ?? "");
     if (source !== "text" && source !== "voice") {
-      throw new IpcRequestError(400, "El origen debe ser text o voice.");
+      throw new BrokerApiError(400, "El origen debe ser text o voice.");
     }
 
-    return (await getPiHarness()).chat({
+    return getPiClient().chat({
       message: String(payload.message ?? ""),
-      source: source as PiChatSource,
+      source,
     });
   }));
   ipcMain.handle(PI_IPC_CHANNELS.startTurn, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(async () => {
     const source = String(payload.source ?? "");
     if (source !== "text" && source !== "voice") {
-      throw new IpcRequestError(400, "El origen debe ser text o voice.");
+      throw new BrokerApiError(400, "El origen debe ser text o voice.");
     }
 
-    return (await getPiHarness()).startChat({
+    return getPiClient().startChat({
       message: String(payload.message ?? ""),
-      source: source as PiChatSource,
+      source,
     });
   }));
-  ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(async () => (
-    (await getPiHarness()).getTurn(String(payload.turnId ?? ""))
+  ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
+    getPiClient().getTurn(String(payload.turnId ?? ""))
   )));
-  ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(async () => (await getPiHarness()).getLatestTurn()));
-  ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(async () => (
-    (await getPiHarness()).listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
+  ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(() => getPiClient().getLatestTurn()));
+  ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(() => (
+    getPiClient().listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
   )));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
@@ -587,13 +559,7 @@ async function loadMainContent(): Promise<void> {
     return;
   }
 
-  const indexPath = resolveIndexPath();
-  if (!indexPath) {
-    showFallback("No se encontró el build local de AgenOS.", "Se esperaba dist/index.html junto al runtime de components/ui.");
-    return;
-  }
-
-  await mainWindow.loadFile(indexPath);
+  await mainWindow.loadURL(new URL("/", `${BROKER_BASE_URL}/`).toString());
 }
 
 function createMainWindow(): void {
@@ -629,7 +595,7 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file://") || url.startsWith("data:")) {
+    if (url.startsWith("data:") || new URL(url).origin === new URL(BROKER_BASE_URL).origin) {
       return;
     }
 

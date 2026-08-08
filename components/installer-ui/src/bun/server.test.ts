@@ -18,6 +18,7 @@ import { createMemoryStore } from "./agent/memory";
 import { createTaskQueue } from "./agent/tasks";
 import { createToolRunner } from "./agent/tool-runner";
 import { createAgenosWorkerDaemonAdapter } from "./agent/worker/agenos-worker-daemon";
+import { createLocalUiAuth, UI_SESSION_COOKIE } from "./agent/ui-auth";
 
 const validProfile: InstallerProfilePayload = {
   schemaVersion: 1,
@@ -106,6 +107,19 @@ function fakeSpeech() {
   };
 }
 
+const allowUiAuth = {
+  authorizeUiRequest: () => ({ ok: true as const }),
+  attachSession: (response: Response) => response,
+  authorizationHeader: () => "Bearer test-ui-token",
+};
+
+function createAuthenticatedHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
+  return createInstallerApiHandler({
+    uiAuth: allowUiAuth,
+    ...overrides,
+  });
+}
+
 function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
   const piHarness = {
     getStatus: () => ({
@@ -191,7 +205,7 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
     ],
   };
 
-  return createInstallerApiHandler({
+  return createAuthenticatedHandler({
     getPreflight: () => ({
       firmware: "UEFI",
       isLiveSession: true,
@@ -583,7 +597,7 @@ describe("createInstallerApiHandler", () => {
   });
 
   test("keeps health available when the default pi harness cannot initialize", async () => {
-    const handler = createInstallerApiHandler({
+    const handler = createAuthenticatedHandler({
       createPiHarness: () => {
         throw new Error("EACCES: permission denied, mkdir '/home/agenos/.agenos/ui-dev'");
       },
@@ -670,7 +684,7 @@ describe("createInstallerApiHandler", () => {
       read: () => ({ namespace: "contacts", content: "Pablo Lopez: pablo@example.com\n" }),
       append: () => ({ ok: true, message: "Memoria guardada." }),
     };
-    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+    const handler = createAuthenticatedHandler({ memoryStore: memory as never });
 
     const readResponse = await handler.fetch(new Request("http://localhost/api/agent/memory/contacts"));
     expect(readResponse.status).toBe(200);
@@ -686,9 +700,9 @@ describe("createInstallerApiHandler", () => {
     expect(writeResponse.status).toBe(202);
   });
 
-  test("background memory writes create confirmation instead of writing immediately", async () => {
+  test("public memory routes cannot spoof the OpenClaw source", async () => {
     const confirmationRoot = mkdtempSync(join(tmpdir(), "agenos-confirmations-"));
-    const handler = createInstallerApiHandler({
+    const handler = createAuthenticatedHandler({
       confirmations: createConfirmationStore({ rootDir: confirmationRoot }),
     });
 
@@ -701,38 +715,31 @@ describe("createInstallerApiHandler", () => {
       }),
     }));
 
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(403);
     expect(await jsonPayload(response)).toMatchObject({
       ok: false,
-      decision: "confirm",
+      decision: "deny",
     });
   });
 
-  test("confirmed shell executes once and resumes the persisted worker continuation", async () => {
+  test("confirmed memory executes once and resumes the persisted worker continuation with typed tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "agenos-confirm-resume-"));
     const confirmations = createConfirmationStore({
       rootDir: join(root, "confirmations"),
-      idFactory: () => "conf_shell_resume",
+      idFactory: () => "conf_memory_resume",
       now: () => new Date("2026-08-13T10:00:00.000Z"),
     });
     const memoryStore = createMemoryStore({ rootDir: join(root, "memory") });
-    const commands: string[] = [];
+    const openedApps: string[] = [];
     const toolRunner = createToolRunner({
       confirmations,
       memoryStore,
-      shellTool: async (input) => {
-        commands.push(input.command);
-        return {
-          ok: true,
-          command: input.command,
-          cwd: root,
-          exitCode: 0,
-          signal: null,
-          stdout: "ok\n",
-          stderr: "",
-          timedOut: false,
-          message: "Comando completado.",
-        };
+      handlers: {
+        "apps.open": async (input) => {
+          const app = String((input as { app?: unknown }).app ?? "");
+          openedApps.push(app);
+          return { ok: true, message: `Aplicacion ${app} abierta.` };
+        },
       },
     });
     const adapter = createAgenosWorkerDaemonAdapter({
@@ -754,8 +761,8 @@ describe("createInstallerApiHandler", () => {
         plan: async () => ({
           ok: true,
           steps: [
-            { tool: "shell.exec", input: { command: "rm -rf ~/Documentos" }, summary: "Borrar documentos" },
-            { tool: "shell.exec", input: { command: "id" }, summary: "Consultar usuario" },
+            { tool: "memory.write", input: { namespace: "facts", content: "Pablo Lopez es mi profesor" }, summary: "Recordar profesor" },
+            { tool: "apps.open", input: { app: "Fotos" }, summary: "Abrir Fotos" },
           ],
         }),
       },
@@ -775,22 +782,25 @@ describe("createInstallerApiHandler", () => {
       taskId: "task_confirm_resume",
     });
     await expect(taskQueue.status("task_confirm_resume")).resolves.toMatchObject({ status: "waiting_confirmation" });
-    expect(commands).toEqual([]);
+    expect(memoryStore.read("facts").content).toBe("");
+    expect(openedApps).toEqual([]);
 
-    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_shell_resume/confirm", { method: "POST" }));
+    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_memory_resume/confirm", { method: "POST" }));
     expect(confirmed.status).toBe(202);
     expect(await jsonPayload(confirmed)).toMatchObject({
       ok: true,
-      execution: { ok: true, shell: { command: "rm -rf ~/Documentos" } },
+      execution: { ok: true, message: "Memoria guardada." },
       task: { ok: true, taskId: "task_confirm_resume" },
     });
-    expect(commands).toEqual(["rm -rf ~/Documentos", "id"]);
+    expect(memoryStore.read("facts").content).toContain("Pablo Lopez es mi profesor");
+    expect(openedApps).toEqual(["Fotos"]);
     await expect(taskQueue.status("task_confirm_resume")).resolves.toMatchObject({ status: "succeeded", progress: 100 });
 
-    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_shell_resume/confirm", { method: "POST" }));
+    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_memory_resume/confirm", { method: "POST" }));
     expect(duplicate.status).toBe(409);
     expect(await jsonPayload(duplicate)).toMatchObject({ ok: false, message: expect.stringContaining("no se ha repetido") });
-    expect(commands).toEqual(["rm -rf ~/Documentos", "id"]);
+    expect(memoryStore.read("facts").content.match(/Pablo Lopez es mi profesor/g)).toHaveLength(1);
+    expect(openedApps).toEqual(["Fotos"]);
   });
 
   test("agent memory events route returns redacted audit entries", async () => {
@@ -809,7 +819,7 @@ describe("createInstallerApiHandler", () => {
         },
       ],
     };
-    const handler = createInstallerApiHandler({ memoryStore: memory as never });
+    const handler = createAuthenticatedHandler({ memoryStore: memory as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/memory/events"));
 
@@ -841,7 +851,7 @@ describe("createInstallerApiHandler", () => {
       itemIdFactory: () => "learn_1",
       now: () => new Date("2026-08-13T10:00:00.000Z"),
     });
-    const handler = createInstallerApiHandler({ confirmations, learnedMemory });
+    const handler = createAuthenticatedHandler({ confirmations, learnedMemory });
     const trace = {
       schemaVersion: 1,
       traceId: "trace_learning",
@@ -902,7 +912,7 @@ describe("createInstallerApiHandler", () => {
       enqueue: () => ({ ok: true, taskId: "task_test", message: "Tarea enviada al worker de fondo." }),
       health: () => ({ ok: true, mode: "local-simulated" }),
     };
-    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+    const handler = createAuthenticatedHandler({ taskQueue: taskQueue as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/tasks", {
       method: "POST",
@@ -951,7 +961,7 @@ describe("createInstallerApiHandler", () => {
       events: async () => [],
       list: async () => [],
     };
-    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+    const handler = createAuthenticatedHandler({ taskQueue: taskQueue as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/worker/health"));
 
@@ -971,7 +981,7 @@ describe("createInstallerApiHandler", () => {
       events: async () => [{ taskId: "task_test", timestamp: "2026-05-16T12:00:00.000Z", type: "progress", message: "Half done", progress: 50 }],
       list: async () => [],
     };
-    const handler = createInstallerApiHandler({ taskQueue: taskQueue as never });
+    const handler = createAuthenticatedHandler({ taskQueue: taskQueue as never });
 
     const status = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test"));
     const events = await handler.fetch(new Request("http://localhost/api/agent/tasks/task_test/events"));
@@ -992,7 +1002,7 @@ describe("createInstallerApiHandler", () => {
         return { ok: true, message: "Abriendo https://netflix.com/." };
       },
     };
-    const handler = createInstallerApiHandler({ browserTool: browserTool as never });
+    const handler = createAuthenticatedHandler({ browserTool: browserTool as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/browser/open-url", {
       method: "POST",
@@ -1011,7 +1021,7 @@ describe("createInstallerApiHandler", () => {
         return { ok: true, appId: "browser", message: "Abriendo Chrome." };
       },
     };
-    const handler = createInstallerApiHandler({ appTool: appTool as never });
+    const handler = createAuthenticatedHandler({ appTool: appTool as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/apps/open", {
       method: "POST",
@@ -1020,6 +1030,26 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(202);
     expect(opened).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
+  });
+
+  test("agent files route opens paths through the broker runner", async () => {
+    const opened: unknown[] = [];
+    const handler = createAuthenticatedHandler({
+      fileTool: {
+        openPath: async (input: unknown) => {
+          opened.push(input);
+          return { ok: true, path: "/home/agenos/Fotos/a.png", message: "Foto abierta." };
+        },
+      } as never,
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/files/open", {
+      method: "POST",
+      body: JSON.stringify({ path: "~/Fotos/a.png", workspace: 4, focus: true }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(opened).toEqual([{ path: "~/Fotos/a.png", workspace: 4, focus: true }]);
   });
 
   test("agent workspace routes list and focus known workspaces", async () => {
@@ -1098,7 +1128,7 @@ describe("createInstallerApiHandler", () => {
         message: "Comando completado.",
       };
     };
-    const handler = createInstallerApiHandler({ shellTool: shellTool as never });
+    const handler = createAuthenticatedHandler({ shellTool: shellTool as never });
 
     const response = await handler.fetch(new Request("http://localhost/api/agent/shell/exec", {
       method: "POST",
@@ -1108,6 +1138,108 @@ describe("createInstallerApiHandler", () => {
     expect(response.status).toBe(202);
     expect(await jsonPayload(response)).toMatchObject({ ok: true, stdout: "uid=1000\n" });
     expect(commands).toEqual(["id"]);
+  });
+
+  test("agent shell rejects unauthenticated and foreign-origin requests before execution", async () => {
+    const commands: string[] = [];
+    const uiAuth = createLocalUiAuth({
+      tokenPath: join(mkdtempSync(join(tmpdir(), "agenos-server-auth-")), "ui-token"),
+      tokenFactory: () => "server_ui_secret",
+    });
+    const handler = createInstallerApiHandler({
+      uiAuth,
+      shellTool: (async (input: { command: string }) => {
+        commands.push(input.command);
+        return { ok: true, message: "ok" };
+      }) as never,
+    });
+
+    const unauthenticated = await handler.fetch(new Request("http://127.0.0.1:4173/api/agent/shell/exec", {
+      method: "POST",
+      headers: { Origin: "http://127.0.0.1:4173", "Content-Type": "application/json" },
+      body: JSON.stringify({ command: "id" }),
+    }));
+    const foreignOrigin = await handler.fetch(new Request("http://127.0.0.1:4173/api/agent/shell/exec", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer server_ui_secret",
+        Origin: "https://attacker.example",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ command: "id" }),
+    }));
+    const authenticated = await handler.fetch(new Request("http://127.0.0.1:4173/api/agent/shell/exec", {
+      method: "POST",
+      headers: {
+        Cookie: `${UI_SESSION_COOKIE}=server_ui_secret`,
+        Origin: "http://127.0.0.1:4173",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ command: "id" }),
+    }));
+
+    expect(unauthenticated.status).toBe(401);
+    expect(foreignOrigin.status).toBe(403);
+    expect(foreignOrigin.headers.get("access-control-allow-origin")).toBeNull();
+    expect(authenticated.status).toBe(202);
+    expect(commands).toEqual(["id"]);
+  });
+
+  test("destructive UI shell executes once only after confirmation", async () => {
+    const commands: string[] = [];
+    const confirmations = createConfirmationStore({
+      rootDir: mkdtempSync(join(tmpdir(), "agenos-shell-confirm-")),
+      idFactory: () => "conf_destructive_shell",
+    });
+    const handler = createAuthenticatedHandler({
+      confirmations,
+      shellTool: (async (input: { command: string }) => {
+        commands.push(input.command);
+        return {
+          ok: true,
+          command: input.command,
+          cwd: "/tmp",
+          exitCode: 0,
+          signal: null,
+          stdout: "done\n",
+          stderr: "",
+          timedOut: false,
+          message: "Comando completado.",
+        };
+      }) as never,
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/shell/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "rm -rf ~/Documentos" }),
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await jsonPayload(response)).toMatchObject({
+      decision: "confirm",
+      confirmationId: "conf_destructive_shell",
+    });
+    expect(confirmations.get("conf_destructive_shell")).toMatchObject({
+      status: "pending",
+      tool: "shell.exec",
+    });
+    expect(commands).toEqual([]);
+
+    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_destructive_shell/confirm", {
+      method: "POST",
+    }));
+    expect(confirmed.status).toBe(202);
+    expect(await jsonPayload(confirmed)).toMatchObject({
+      ok: true,
+      execution: { ok: true, shell: { command: "rm -rf ~/Documentos" } },
+    });
+    expect(commands).toEqual(["rm -rf ~/Documentos"]);
+
+    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_destructive_shell/confirm", {
+      method: "POST",
+    }));
+    expect(duplicate.status).toBe(409);
+    expect(commands).toEqual(["rm -rf ~/Documentos"]);
   });
 
   test("agent admin endpoints expose status config and policy", async () => {
@@ -1143,7 +1275,7 @@ describe("createInstallerApiHandler", () => {
       restart: async () => ({ ok: false, decision: "confirm", confirmationId: "conf_restart" }),
       testConnection: async () => ({ ok: false, status: 503, readiness: "needs_setup", message: "Provider/auth is not configured." }),
     };
-    const handler = createInstallerApiHandler({ agentAdmin: agentAdmin as never });
+    const handler = createAuthenticatedHandler({ agentAdmin: agentAdmin as never });
 
     const status = await handler.fetch(new Request("http://localhost/api/agent/admin/status"));
     const config = await handler.fetch(new Request("http://localhost/api/agent/admin/config"));
@@ -1203,7 +1335,7 @@ describe("createInstallerApiHandler", () => {
         return { ok: true, phase: "ready", actions: [], telegram: { enabled: true } };
       },
     };
-    const handler = createInstallerApiHandler({ setup: setup as never });
+    const handler = createAuthenticatedHandler({ setup: setup as never });
 
     const status = await handler.fetch(new Request("http://localhost/api/agent/setup/status"));
     const rerun = await handler.fetch(new Request("http://localhost/api/agent/setup/run", { method: "POST" }));
@@ -1227,7 +1359,7 @@ describe("createInstallerApiHandler", () => {
   });
 
   test("serves a production support bundle for diagnostics", async () => {
-    const handler = createInstallerApiHandler({
+    const handler = createAuthenticatedHandler({
       supportBundle: async () => ({
         schemaVersion: 1,
         generatedAt: "2026-05-16T12:00:00.000Z",

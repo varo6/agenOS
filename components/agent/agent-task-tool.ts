@@ -296,7 +296,7 @@ export function createAgentTaskModelTool(
     promptSnippet: "agent_task: delega tareas largas o de background al backend OpenClaw (el mismo que atiende Telegram) y consulta su progreso.",
     promptGuidelines: [
       "Usa agent_task con action delegate para tareas largas, autonomas o de background que no necesiten la pantalla del usuario; escribe message como una instruccion completa y autocontenida.",
-      "Sigue resolviendo tu mismo en primer plano lo interactivo e inmediato: abrir apps o archivos, instalar paquetes, responder preguntas y comandos rapidos.",
+      "Sigue resolviendo tu mismo en primer plano lo interactivo e inmediato que cubran tus tools mediadas: abrir apps o archivos y responder preguntas.",
       "Si el usuario pide algo 'en background', 'mientras tanto', 'aunque me vaya' o menciona OpenClaw o Telegram, delega con agent_task.",
       "Tras delegar, informa al usuario del taskId y consulta el avance con action status cuando lo pida; no bloquees la conversacion esperando tareas largas.",
       "Si delegate falla o el worker esta degradado (action health), dilo claramente y ofrece hacer la tarea en primer plano si es viable.",

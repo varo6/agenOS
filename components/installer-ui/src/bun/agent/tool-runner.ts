@@ -24,6 +24,7 @@ export type ToolRunInput = {
   tool: string;
   input: unknown;
   confirmationId?: string;
+  explicitUserIntent?: boolean;
 };
 
 export type ToolRunResult = {
@@ -33,7 +34,13 @@ export type ToolRunResult = {
   message?: string;
   confirmationId?: string;
   shell?: ShellExecResult;
+  output?: unknown;
 };
+
+export type ToolEffectHandler = (
+  input: unknown,
+  context: { source: AgentSource; taskId?: string; correlationId: string },
+) => unknown | Promise<unknown>;
 
 export type ToolRunnerOptions = {
   confirmations?: ConfirmationStoreLike;
@@ -41,6 +48,7 @@ export type ToolRunnerOptions = {
   learnedMemory?: ReturnType<typeof createLearnedMemoryStore>;
   shellTool?: typeof runShellCommand;
   correlationIdFactory?: () => string;
+  handlers?: Record<string, ToolEffectHandler>;
 };
 
 const SHELL_DENIED_MESSAGE = "La ejecucion shell arbitraria no esta permitida en AgenOS.";
@@ -52,13 +60,14 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
     async run(input: ToolRunInput): Promise<ToolRunResult> {
       const correlationId = input.correlationId ?? correlationIdFactory();
       const includeCorrelationId = typeof input.correlationId === "string";
-      if (!SUPPORTED_TOOLS.has(input.tool)) {
+      if (!hasExecutor(input.tool)) {
         return unsupportedTool(input.tool, correlationId, includeCorrelationId);
       }
       const policy = decidePolicy({
         tool: input.tool,
         source: input.source,
         input: input.input,
+        explicitUserIntent: input.explicitUserIntent,
       });
 
       if (policy.decision === "deny") {
@@ -92,8 +101,21 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
       return executeAllowed(input, correlationId, includeCorrelationId);
     },
     async executeConfirmed(record: ConfirmationRecord): Promise<ToolRunResult> {
-      if (!SUPPORTED_TOOLS.has(record.tool)) {
+      if (!hasExecutor(record.tool)) {
         return unsupportedTool(record.tool, record.correlationId, true);
+      }
+      const currentPolicy = decidePolicy({
+        tool: record.tool,
+        source: record.source,
+        input: record.input,
+      });
+      if (currentPolicy.decision === "deny") {
+        return {
+          ok: false,
+          decision: "deny",
+          correlationId: record.correlationId,
+          message: currentPolicy.reason,
+        };
       }
       return executeAllowed({
         source: record.source,
@@ -122,12 +144,6 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
             message: response.message,
           };
         }
-        return {
-          ok: false,
-          decision: "deny",
-          ...(includeCorrelationId ? { correlationId } : {}),
-          message: "La escritura de memoria no contiene un namespace o registro aprendido valido; no se guardo nada.",
-        };
       }
 
       if (input.tool === "shell.exec" && input.input && typeof input.input === "object") {
@@ -146,6 +162,29 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         };
       }
 
+      const handler = options.handlers?.[input.tool];
+      if (handler) {
+        const output = await handler(input.input, {
+          source: input.source,
+          taskId: input.taskId,
+          correlationId,
+        });
+        const effectOk = !output || typeof output !== "object" || !("ok" in output)
+          ? true
+          : (output as { ok?: unknown }).ok !== false;
+        const effectMessage = output && typeof output === "object" && "message" in output
+          && typeof (output as { message?: unknown }).message === "string"
+          ? (output as { message: string }).message
+          : undefined;
+        return {
+          ok: effectOk,
+          decision: "allow",
+          ...(includeCorrelationId ? { correlationId } : {}),
+          message: effectMessage,
+          output,
+        };
+      }
+
       return {
         ok: false,
         decision: "deny",
@@ -153,9 +192,17 @@ export function createToolRunner(options: ToolRunnerOptions = {}) {
         message: `La herramienta ${input.tool} no tiene un ejecutor disponible; no se realizo ninguna accion.`,
       };
   }
-}
 
-const SUPPORTED_TOOLS = new Set(["memory.write", "shell.exec"]);
+  function hasExecutor(tool: string): boolean {
+    if (tool === "shell.exec") {
+      return true;
+    }
+    if (tool === "memory.write") {
+      return Boolean(options.memoryStore || options.learnedMemory || options.handlers?.[tool]);
+    }
+    return typeof options.handlers?.[tool] === "function";
+  }
+}
 
 function unsupportedTool(tool: string, correlationId: string, includeCorrelationId: boolean): ToolRunResult {
   return {

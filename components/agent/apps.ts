@@ -49,15 +49,6 @@ export type AppOpenInput = string | {
   focus?: unknown;
 };
 
-export type AppInstallResponse = {
-  ok: boolean;
-  packageName?: string;
-  message?: string;
-  opened?: AppOpenResponse;
-  stdout?: string;
-  stderr?: string;
-};
-
 export type AppListResponse = {
   ok: true;
   apps: Array<{
@@ -85,8 +76,6 @@ export type AppToolOptions = {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
   desktopDirs?: string[];
-  installTimeoutMs?: number;
-  skipAptUpdate?: boolean;
   windowTimeoutMs?: number;
   pollIntervalMs?: number;
   coldStartMs?: number;
@@ -128,8 +117,6 @@ const KNOWN_APPS: AppDefinition[] = [
     ],
   },
 ];
-
-const DEFAULT_INSTALL_TIMEOUT_MS = 20 * 60 * 1000;
 
 export function sanitizeDesktopExec(execLine: string): string[] {
   const protectedPercent = execLine.replace(/%%/g, "__PERCENT__");
@@ -335,51 +322,6 @@ function parseAppOpenInput(input: AppOpenInput): { app: string; workspace?: unkn
   };
 }
 
-function normalizePackageName(input: string): string {
-  const packageName = input.trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9+.-]*$/.test(packageName)) {
-    throw new Error("El paquete debe ser un nombre Debian simple, por ejemplo vlc o gimp.");
-  }
-
-  return packageName;
-}
-
-function commandsWithPrivileges(
-  command: string,
-  args: string[],
-  commandExists: (command: string) => boolean,
-): AppCommand[] {
-  if (typeof process.getuid === "function" && process.getuid() === 0) {
-    return [{ command, args }];
-  }
-
-  const commands: AppCommand[] = [];
-  if (commandExists("sudo")) {
-    commands.push({ command: "sudo", args: ["-n", command, ...args] });
-  }
-  if (commandExists("pkexec")) {
-    commands.push({ command: "pkexec", args: [command, ...args] });
-  }
-
-  return commands;
-}
-
-function shouldTryNextPrivilegeCommand(command: AppCommand, result: CommandRunResult): boolean {
-  if (command.command !== "sudo" || result.exitCode === 0) {
-    return false;
-  }
-
-  const output = `${result.stderr}\n${result.stdout}\n${result.error ?? ""}`.toLowerCase();
-  return output.includes("password")
-    || output.includes("tty")
-    || output.includes("sudoers")
-    || output.includes("authentication");
-}
-
-function conciseCommandFailure(result: CommandRunResult): string {
-  return (result.stderr || result.stdout || result.error || "El comando no devolvio detalles.").trim();
-}
-
 function normalizeWindowToken(input: string | undefined): string {
   return normalizeAppName(input ?? "").replace(/\.desktop$/i, "");
 }
@@ -396,34 +338,6 @@ function appWindowCandidates(app: AppDefinition): Set<string> {
     ...app.aliases,
     ...commandNames,
   ].map(normalizeWindowToken).filter(Boolean));
-}
-
-async function runPrivilegedCommand(
-  command: string,
-  args: string[],
-  commandExists: (command: string) => boolean,
-  runCommand: (command: string, args: string[], options?: CommandRunOptions) => Promise<CommandRunResult>,
-  options: CommandRunOptions,
-): Promise<{ result?: CommandRunResult; missingPrivileges?: true }> {
-  const commands = commandsWithPrivileges(command, args, commandExists);
-  if (commands.length === 0) {
-    return { missingPrivileges: true };
-  }
-
-  let lastResult: CommandRunResult | undefined;
-  for (const candidate of commands) {
-    const result = await runCommand(candidate.command, candidate.args ?? [], options);
-    if (result.exitCode === 0) {
-      return { result };
-    }
-
-    lastResult = result;
-    if (!shouldTryNextPrivilegeCommand(candidate, result)) {
-      return { result };
-    }
-  }
-
-  return { result: lastResult };
 }
 
 export function createAppTool(options: AppToolOptions = {}) {
@@ -576,97 +490,6 @@ export function createAppTool(options: AppToolOptions = {}) {
         launchInput.focus,
         launchOptions,
       );
-    },
-
-    async installApp(input: string, installOptions: { openAfterInstall?: boolean; openAs?: string } = {}): Promise<AppInstallResponse> {
-      let packageName = "";
-      try {
-        packageName = normalizePackageName(input);
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : "Nombre de paquete no valido.",
-        };
-      }
-
-      if (!commandExists("apt-get")) {
-        return {
-          ok: false,
-          packageName,
-          message: "No encontre apt-get para instalar paquetes en este sistema.",
-        };
-      }
-
-      const installEnv = {
-        ...env,
-        DEBIAN_FRONTEND: "noninteractive",
-      };
-      const timeoutMs = options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS;
-
-      if (!options.skipAptUpdate) {
-        const update = await runPrivilegedCommand(
-          "apt-get",
-          ["update"],
-          commandExists,
-          runCommand,
-          { env: installEnv, timeoutMs },
-        );
-        if (update.missingPrivileges || !update.result) {
-          return {
-            ok: false,
-            packageName,
-            message: "No hay permisos para instalar paquetes: falta sudo o pkexec.",
-          };
-        }
-
-        if (update.result.exitCode !== 0) {
-          return {
-            ok: false,
-            packageName,
-            stdout: update.result.stdout,
-            stderr: update.result.stderr,
-            message: `No se pudo actualizar el indice de paquetes: ${conciseCommandFailure(update.result)}`,
-          };
-        }
-      }
-
-      const install = await runPrivilegedCommand(
-        "apt-get",
-        ["install", "-y", "--", packageName],
-        commandExists,
-        runCommand,
-        { env: installEnv, timeoutMs },
-      );
-      if (install.missingPrivileges || !install.result) {
-        return {
-          ok: false,
-          packageName,
-          message: "No hay permisos para instalar paquetes: falta sudo o pkexec.",
-        };
-      }
-
-      if (install.result.exitCode !== 0) {
-        return {
-          ok: false,
-          packageName,
-          stdout: install.result.stdout,
-          stderr: install.result.stderr,
-          message: `No se pudo instalar ${packageName}: ${conciseCommandFailure(install.result)}`,
-        };
-      }
-
-      const openAfterInstall = installOptions.openAfterInstall ?? true;
-      const opened = openAfterInstall ? await this.openApp(installOptions.openAs ?? packageName) : undefined;
-      return {
-        ok: true,
-        packageName,
-        opened,
-        stdout: install.result.stdout,
-        stderr: install.result.stderr,
-        message: opened
-          ? `Instalado ${packageName}. ${opened.message ?? ""}`.trim()
-          : `Instalado ${packageName}.`,
-      };
     },
   };
 }

@@ -23,25 +23,25 @@ describe("agent policy", () => {
     });
   });
 
-  test("requires confirmation for outbound sends and allows ordinary local shell", () => {
+  test("requires confirmation for outbound sends and denies agent shell", () => {
     expect(decidePolicy({ tool: "outbound.send", source: "openclaw" })).toMatchObject({
       decision: "confirm",
       ruleId: "agent.outbound.background.confirm",
     });
     expect(decidePolicy({ tool: "shell.exec", source: "openclaw", input: { command: "systemctl status ssh" } })).toMatchObject({
-      decision: "allow",
-      ruleId: "agent.shell.local.allow",
+      decision: "deny",
+      ruleId: "agent.shell.agent.deny",
     });
   });
 
-  test("requires confirmation for destructive worker shell commands", () => {
+  test("denies destructive worker shell commands instead of creating an executable request", () => {
     expect(decidePolicy({ tool: "shell.exec", source: "openclaw", input: { command: "rm -rf ~/Documentos" } })).toMatchObject({
-      decision: "confirm",
-      ruleId: "agent.shell.destructive.confirm",
+      decision: "deny",
+      ruleId: "agent.shell.agent.deny",
     });
   });
 
-  test("requires confirmation for admin mutations from the frontend", () => {
+  test("requires confirmation for admin mutations even when they come from the UI", () => {
     expect(decidePolicy({ tool: "admin.config.write", source: "ui" })).toMatchObject({
       decision: "confirm",
       ruleId: "agent.admin.config.confirm",
@@ -56,17 +56,21 @@ describe("agent policy", () => {
     });
   });
 
-  test("allows shell from the frontend superuser", () => {
-    expect(decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true })).toMatchObject({
+  test("allows ordinary UI shell but still confirms destructive UI shell", () => {
+    expect(decidePolicy({ tool: "shell.exec", source: "ui", input: { command: "id" }, explicitUserIntent: true })).toMatchObject({
       decision: "allow",
       ruleId: "agent.shell.local.allow",
     });
-  });
-
-  test("requires confirmation for destructive shell from the frontend too", () => {
-    expect(decidePolicy({ tool: "shell.exec", source: "ui", input: { command: "rm -rf ~/Documentos" } })).toMatchObject({
+    expect(decidePolicy({ tool: "shell.exec", source: "ui", input: { command: "rm -rf ~/Documentos" }, explicitUserIntent: true })).toMatchObject({
       decision: "confirm",
       ruleId: "agent.shell.destructive.confirm",
+    });
+  });
+
+  test("denies unknown UI tools instead of treating the frontend as superuser", () => {
+    expect(decidePolicy({ tool: "packages.install", source: "ui", explicitUserIntent: true })).toMatchObject({
+      decision: "deny",
+      ruleId: "agent.default.deny",
     });
   });
 });
