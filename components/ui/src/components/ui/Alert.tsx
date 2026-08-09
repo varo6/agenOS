@@ -56,28 +56,29 @@ export function Alert({
       )}
       role={isUrgent ? "alert" : "status"}
     >
-      <Icon aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
+      <Icon aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-ink">{title}</p>
-        {children ? <div className="mt-1 text-sm leading-6 text-ink-muted">{children}</div> : null}
+        <p className="text-base font-semibold text-ink">{title}</p>
+        {children ? <div className="mt-1 text-sm text-ink-muted">{children}</div> : null}
         {actions ? <div className="mt-3 flex flex-wrap gap-2">{actions}</div> : null}
         {details ? (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs text-ink-faint hover:text-ink-muted">
+          <details className="mt-2">
+            <summary className="inline-flex min-h-11 cursor-pointer items-center text-xs text-ink-faint hover:text-ink">
               {detailsLabel}
             </summary>
-            <p className="mt-2 break-words font-mono text-xs leading-5 text-ink-faint">{details}</p>
+            <p className="mt-1 break-words font-mono text-xs text-ink-faint">{details}</p>
           </details>
         ) : null}
       </div>
       {onDismiss ? (
         <button
           aria-label={dismissLabel}
-          className="btn-ghost -mr-1 -mt-1 rounded-pill p-1.5 text-ink-faint"
+          /* 44x44 aunque el icono sea pequeño: el objetivo lo marca el botón. */
+          className="btn-ghost -mr-2 -mt-2 grid h-11 w-11 shrink-0 place-items-center rounded-pill p-0 text-ink-muted"
           onClick={onDismiss}
           type="button"
         >
-          <X aria-hidden="true" className="h-4 w-4" />
+          <X aria-hidden="true" className="h-5 w-5" />
         </button>
       ) : null}
     </div>

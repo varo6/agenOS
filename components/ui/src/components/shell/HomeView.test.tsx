@@ -129,21 +129,48 @@ function renderHome(overrides: Partial<HomeViewProps> = {}) {
   return props;
 }
 
+const deviceAttempt = {
+  attemptId: "att_1",
+  method: "device" as const,
+  url: "https://auth.openai.com/codex/device",
+  instructions: "Abre el enlace y escribe el código.",
+  expiresAt: "2026-04-21T00:10:00.000Z",
+  userCode: "ABCD-EFGH",
+};
+
 describe("HomeView", () => {
   test("con todo listo la pantalla no pide nada: solo hablar", () => {
     renderHome();
 
     expect(screen.getByText("Hola, soy Pi")).toBeInTheDocument();
-    expect(screen.queryByText("Siguiente paso")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Conecta tu cuenta/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Tu cuenta")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Escribe a Pi")).toBeEnabled();
   });
 
-  test("sin cuenta conectada ofrece el siguiente paso y el panel para hacerlo", () => {
+  // El principio de "un solo camino": mientras falte algo, esa es la pantalla
+  // entera. Ni micrófono apagado ni campo de texto apagado al lado.
+  test("sin cuenta conectada la pantalla es solo el paso que falta", () => {
     renderHome({ blockedReason: "disconnected", session: session({ authState: "disconnected" }) });
 
-    expect(screen.getByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Conectar" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Escribe a Pi")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hablar con Pi" })).not.toBeInTheDocument();
+    // El panel de cuenta duplicaría la acción, así que no baja todavía.
+    expect(screen.queryByRole("button", { name: "Conectar ChatGPT" })).not.toBeInTheDocument();
+  });
+
+  test("el panel de cuenta solo baja cuando hay un código que copiar", () => {
+    renderHome({
+      blockedReason: "disconnected",
+      session: session({ authState: "authorizing", pendingAttempt: deviceAttempt }),
+    });
+
+    expect(screen.getByText("Paso 1: abre este enlace")).toBeInTheDocument();
+    expect(screen.getByText("ABCD-EFGH")).toBeInTheDocument();
+    // En Inicio no se ofrecen las acciones de mantenimiento de la cuenta.
+    expect(screen.queryByRole("button", { name: "Cerrar sesión" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actualizar" })).not.toBeInTheDocument();
   });
 
   test("con el backend caído se explica el fallo sin mandar a otra pantalla", () => {
@@ -153,30 +180,33 @@ describe("HomeView", () => {
       session: session({ authState: "disconnected", ready: false }),
     });
 
-    expect(screen.getByText("Backend no disponible")).toBeInTheDocument();
+    expect(screen.getByText("Pi no está disponible")).toBeInTheDocument();
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
   });
 
   test("mientras se lee el backend no se acusa a nadie de estar mal configurado", () => {
     renderHome({ health: health({ status: null }) });
 
-    expect(screen.queryByText("Siguiente paso")).not.toBeInTheDocument();
+    expect(screen.getByText("Hola, soy Pi")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir Sistema" })).not.toBeInTheDocument();
   });
 
-  test("con la cuenta conectada pero el backend a medias no se repite el panel de cuenta", () => {
+  // Degradado no es fatal: antes se comía la pantalla principal entera.
+  test("con el servicio a medias se puede seguir hablando", () => {
     renderHome({ health: health({ status: { ...readyAdminStatus, readiness: "degraded" } }) });
 
-    expect(screen.getByText("Backend en modo degradado")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reconectar ChatGPT" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hablar con Pi" })).toBeInTheDocument();
+    expect(screen.queryByText("Pi funciona a medias")).not.toBeInTheDocument();
   });
 
   test("el campo de texto dice por qué está apagado", () => {
-    renderHome({ blockedReason: "offline", session: session({ authState: "disconnected" }) });
+    renderHome({ blockedReason: "busy", busy: true });
 
     const input = screen.getByLabelText("Escribe a Pi");
     expect(input).toBeDisabled();
 
     const hintId = input.getAttribute("aria-describedby") ?? "";
-    expect(document.getElementById(hintId)?.textContent).toContain("Sin internet");
+    expect(document.getElementById(hintId)?.textContent).toContain("espera");
   });
 
   test("con conversación el saludo deja sitio, pero la pantalla conserva su título", () => {
@@ -187,9 +217,27 @@ describe("HomeView", () => {
     expect(screen.getByText("Abriendo Chrome.")).toBeInTheDocument();
   });
 
+  // Un panel "Conversación" con un hueco dentro es ruido en la primera pantalla
+  // que ve la persona: solo aparece cuando ya hay algo que recordar.
+  test("sin conversación todavía no se pinta el historial", () => {
+    renderHome();
+
+    expect(screen.queryByRole("heading", { name: "Conversación" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Todavía no habéis hablado")).not.toBeInTheDocument();
+  });
+
   test("el contenido principal es un landmark al que se puede saltar", () => {
     renderHome();
 
     expect(screen.getByRole("main")).toHaveAttribute("id", "contenido");
+  });
+
+  test("la pantalla de paso pendiente también tiene título y landmark", () => {
+    renderHome({ blockedReason: "disconnected", session: session({ authState: "disconnected" }) });
+
+    expect(screen.getByRole("main")).toHaveAttribute("id", "contenido");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Falta un paso para hablar con Pi",
+    );
   });
 });

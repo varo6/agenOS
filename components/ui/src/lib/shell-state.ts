@@ -76,16 +76,16 @@ export function describeComposerBlock(
   serviceReady: boolean,
 ): string | null {
   if (!serviceReady) {
-    return "AgenOS no responde ahora mismo. Abre Sistema para revisarlo.";
+    return "Pi no responde ahora mismo.";
   }
 
   switch (reason) {
     case "offline":
       return "Sin internet no puedo enviarle nada a Pi.";
     case "disconnected":
-      return "Conecta tu cuenta de ChatGPT para escribirle a Pi.";
+      return "Conecta tu cuenta de ChatGPT.";
     case "busy":
-      return "Pi está respondiendo; espera a que termine.";
+      return "Pi está respondiendo, espera un momento.";
     default:
       return null;
   }
@@ -108,6 +108,24 @@ export type ReadinessSignals = {
  * nadie de estar mal configurado, para no enseñar un aviso que desaparece solo
  * un segundo después.
  */
+/**
+ * Si merece la pena mirar Sistema. Sirve para marcar la pestaña cuando algo va
+ * mal sin llegar a impedir la conversación: sin esta señal, un fallo que no
+ * bloquea sería invisible hasta que alguien entrase por casualidad.
+ */
+export function needsSystemAttention(signals: ReadinessSignals): boolean {
+  if (!signals.harnessAvailable || signals.backendError) {
+    return true;
+  }
+
+  // Sin lectura todavía no se acusa a nadie, igual que en la readiness.
+  if (!signals.adminStatus) {
+    return false;
+  }
+
+  return signals.adminStatus.readiness !== "ready" || signals.authState !== "connected";
+}
+
 export function resolveShellReadiness(signals: ReadinessSignals): ShellReadiness {
   if (!signals.harnessAvailable || signals.backendError) {
     return "blocked";
@@ -117,7 +135,12 @@ export function resolveShellReadiness(signals: ReadinessSignals): ShellReadiness
     return "checking";
   }
 
-  if (signals.adminStatus.readiness !== "ready" || signals.authState !== "connected") {
+  /*
+   * "degraded" no bloquea. El servicio en modo degradado sigue atendiendo
+   * turnos, así que quedarse la pantalla entera por eso sería castigar a la
+   * persona por un problema que no le impide hablar. Se avisa en Sistema.
+   */
+  if (signals.adminStatus.readiness === "needs_setup" || signals.authState !== "connected") {
     return "blocked";
   }
 

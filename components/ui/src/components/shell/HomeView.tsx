@@ -27,10 +27,11 @@ export type HomeViewProps = {
 /**
  * Pantalla principal: hablar con Pi.
  *
- * El orden es el del uso real y no el de la arquitectura: primero el
- * micrófono, después la alternativa escrita, después lo que haya que arreglar
- * para poder usarlo y por último el historial. Lo técnico que no bloquea vive
- * en Sistema.
+ * Tiene dos caras y nunca las dos a la vez. Si falta algo para poder hablar,
+ * la pantalla es solo eso que falta: un titular, una frase y el botón que lo
+ * arregla. Si no falta nada, la pantalla es el micrófono, y el historial solo
+ * aparece cuando ya hay algo que recordar. Lo técnico no vive aquí en ninguno
+ * de los dos casos.
  */
 export function HomeView({
   voice,
@@ -48,29 +49,67 @@ export function HomeView({
     authState: session.authState,
   });
 
-  const isBlocked = readiness === "blocked";
+  if (readiness === "blocked") {
+    return (
+      <main
+        className="relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-xl flex-col justify-center gap-5 px-4 pb-16 pt-28 sm:px-6"
+        id="contenido"
+      >
+        <h1 className="sr-only">Falta un paso para hablar con Pi</h1>
+
+        <AgentOnboardingPanel
+          adminStatus={health.status}
+          authState={session.authState}
+          backendError={health.error}
+          harnessAvailable={session.ready}
+          onConnectCodex={actions.connect}
+          onOpenSystem={actions.openSystem}
+          onRefresh={actions.refresh}
+        />
+
+        {/*
+         * El panel de cuenta solo baja aquí cuando hay un código que copiar:
+         * en cualquier otro momento repetiría el botón de arriba y obligaría a
+         * elegir entre dos caminos que llevan al mismo sitio.
+         */}
+        {session.pendingAttempt ? (
+          <ConnectionPanel
+            authState={session.authState}
+            busy={busy}
+            compact
+            manualCode={session.manualCode}
+            modelId={session.modelId}
+            onCancelAuth={session.cancelAuth}
+            onConnect={actions.connect}
+            onLogout={actions.logout}
+            onManualCodeChange={session.setManualCode}
+            onRefresh={actions.refresh}
+            onSubmitManualCode={session.submitManualCode}
+            pendingAttempt={session.pendingAttempt}
+            providerName={session.providerName}
+            ready={session.ready}
+          />
+        ) : null}
+      </main>
+    );
+  }
+
   const isFirstUse = conversation.turns.length === 0;
   const composerDisabled = !session.ready || blockedReason !== null;
 
   return (
     <main
       className={cx(
-        "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col items-center gap-10 px-4 pb-16 pt-24 sm:px-6 sm:pt-28",
-        // Sin conversación ni tareas pendientes, el orbe se queda en el centro.
-        isFirstUse && !isBlocked && "justify-center",
+        "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col items-center gap-10 px-4 pb-16 pt-28",
+        // Sin conversación, el orbe se queda en el centro de la pantalla.
+        isFirstUse && "justify-center",
       )}
       id="contenido"
     >
       {isFirstUse ? (
-        <div className="text-center">
-          <h1 className="font-display text-4xl font-medium tracking-tight text-ink sm:text-5xl">
-            Hola, soy Pi
-          </h1>
-          <p className="mx-auto mt-3 max-w-md text-base leading-7 text-ink-muted">
-            Dime qué necesitas y lo hago en este equipo: abrir aplicaciones, buscar archivos o
-            cambiar de escritorio.
-          </p>
-        </div>
+        <h1 className="font-display text-4xl font-medium tracking-tight text-ink sm:text-5xl">
+          Hola, soy Pi
+        </h1>
       ) : (
         <h1 className="sr-only">Conversación con Pi</h1>
       )}
@@ -91,43 +130,8 @@ export function HomeView({
         value={conversation.draft}
       />
 
-      {/*
-       * Lo que impide usar a Pi se resuelve aquí mismo: mandar a la persona a
-       * otra sección para poder empezar sería pedirle que adivine.
-       */}
-      {isBlocked ? (
-        <div className="grid w-full gap-4">
-          <AgentOnboardingPanel
-            adminStatus={health.status}
-            authState={session.authState}
-            backendError={health.error}
-            harnessAvailable={session.ready}
-            onConnectCodex={actions.connect}
-            onOpenSystem={actions.openSystem}
-            onRefresh={actions.refresh}
-          />
-
-          {session.authState !== "connected" ? (
-            <ConnectionPanel
-              authState={session.authState}
-              busy={busy}
-              manualCode={session.manualCode}
-              modelId={session.modelId}
-              onCancelAuth={session.cancelAuth}
-              onConnect={actions.connect}
-              onLogout={actions.logout}
-              onManualCodeChange={session.setManualCode}
-              onRefresh={actions.refresh}
-              onSubmitManualCode={session.submitManualCode}
-              pendingAttempt={session.pendingAttempt}
-              providerName={session.providerName}
-              ready={session.ready}
-            />
-          ) : null}
-        </div>
-      ) : null}
-
-      <ConversationPanel turns={conversation.turns} />
+      {/* El historial aparece cuando hay historial: un panel vacío es ruido. */}
+      {isFirstUse ? null : <ConversationPanel turns={conversation.turns} />}
     </main>
   );
 }

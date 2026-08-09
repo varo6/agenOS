@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   describeComposerBlock,
   isAgentBusy,
+  needsSystemAttention,
   resolveAgentState,
   resolveBlockedReason,
   resolveShellReadiness,
@@ -112,12 +113,44 @@ describe("resolveShellReadiness", () => {
     expect(resolveShellReadiness({ ...ready, adminStatus: { readiness: "needs_setup" } })).toBe(
       "blocked",
     );
+  });
+
+  // Degradado no es fatal: el servicio sigue atendiendo turnos, así que quitar
+  // la pantalla de hablar por eso castigaría a la persona sin motivo.
+  test("un servicio degradado no impide hablar con Pi", () => {
     expect(resolveShellReadiness({ ...ready, adminStatus: { readiness: "degraded" } })).toBe(
-      "blocked",
+      "ready",
     );
   });
 
   test("falta conectar la cuenta aunque el backend esté listo", () => {
     expect(resolveShellReadiness({ ...ready, authState: "disconnected" })).toBe("blocked");
+  });
+});
+
+describe("needsSystemAttention", () => {
+  const ready = {
+    harnessAvailable: true,
+    backendError: null,
+    adminStatus: { readiness: "ready" as const },
+    authState: "connected" as const,
+  };
+
+  test("con todo en orden la pestaña de Sistema no avisa de nada", () => {
+    expect(needsSystemAttention(ready)).toBe(false);
+  });
+
+  test("mientras no hay lectura tampoco se avisa: sería una alarma falsa", () => {
+    expect(needsSystemAttention({ ...ready, adminStatus: null })).toBe(false);
+  });
+
+  // Es el caso que justifica la señal: no bloquea, pero nadie entraría a verlo.
+  test("un servicio degradado se señala aunque deje hablar", () => {
+    expect(needsSystemAttention({ ...ready, adminStatus: { readiness: "degraded" } })).toBe(true);
+  });
+
+  test("el servicio caído y la cuenta sin conectar también se señalan", () => {
+    expect(needsSystemAttention({ ...ready, harnessAvailable: false, adminStatus: null })).toBe(true);
+    expect(needsSystemAttention({ ...ready, authState: "disconnected" })).toBe(true);
   });
 });

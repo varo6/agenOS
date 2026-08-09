@@ -71,8 +71,13 @@ function VoiceConsoleComponent({
          */
         aria-disabled={isInteractive ? undefined : "true"}
         aria-label={buttonLabel}
+        /*
+         * El objetivo más grande de todo el sistema, y con diferencia: es el
+         * gesto principal de un SO por voz y tiene que poder pulsarse sin
+         * puntería, incluso con la mano temblorosa.
+         */
         className={cx(
-          "relative grid h-32 w-32 place-items-center rounded-pill border-2 bg-surface transition-colors duration-300 sm:h-40 sm:w-40",
+          "relative grid h-40 w-40 place-items-center rounded-pill border-2 bg-surface transition-colors duration-300 sm:h-52 sm:w-52",
           skin.ring,
           isInteractive ? "hover:bg-surface-strong" : "cursor-not-allowed opacity-60",
         )}
@@ -106,7 +111,7 @@ function VoiceConsoleComponent({
         <Icon
           aria-hidden="true"
           className={cx(
-            "relative h-9 w-9 transition-colors sm:h-11 sm:w-11",
+            "relative h-12 w-12 transition-colors sm:h-16 sm:w-16",
             skin.icon,
             isSpinning && "animate-spin",
           )}
@@ -114,11 +119,13 @@ function VoiceConsoleComponent({
         />
       </button>
 
+      {/* Estas dos líneas son la etiqueta visible del orbe: dicen en qué fase
+          está y qué se espera de la persona, y nunca desaparecen. */}
       <div className="max-w-md text-center">
-        <p className="font-display text-xl font-medium tracking-tight text-ink sm:text-2xl">
+        <p className="font-display text-2xl font-medium tracking-tight text-ink sm:text-3xl">
           {status.title}
         </p>
-        <p className="mt-2 text-sm leading-6 text-ink-muted">{status.hint}</p>
+        <p className="mt-2 text-base text-ink-muted">{status.hint}</p>
       </div>
 
       {/*

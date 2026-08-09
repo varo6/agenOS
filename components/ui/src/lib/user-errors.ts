@@ -34,46 +34,50 @@ export type UserError = {
   details: string | null;
 };
 
+/*
+ * Un titular y una sola instrucción. El botón que arregla cada fallo va al
+ * lado, así que la ayuda no tiene que explicar también cómo llegar hasta él.
+ */
 const COPY: Record<UserErrorKind, Pick<UserError, "title" | "hint" | "tone" | "action">> = {
   offline: {
-    title: "Sin conexión a internet",
-    hint: "Conecta AgenOS a una red wifi para que Pi pueda responderte.",
+    title: "Sin internet",
+    hint: "Conéctate a una red wifi.",
     tone: "warning",
     action: "openNetwork",
   },
   unreachable: {
     title: "AgenOS no responde ahora mismo",
-    hint: "El servicio interno se está reiniciando o se ha caído. Espera unos segundos y vuelve a intentarlo.",
+    hint: "Espera unos segundos y vuelve a intentarlo.",
     tone: "danger",
     action: "retry",
   },
   timeout: {
     title: "Pi ha tardado demasiado en contestar",
-    hint: "No ha llegado la respuesta a tiempo. Puedes volver a pedírselo.",
+    hint: "Vuelve a pedírselo.",
     tone: "warning",
     action: "retry",
   },
   unauthorized: {
-    title: "Tu cuenta ha dejado de estar conectada",
-    hint: "Vuelve a conectar ChatGPT para seguir hablando con Pi.",
+    title: "Tu cuenta se ha desconectado",
+    hint: "Vuelve a conectar ChatGPT.",
     tone: "warning",
     action: "reconnect",
   },
   lostTurn: {
-    title: "Se ha perdido la respuesta en curso",
-    hint: "Vuelve a decirle a Pi lo que necesitas.",
+    title: "Se ha perdido la respuesta",
+    hint: "Vuelve a pedírselo.",
     tone: "warning",
     action: "retry",
   },
   login: {
-    title: "No se pudo completar el inicio de sesión",
-    hint: "Inténtalo otra vez. Si el navegador no vuelve solo, pega el código a mano.",
+    title: "No se pudo conectar tu cuenta",
+    hint: "Inténtalo otra vez.",
     tone: "danger",
     action: "reconnect",
   },
   unknown: {
     title: "Algo no ha salido bien",
-    hint: "Vuelve a intentarlo. Si se repite, abre Sistema y copia el diagnóstico.",
+    hint: "Vuelve a intentarlo.",
     tone: "danger",
     action: "openSystem",
   },
@@ -120,7 +124,7 @@ export function classifyError(error: unknown, status?: number): UserErrorKind {
 
   const message = normalize(describeClientError(error));
 
-  if (/sin conexion|conecta agenos a internet|no hay internet|captive/.test(message)) {
+  if (/sin conexion|sin internet|conecta agenos a internet|no hay internet|captive/.test(message)) {
     return "offline";
   }
   if (/tiempo limite|timed out|timeout|abort/.test(message)) {

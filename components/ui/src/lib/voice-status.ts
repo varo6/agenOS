@@ -61,20 +61,25 @@ export type VoiceStatus = {
   canListen: boolean;
 };
 
+/*
+ * Una línea por motivo. Antes cada bloqueo explicaba la causa y el remedio en
+ * frases largas; quien tiene el micrófono apagado solo necesita saber qué
+ * falta, y el botón que lo arregla ya está en pantalla.
+ */
 const BLOCKED_COPY: Record<VoiceBlockedReason, { title: string; hint: string; tone: Tone }> = {
   offline: {
-    title: "Sin conexión a internet",
-    hint: "Conecta AgenOS a una red wifi y podrás hablar con Pi.",
+    title: "Sin internet",
+    hint: "Conéctate a una red wifi.",
     tone: "warning",
   },
   disconnected: {
     title: "Falta conectar tu cuenta",
-    hint: "Conecta ChatGPT para activar el micrófono.",
+    hint: "Conecta ChatGPT para hablar.",
     tone: "warning",
   },
   busy: {
-    title: "Pi sigue trabajando",
-    hint: "Espera a que termine para hablarle otra vez.",
+    title: "Pi está trabajando",
+    hint: "Espera un momento.",
     tone: "accent",
   },
 };
@@ -108,66 +113,51 @@ export function resolveVoiceStatus(input: VoiceStatusInput): VoiceStatus {
   if (capture === "unsupported") {
     return build(
       "unavailable",
-      "Micrófono no disponible",
-      captureIssue ?? "Puedes escribirle a Pi mientras tanto.",
+      "El micrófono no funciona",
+      captureIssue ?? "Escríbele a Pi aquí abajo.",
       "neutral",
     );
   }
 
   if (capture === "listening") {
-    return build("listening", "Te escucho", "Habla con normalidad; pararé cuando termines.", "info", {
+    return build("listening", "Te escucho", "Habla con calma.", "info", {
       busy: true,
-      announcement: "Te escucho. Habla con normalidad.",
     });
   }
 
   if (capture === "transcribing") {
-    return build(
-      "transcribing",
-      "Entendiendo lo que has dicho",
-      "Un momento, estoy pasando tu voz a texto.",
-      "info",
-      { busy: true, announcement: "Entendiendo lo que has dicho." },
-    );
+    return build("transcribing", "Estoy entendiéndote", "Un momento.", "info", { busy: true });
   }
 
   if (capture === "error") {
-    return build(
-      "error",
-      "No te he entendido",
-      captureIssue ?? "Vuelve a intentarlo o escríbelo abajo.",
-      "danger",
-      { canListen: true },
-    );
+    return build("error", "No te he entendido", captureIssue ?? "Inténtalo otra vez.", "danger", {
+      canListen: true,
+    });
   }
 
   if (turn === "working") {
     const activity = currentTool ? describeTool(currentTool) : "trabajando en tu petición";
-    return build("working", `Pi está ${activity}`, "Puede tardar unos segundos.", "accent", {
+    return build("working", `Pi está ${activity}`, "Un momento.", "accent", {
       busy: true,
       announcement: `Pi está ${activity}.`,
     });
   }
 
   if (turn === "thinking") {
-    return build("thinking", "Pi está pensando", "Preparando la respuesta.", "accent", {
+    return build("thinking", "Pi está pensando", "Un momento.", "accent", {
       busy: true,
       announcement: "Pi está pensando.",
     });
   }
 
   if (turn === "error") {
-    return build(
-      "error",
-      "Pi no ha podido terminar",
-      turnIssue ?? "Vuelve a pedírselo o revisa el estado del sistema.",
-      "danger",
-      { canListen: !blockedReason },
-    );
+    return build("error", "Pi no ha podido terminar", turnIssue ?? "Vuelve a pedírselo.", "danger", {
+      canListen: !blockedReason,
+    });
   }
 
   if (turn === "done") {
-    return build("done", "Listo", "Ya puedes volver a hablarle.", "positive", {
+    return build("done", "Listo", "Pulsa para hablar otra vez.", "positive", {
       canListen: !blockedReason,
       announcement: "Pi ha terminado.",
     });
@@ -178,7 +168,7 @@ export function resolveVoiceStatus(input: VoiceStatusInput): VoiceStatus {
     return build("blocked", copy.title, copy.hint, copy.tone);
   }
 
-  return build("idle", "Pulsa para hablar", "También puedes escribirle en el campo de abajo.", "neutral", {
+  return build("idle", "Pulsa para hablar", "O escríbele aquí abajo.", "neutral", {
     canListen: true,
   });
 }
@@ -192,7 +182,7 @@ export function voiceButtonLabel(status: VoiceStatus): string {
     case "listening":
       return "Escuchando, pulsa para cancelar";
     case "transcribing":
-      return "Entendiendo lo que has dicho";
+      return "Estoy entendiéndote";
     case "thinking":
     case "working":
       return "Pi está trabajando";

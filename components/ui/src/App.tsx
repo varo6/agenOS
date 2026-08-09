@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 
-import { AgentDiagnosticsButton } from "./components/AgentDiagnosticsButton";
 import { VideoBackground } from "./components/VideoBackground";
 import {
   BootScreen,
@@ -18,7 +17,12 @@ import {
   piClient,
   workspaceSubscription,
 } from "./lib/clients";
-import { isAgentBusy, resolveAgentState, resolveBlockedReason } from "./lib/shell-state";
+import {
+  isAgentBusy,
+  needsSystemAttention,
+  resolveAgentState,
+  resolveBlockedReason,
+} from "./lib/shell-state";
 import { useAgentHealth } from "./hooks/useAgentHealth";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
@@ -28,12 +32,6 @@ import { useShellBoot } from "./hooks/useShellBoot";
 import { useSystemAlert } from "./hooks/useSystemAlert";
 import { useVoice } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
-
-/*
- * El botón de diagnóstico no recibe props: se crea una sola vez para que la
- * barra de sistema siga siendo memoizable.
- */
-const diagnosticsAction = <AgentDiagnosticsButton />;
 
 /**
  * Shell de AgenOS.
@@ -119,22 +117,21 @@ export default function App() {
       <VideoBackground />
       {/* Primer tabulador de la pantalla: saltarse la barra fija. */}
       <a
-        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:rounded-control focus:bg-surface-strong focus:px-4 focus:py-2 focus:text-sm"
+        className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:inline-flex focus:min-h-12 focus:items-center focus:rounded-control focus:bg-surface-strong focus:px-5 focus:text-base"
         href="#contenido"
       >
         Saltar al contenido
       </a>
 
       <TopBar
-        actions={diagnosticsAction}
-        activeWorkspace={workspaces.activeWorkspace}
-        authState={session.authState}
-        modelId={session.modelId}
+        needsAttention={needsSystemAttention({
+          harnessAvailable: session.ready,
+          backendError: health.error,
+          adminStatus: health.status,
+          authState: session.authState,
+        })}
         onChangeSection={setSection}
-        onFocusWorkspace={actions.focusWorkspace}
         section={section}
-        workspaces={workspaces.workspaces}
-        workspacesLive={workspaces.live}
       />
 
       {alert ? (
@@ -161,10 +158,13 @@ export default function App() {
       ) : section === "system" ? (
         <SystemView
           actions={actions}
+          activeWorkspace={workspaces.activeWorkspace}
           adminClient={agentAdminClient}
           busy={busy}
           health={health}
           session={session}
+          workspaces={workspaces.workspaces}
+          workspacesLive={workspaces.live}
         />
       ) : (
         <HomeView

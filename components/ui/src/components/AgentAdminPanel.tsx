@@ -128,7 +128,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
     <section className="panel grid w-full gap-5 p-5 text-left sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-ink-faint">
+          <p className="eyebrow text-ink-faint">
             Agent Backend
           </p>
           <h2 className="mt-2 text-2xl font-medium text-ink">{status.worker.mode}</h2>
@@ -169,19 +169,19 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
 
       <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Cola</p>
+          <p className="eyebrow text-ink-faint">Cola</p>
           <p className="mt-2 text-xl text-ink">{status.worker.queueDepth}</p>
           <p className="mt-1 text-xs text-ink-faint">heartbeat {formatHeartbeat(status.worker.lastHeartbeatAt, now)}</p>
         </div>
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Provider</p>
+          <p className="eyebrow text-ink-faint">Provider</p>
           <p className="mt-2 text-sm text-ink">{status.config.provider} / {status.config.model}</p>
           <p className="mt-1 text-xs text-ink-faint">
             auth {status.config.apiAuth.type === "env" ? `${status.config.apiAuth.envVar}: ${status.config.apiAuth.configured ? "configurada" : "pendiente"}` : "none"}
           </p>
         </div>
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Canales</p>
+          <p className="eyebrow text-ink-faint">Canales</p>
           <p className="mt-2 text-sm text-ink">
             email {status.config.channels.email ? "on" : "off"} / telegram {status.config.channels.telegram ? "on" : "off"} / whatsapp {status.config.channels.whatsapp ? "on" : "off"}
           </p>
@@ -191,7 +191,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
 
       <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
         <div className="rounded-control border border-line bg-sunken p-4">
-          <label className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint" htmlFor="agent-state-dir">
+          <label className="eyebrow text-ink-faint" htmlFor="agent-state-dir">
             State dir
           </label>
           <input aria-label="State dir" className="field-input mt-2" id="agent-state-dir" readOnly value={status.config.stateDir} />
@@ -208,7 +208,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
         </div>
 
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Tarea</p>
+          <p className="eyebrow text-ink-faint">Tarea</p>
           <input aria-label="Task id" className="field-input mt-2" onChange={(event) => setSelectedTaskId(event.target.value)} placeholder="task id" value={selectedTaskId} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary inline-flex items-center gap-2 px-3 py-2 text-sm" disabled={!selectedTaskId} onClick={() => void runAction(() => client.retryTask(selectedTaskId), "Retry solicitado.")} type="button">
@@ -226,7 +226,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
       <div className="rounded-control border border-line bg-sunken p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Shell local</p>
+            <p className="eyebrow text-ink-faint">Shell local</p>
             <p className="mt-1 text-xs text-ink-faint">bash access desde el frontend</p>
           </div>
           <button
@@ -264,7 +264,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Policy rules</p>
+          <p className="eyebrow text-ink-faint">Policy rules</p>
           <div className="mt-3 grid gap-2">
             {policyRules.map((rule) => (
               <div className="rounded-control bg-surface p-3" key={rule.ruleId}>
@@ -275,7 +275,7 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
           </div>
         </div>
         <div className="rounded-control border border-line bg-sunken p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">Confirmaciones</p>
+          <p className="eyebrow text-ink-faint">Confirmaciones</p>
           <div className="mt-3 grid gap-2">
             {pendingConfirmations.length === 0 ? <p className="text-sm text-ink-faint">Sin confirmaciones pendientes.</p> : null}
             {pendingConfirmations.map((confirmation) => (

@@ -2,23 +2,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { TopBar } from "./TopBar";
-import type { AgentWorkspace } from "../../lib/system-types";
-
-const workspaces: AgentWorkspace[] = [
-  { number: 1, name: "1:home", label: "Inicio" },
-  { number: 2, name: "2:app", label: "Apps" },
-];
 
 function renderTopBar(overrides: Partial<React.ComponentProps<typeof TopBar>> = {}) {
   const props = {
-    activeWorkspace: 1 as const,
-    authState: "disconnected" as const,
-    modelId: "gpt-5.4-mini",
     onChangeSection: vi.fn(),
-    onFocusWorkspace: vi.fn(),
     section: "home" as const,
-    workspaces,
-    workspacesLive: false,
     ...overrides,
   };
 
@@ -42,25 +30,25 @@ describe("TopBar", () => {
     expect(onChangeSection).toHaveBeenCalledWith("system");
   });
 
-  test("dice en palabras el estado de la cuenta y oculta el modelo si no está conectada", () => {
-    renderTopBar({ authState: "disconnected" });
+  // Antes la barra llevaba escritorios, modelo y estado de cuenta encima de la
+  // pantalla de hablar. Ahora es solo navegación: lo demás vive en Sistema.
+  test("no carga estado del equipo: solo los dos destinos", () => {
+    renderTopBar();
 
-    expect(screen.getByText("Sin conectar")).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.queryByText("gpt-5.4-mini")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Escritorios")).not.toBeInTheDocument();
   });
 
-  test("muestra el modelo en uso cuando la cuenta está conectada", () => {
-    renderTopBar({ authState: "connected" });
+  test("cuando algo necesita atención lo dice con palabras, no solo con un punto", () => {
+    renderTopBar({ needsAttention: true });
 
-    expect(screen.getByText("Conectado")).toBeInTheDocument();
-    expect(screen.getByText("gpt-5.4-mini")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sistema, necesita atención" })).toBeInTheDocument();
   });
 
-  test("delega el cambio de escritorio en el conmutador", () => {
-    const { onFocusWorkspace } = renderTopBar();
+  test("sin nada que revisar la pestaña no avisa de nada", () => {
+    renderTopBar();
 
-    fireEvent.click(screen.getByRole("button", { name: "Escritorio 2: Apps" }));
-
-    expect(onFocusWorkspace).toHaveBeenCalledWith(2);
+    expect(screen.getByRole("button", { name: "Sistema" })).toBeInTheDocument();
   });
 });

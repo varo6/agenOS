@@ -34,11 +34,17 @@ function chooseStep({
   backendError,
   harnessAvailable,
 }: Pick<AgentOnboardingPanelProps, "adminStatus" | "authState" | "backendError" | "harnessAvailable">): OnboardingStep {
+  /*
+   * Nada de lo que sale de aquí nombra piezas internas. El mensaje de error
+   * crudo del servicio (`backendError`, `degradedReason`, los `setupItems` en
+   * inglés) se queda fuera a propósito: no le dice nada a quien usa el equipo
+   * y sigue disponible en Sistema para quien tenga que arreglarlo.
+   */
   if (!harnessAvailable || backendError) {
     return {
-      title: "Backend no disponible",
-      detail: backendError ?? "El servicio local del agente no responde. Refresca la salud o abre Backend para revisar el servicio.",
-      primary: { label: "Refrescar salud", action: "refresh" },
+      title: "Pi no está disponible",
+      detail: "Espera unos segundos y vuelve a intentarlo.",
+      primary: { label: "Reintentar", action: "refresh" },
       secondary: { label: "Abrir Sistema", action: "system" },
       tone: "error",
     };
@@ -46,66 +52,57 @@ function chooseStep({
 
   if (!adminStatus) {
     return {
-      title: "Leyendo backend",
-      detail: "Estoy cargando el estado del broker y del worker.",
-      primary: { label: "Refrescar salud", action: "refresh" },
-      secondary: { label: "Abrir Sistema", action: "system" },
+      title: "Un momento",
+      detail: "Estoy comprobando que todo esté listo.",
+      primary: { label: "Reintentar", action: "refresh" },
       tone: "work",
     };
   }
 
   if (adminStatus.readiness === "needs_setup") {
-    const backendSetupAction = adminStatus.setupItems.some((item) => (
-      item.action === "connect_backend_codex"
-      || item.action === "configure_telegram"
-      || item.action === "test_telegram"
-      || item.action === "enable_telegram"
-      || item.action === "rerun_setup"
-    ));
     return {
-      title: backendSetupAction ? "Setup del backend" : "Setup del agente",
-      detail: adminStatus.setupItems[0]?.label ?? "Completa la configuracion del provider antes de usar el agente real.",
+      title: "Falta terminar la configuración",
+      detail: "Ábrela en Sistema y lo dejamos listo.",
       primary: { label: "Abrir Sistema", action: "system" },
-      secondary: { label: "Refrescar salud", action: "refresh" },
-      tone: "work",
-    };
-  }
-
-  if (adminStatus.readiness === "degraded") {
-    return {
-      title: "Backend en modo degradado",
-      detail: adminStatus.worker.degradedReason ?? adminStatus.worker.lastError ?? "El agente puede estar usable, pero conviene revisar el worker.",
-      primary: { label: "Abrir Sistema", action: "system" },
-      secondary: { label: "Refrescar salud", action: "refresh" },
       tone: "work",
     };
   }
 
   if (authState === "authorizing") {
     return {
-      title: "Completa el login de Codex",
-      detail: "Termina el flujo de navegador o pega el codigo manual si el callback no vuelve solo.",
-      primary: { label: "Refrescar salud", action: "refresh" },
-      secondary: { label: "Abrir Sistema", action: "system" },
+      title: "Termina de conectar tu cuenta",
+      detail: "Abre el enlace y escribe el código.",
+      primary: { label: "Reintentar", action: "refresh" },
       tone: "work",
     };
   }
 
   if (authState !== "connected") {
     return {
-      title: "Conecta ChatGPT/Codex",
-      detail: "El backend esta listo. Solo falta iniciar sesion para activar el chat y el micro.",
-      primary: { label: "Conectar ahora", action: "connect" },
-      secondary: { label: "Abrir Sistema", action: "system" },
+      title: "Conecta tu cuenta",
+      detail: "Es el último paso para poder hablar con Pi.",
+      primary: { label: "Conectar", action: "connect" },
+      tone: "work",
+    };
+  }
+
+  /*
+   * Va después de la cuenta a propósito: en modo degradado se puede hablar con
+   * Pi, así que nunca debe robarle el sitio a lo que sí lo impide.
+   */
+  if (adminStatus.readiness === "degraded") {
+    return {
+      title: "Pi funciona a medias",
+      detail: "Puedes usarlo, pero conviene revisarlo.",
+      primary: { label: "Abrir Sistema", action: "system" },
       tone: "work",
     };
   }
 
   return {
-    title: "Agente listo",
-    detail: "Backend, worker y login local estan disponibles. Ya puedes escribir o usar el micro.",
-    primary: { label: "Refrescar salud", action: "refresh" },
-    secondary: { label: "Abrir Sistema", action: "system" },
+    title: "Todo listo",
+    detail: "Ya puedes hablar con Pi.",
+    primary: { label: "Reintentar", action: "refresh" },
     tone: "ready",
   };
 }
@@ -140,45 +137,50 @@ export function AgentOnboardingPanel(props: AgentOnboardingPanelProps) {
 
   const actionIcon = (action: OnboardingStep["primary"]["action"]) =>
     action === "refresh" ? (
-      <RefreshCcw aria-hidden="true" className="h-4 w-4" />
+      <RefreshCcw aria-hidden="true" className="h-6 w-6" />
     ) : action === "system" ? (
-      <Settings aria-hidden="true" className="h-4 w-4" />
+      <Settings aria-hidden="true" className="h-6 w-6" />
     ) : (
-      <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
+      <ArrowUpRight aria-hidden="true" className="h-6 w-6" />
     );
 
+  /*
+   * La acción va debajo y a lo ancho, no en la esquina de la cabecera: es lo
+   * único que hay que hacer en esta pantalla y tiene que parecerlo.
+   */
   return (
     <Panel
-      actions={
-        <>
-          <Button
-            icon={actionIcon(step.primary.action)}
-            onClick={() => runAction(step.primary.action)}
-            variant="primary"
-          >
-            {step.primary.label}
-          </Button>
-          {step.secondary ? (
-            <Button
-              icon={actionIcon(step.secondary.action)}
-              onClick={() => runAction(step.secondary!.action)}
-            >
-              {step.secondary.label}
-            </Button>
-          ) : null}
-        </>
-      }
       className="w-full"
       description={step.detail}
-      eyebrow="Siguiente paso"
       title={
         <span className="flex items-center gap-3">
-          <span className={cx("rounded-control border p-2", TONE_SURFACE[STEP_TONE[step.tone]])}>
+          <span className={cx("rounded-control border p-2.5", TONE_SURFACE[STEP_TONE[step.tone]])}>
             {iconForTone(step.tone)}
           </span>
           {step.title}
         </span>
       }
-    />
+    >
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button
+          icon={actionIcon(step.primary.action)}
+          onClick={() => runAction(step.primary.action)}
+          size="lg"
+          variant="primary"
+        >
+          {step.primary.label}
+        </Button>
+        {step.secondary ? (
+          <Button
+            icon={actionIcon(step.secondary.action)}
+            onClick={() => runAction(step.secondary!.action)}
+            size="lg"
+            variant="ghost"
+          >
+            {step.secondary.label}
+          </Button>
+        ) : null}
+      </div>
+    </Panel>
   );
 }

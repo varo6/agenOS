@@ -26,7 +26,7 @@ describe("VoiceConsole", () => {
     renderConsole({ capture: "listening", turn: "idle" });
 
     expect(screen.getByText("Te escucho")).toBeInTheDocument();
-    expect(screen.getByText("Habla con normalidad; pararé cuando termines.")).toBeInTheDocument();
+    expect(screen.getByText("Habla con calma.")).toBeInTheDocument();
   });
 
   test("anuncia cada fase por aria-live para quien no ve la pantalla", () => {
@@ -71,7 +71,7 @@ describe("VoiceConsole", () => {
 
     fireEvent.click(button);
     expect(onActivate).not.toHaveBeenCalled();
-    expect(screen.getByText("Sin conexión a internet")).toBeInTheDocument();
+    expect(screen.getByText("Sin internet")).toBeInTheDocument();
   });
 
   test("mientras Pi trabaja explica la acción en lenguaje llano", () => {

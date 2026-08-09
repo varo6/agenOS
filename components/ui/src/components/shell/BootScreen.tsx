@@ -15,10 +15,8 @@ export function BootScreen() {
           <span className="relative h-3 w-3 rounded-pill bg-accent" />
         </span>
         <div>
-          <p className="font-display text-lg font-medium text-ink">Preparando AgenOS</p>
-          <p className="mt-2 text-sm leading-6 text-ink-muted">
-            Un momento: estoy comprobando el micrófono, la red y tu cuenta.
-          </p>
+          <p className="font-display text-2xl font-medium text-ink">Preparando AgenOS</p>
+          <p className="mt-2 text-base text-ink-muted">Un momento.</p>
         </div>
       </div>
     </div>

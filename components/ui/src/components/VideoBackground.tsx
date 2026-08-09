@@ -55,7 +55,8 @@ function VideoBackgroundComponent() {
           autoPlay
           className={[
             "absolute inset-0 h-full w-full object-cover transition-opacity duration-700",
-            videoReady ? "opacity-75" : "opacity-0",
+            // El vídeo es ambiente, no contenido: apagado para no robar contraste.
+            videoReady ? "opacity-40" : "opacity-0",
           ].join(" ")}
           loop
           muted
@@ -71,7 +72,8 @@ function VideoBackgroundComponent() {
           <source src={videoSrc} type="video/mp4" />
         </video>
       ) : null}
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,8,12,0.42),rgba(6,8,12,0.18)_30%,rgba(6,8,12,0.62))]" />
+      {/* Velo oscuro sobre el vídeo: garantiza el contraste del texto suelto. */}
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,8,12,0.72),rgba(6,8,12,0.55)_30%,rgba(6,8,12,0.82))]" />
       <div
         className="absolute inset-0 opacity-[0.06]"
         style={{

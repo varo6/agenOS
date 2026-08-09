@@ -55,14 +55,14 @@ export function AgentBackendSetupPanel({
     <section className="rounded-control border border-line bg-sunken p-4 text-left">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-ink-faint">
+          <p className="eyebrow text-ink-faint">
             Backend
           </p>
           <h3 className="mt-2 text-lg font-medium text-ink">
             {readiness === "needs_setup" ? "Setup requerido" : readiness === "degraded" ? "Modo degradado usable" : "Listo"}
           </h3>
         </div>
-        <span className="rounded-control border border-line px-2 py-1 font-mono text-[11px] uppercase text-ink-muted">
+        <span className="rounded-control border border-line px-2 py-1 font-mono text-xs uppercase text-ink-muted">
           {readiness}
         </span>
       </div>
@@ -72,7 +72,7 @@ export function AgentBackendSetupPanel({
           {setupItems.map((item) => (
             <div className="rounded-control border border-line bg-surface px-3 py-2" key={item.id}>
               <p className="text-sm text-ink">{item.label}</p>
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+              <p className="mt-1 eyebrow text-ink-faint">
                 {item.severity} / {item.action}
               </p>
             </div>
@@ -137,7 +137,7 @@ export function AgentBackendSetupPanel({
 
       {setupItems.some((item) => item.action === "configure_telegram" || item.action === "test_telegram" || item.action === "enable_telegram") ? (
         <div className="mt-4 rounded-control border border-line bg-surface p-3">
-          <label className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint" htmlFor="telegram-token">
+          <label className="eyebrow text-ink-faint" htmlFor="telegram-token">
             Telegram bot token
           </label>
           <input

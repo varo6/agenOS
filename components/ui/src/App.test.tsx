@@ -193,7 +193,7 @@ describe("App chat recovery", () => {
     expect(screen.getByText("Preparando AgenOS")).toBeInTheDocument();
 
     releaseHistory([]);
-    expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+    expect(await screen.findByText("Conecta tu cuenta")).toBeInTheDocument();
   });
 
   test("shows the network panel and blocks ChatGPT login while offline", async () => {
@@ -213,13 +213,13 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
+    expect(await screen.findByText("Conecta tu cuenta")).toBeInTheDocument();
 
     // La checklist técnica vive en Sistema: Inicio solo enseña el siguiente paso.
-    fireEvent.click(screen.getByRole("button", { name: "Sistema" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Sistema/ }));
 
-    expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
-    expect(screen.getByText("Worker listo")).toBeInTheDocument();
+    expect(screen.getByText("Servicio de Pi")).toBeInTheDocument();
+    expect(screen.getByText("Motor de tareas")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Abrir navegador" })).not.toBeInTheDocument();
   });
@@ -231,14 +231,17 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Conectar ChatGPT" }));
+    // En Inicio solo hay un camino: el botón del paso que falta.
+    fireEvent.click(await screen.findByRole("button", { name: "Conectar" }));
 
     await waitFor(() => {
       expect(mocks.piClient.startAuth).toHaveBeenCalledWith("device");
     });
     expect(await screen.findByText("codex login --device-auth termino con codigo 1.")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Refrescar estado" }));
+    // Refrescar el estado es mantenimiento: vive en Sistema, con la cuenta.
+    fireEvent.click(screen.getByRole("button", { name: /^Sistema/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Actualizar" }));
 
     await waitFor(() => {
       expect(screen.queryByText("codex login --device-auth termino con codigo 1.")).not.toBeInTheDocument();
@@ -276,7 +279,7 @@ describe("App chat recovery", () => {
     render(<App />);
 
     expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar login" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
 
     await waitFor(() => {
       expect(mocks.piClient.cancelAuth).toHaveBeenCalledWith("att_123");
@@ -284,7 +287,8 @@ describe("App chat recovery", () => {
     await waitFor(() => {
       expect(screen.queryByText("ABCD-EFGH")).not.toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Conectar ChatGPT" })).not.toBeDisabled();
+    // Cancelado el intento, vuelve a haber un único botón para empezar de nuevo.
+    expect(screen.getByRole("button", { name: "Conectar" })).not.toBeDisabled();
   });
 
   test("sends app launch requests to the foreground model as async turns", async () => {
@@ -389,7 +393,9 @@ describe("App chat recovery", () => {
     expect(mocks.piClient.getStatus.mock.calls.length).toBe(statusCalls);
   });
 
-  test("shows the workspace system bar and focuses workspace clicks", async () => {
+  // Los escritorios son cosa del gestor de ventanas, así que ya no ocupan la
+  // barra fija: se cambian desde Sistema (o hablando con Pi).
+  test("shows the workspace switcher in Sistema and focuses workspace clicks", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
     mocks.agentClient.focusWorkspace.mockResolvedValue({
@@ -399,6 +405,8 @@ describe("App chat recovery", () => {
     });
 
     render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Sistema/ }));
 
     const target = await screen.findByRole("button", { name: "Escritorio 2: Apps" });
     expect(target).not.toHaveAttribute("aria-current");
@@ -427,7 +435,8 @@ describe("App chat recovery", () => {
     mocks.agentClient.subscribeWorkspaceChanges.mockReturnValue(unsubscribe);
 
     const view = render(<App />);
-    await screen.findByRole("button", { name: "Escritorio 1: Inicio" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Sistema/ }));
+    await screen.findByRole("button", { name: /^Escritorio 1:/ });
 
     const listener = mocks.agentClient.subscribeWorkspaceChanges.mock.calls[0]?.[0];
     expect(listener).toBeTypeOf("function");

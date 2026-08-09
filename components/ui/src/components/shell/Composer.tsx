@@ -45,23 +45,23 @@ function ComposerComponent({
       <label className="sr-only" htmlFor={inputId}>
         Escribe a Pi
       </label>
-      <div className="flex items-center gap-2 rounded-pill border border-line bg-sunken p-1.5 transition-colors focus-within:border-line-strong">
+      <div className="flex items-center gap-2 rounded-pill border border-line bg-sunken p-2 transition-colors focus-within:border-line-strong">
         <input
           aria-describedby={hasHint ? hintId : undefined}
           autoComplete="off"
-          className="min-w-0 flex-1 bg-transparent px-4 py-2 text-sm text-ink outline-none placeholder:text-ink-faint disabled:cursor-not-allowed"
+          className="min-w-0 flex-1 bg-transparent px-4 py-2 text-base text-ink outline-none placeholder:text-ink-faint disabled:cursor-not-allowed"
           disabled={disabled}
           id={inputId}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="O escríbeselo aquí…"
+          /* El ejemplo enseña qué se le puede pedir sin gastar una línea más. */
+          placeholder="Por ejemplo: abre el navegador"
           value={value}
         />
         <Button
           className="rounded-pill"
           disabled={disabled || value.trim().length === 0}
-          icon={<SendHorizontal aria-hidden="true" className="h-4 w-4" />}
+          icon={<SendHorizontal aria-hidden="true" className="h-5 w-5" />}
           loading={busy}
-          size="sm"
           type="submit"
           variant="primary"
         >
@@ -73,7 +73,7 @@ function ComposerComponent({
        * puede escribir, aquí se dice por qué.
        */}
       {hasHint ? (
-        <p className="mt-2 text-center text-xs leading-5 text-ink-faint" id={hintId}>
+        <p className="mt-3 text-center text-sm text-ink-muted" id={hintId}>
           {disabledReason}
         </p>
       ) : null}
