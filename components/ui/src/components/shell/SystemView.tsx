@@ -78,26 +78,25 @@ export function SystemView({
        * botón y, una vez abierto, se queda abierto. Nada se esconde detrás de
        * un tooltip ni desaparece solo.
        */}
-      <details className="grid gap-5">
-        <summary className="panel inline-flex min-h-14 cursor-pointer items-center px-5 text-base font-medium text-ink">
+      <details>
+        <summary className="panel cursor-pointer px-5 py-4 text-base font-medium text-ink">
           Detalles técnicos
         </summary>
 
-        <AgentHealthChecklist
-          adminStatus={health.status}
-          authState={session.authState}
-          backendError={health.error}
-          harnessAvailable={session.ready}
-        />
+        <div className="mt-5 grid gap-5">
+          <AgentHealthChecklist
+            adminStatus={health.status}
+            authState={session.authState}
+            backendError={health.error}
+            harnessAvailable={session.ready}
+          />
 
-        <Panel
-          description="Copia este informe si necesitas ayuda con el equipo."
-          title="Soporte"
-        >
-          <AgentDiagnosticsButton />
-        </Panel>
+          <Panel description="Copia este informe si necesitas ayuda con el equipo." title="Soporte">
+            <AgentDiagnosticsButton />
+          </Panel>
 
-        <AgentAdminPanel client={adminClient} />
+          <AgentAdminPanel client={adminClient} />
+        </div>
       </details>
     </main>
   );
