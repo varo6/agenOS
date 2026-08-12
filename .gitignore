@@ -39,3 +39,6 @@ releases/
 __pycache__/
 *.pyc
 .superpowers/
+
+# Andamiaje de orquestacion: briefs de trabajo, no fuente del proyecto.
+.orchestration/
