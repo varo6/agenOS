@@ -1,0 +1,39 @@
+# Native Wayland/GTK applications kept deliberately smaller than a full
+# GNOME, KDE or XFCE desktop.  Their freedesktop entries are consumed by the
+# AgenOS agent and by /etc/xdg/mimeapps.list.
+
+# Files, removable media, thumbnails and common archive formats.
+thunar
+gvfs
+tumbler
+udisks2
+xdg-user-dirs
+xarchiver
+thunar-archive-plugin
+p7zip-full
+unzip
+
+# Photos, including formats commonly received from browsers and phones.
+ristretto
+webp-pixbuf-loader
+heif-gdk-pixbuf
+
+# Audio and video. mpv reuses the FFmpeg stack already present in base.
+mpv
+
+# PDF, notes and lightweight word-processing documents.
+zathura
+mousepad
+abiword
+
+# Lightweight GTK mail client, its translations and Spanish spell checking.
+claws-mail
+claws-mail-i18n
+aspell-es
+
+# Small, local, offline game with a visible and localized desktop entry.
+gnome-2048
+
+# The session prefers Qt's native Wayland backend; Calamares already brings
+# most of Qt, so making the platform plugin explicit has negligible overhead.
+qtwayland5
