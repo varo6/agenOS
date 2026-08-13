@@ -25,4 +25,6 @@ por qué, y qué queda pendiente o requiere validación en hardware real.
   Debian, incluido el cruce entre binarios invocados y paquetes instalados.
 - [shell-composition.md](shell-composition.md) — descomposición de `App.tsx`.
 - [simplified-interface.md](simplified-interface.md) — simplificación de la
+- [desktop-applications.md](desktop-applications.md) — conjunto base de aplicaciones
+  instaladas y asociaciones MIME por defecto.
   interfaz para usuarios mayores y no técnicos.
