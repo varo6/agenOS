@@ -1032,6 +1032,90 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
   });
 
+  test("package endpoint resolves a human name and installs once only after confirmation", async () => {
+    const confirmations = createConfirmationStore({
+      rootDir: mkdtempSync(join(tmpdir(), "agenos-server-package-")),
+      idFactory: () => "conf_server_firefox",
+    });
+    const installs: unknown[] = [];
+    const packageResolver = {
+      clearCache() {},
+      async resolve(query: string) {
+        return {
+          ok: true as const,
+          status: "resolved" as const,
+          index: { available: true, updatedAt: "2026-08-13T10:00:00.000Z" },
+          package: {
+            packageName: "firefox-esr",
+            displayName: "Firefox ESR",
+            requestedName: query,
+            version: "128.8.0esr-1~deb12u1",
+            summary: "Mozilla Firefox web browser",
+            priority: "optional",
+            pinPriority: 500,
+            section: "web",
+            component: "main" as const,
+            installed: false,
+            resolution: "alias" as const,
+            selectionReason: "El alias firefox corresponde a firefox-esr.",
+            alternatives: [],
+          },
+        };
+      },
+    };
+    const packageInstaller = {
+      async install(input: unknown) {
+        installs.push(input);
+        return {
+          ok: true,
+          status: "installed" as const,
+          packageName: "firefox-esr",
+          displayName: "Firefox ESR",
+          message: "Firefox ESR se ha instalado correctamente (firefox-esr).",
+        };
+      },
+    };
+    const handler = createAuthenticatedHandler({
+      confirmations,
+      packageResolver: packageResolver as never,
+      packageInstaller: packageInstaller as never,
+    });
+
+    const proposed = await handler.fetch(new Request("http://localhost/api/agent/packages/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "firefox" }),
+    }));
+    expect(proposed.status).toBe(409);
+    expect(await jsonPayload(proposed)).toMatchObject({
+      ok: false,
+      status: "confirmation_required",
+      confirmationId: "conf_server_firefox",
+      packageName: "firefox-esr",
+      message: "Voy a instalar Firefox ESR (firefox-esr). ¿Sigo?",
+    });
+    expect(installs).toEqual([]);
+
+    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
+      method: "POST",
+    }));
+    expect(confirmed.status).toBe(202);
+    expect(await jsonPayload(confirmed)).toMatchObject({
+      ok: true,
+      execution: {
+        ok: true,
+        output: { status: "installed", packageName: "firefox-esr" },
+      },
+    });
+    expect(installs).toHaveLength(1);
+
+    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
+      method: "POST",
+    }));
+    expect(duplicate.status).toBe(409);
+    expect(installs).toHaveLength(1);
+  });
+
   test("agent files route opens paths through the broker runner", async () => {
     const opened: unknown[] = [];
     const handler = createAuthenticatedHandler({

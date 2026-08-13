@@ -56,6 +56,15 @@ describe("agent policy", () => {
     });
   });
 
+  test("always requires confirmation for a resolved package installation", () => {
+    for (const source of ["ui", "openclaw", "system"] as const) {
+      expect(decidePolicy({ tool: "packages.install", source })).toMatchObject({
+        decision: "confirm",
+        ruleId: "agent.packages.install.confirm",
+      });
+    }
+  });
+
   test("allows ordinary UI shell but still confirms destructive UI shell", () => {
     expect(decidePolicy({ tool: "shell.exec", source: "ui", input: { command: "id" }, explicitUserIntent: true })).toMatchObject({
       decision: "allow",
@@ -68,7 +77,7 @@ describe("agent policy", () => {
   });
 
   test("denies unknown UI tools instead of treating the frontend as superuser", () => {
-    expect(decidePolicy({ tool: "packages.install", source: "ui", explicitUserIntent: true })).toMatchObject({
+    expect(decidePolicy({ tool: "packages.add-repository", source: "ui", explicitUserIntent: true })).toMatchObject({
       decision: "deny",
       ruleId: "agent.default.deny",
     });

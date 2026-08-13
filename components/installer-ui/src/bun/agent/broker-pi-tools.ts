@@ -1,6 +1,7 @@
 import { createAgentTaskModelTool, type AgentTaskClient } from "../../../../agent/agent-task-tool";
 import { createOpenBrowserModelTool } from "../../../../agent/browser-open-tool";
 import { createOpenFileModelTool } from "../../../../agent/file-open-tool";
+import { createPackageInstallModelTool, type PackageInstallToolService } from "../../../../agent/package-install-tool";
 import {
   createLearningMemoryModelTool,
   type LearningMemoryClient,
@@ -17,6 +18,7 @@ type ToolRunner = ReturnType<typeof createToolRunner>;
 
 export type BrokerPiToolsOptions = {
   toolRunner: ToolRunner;
+  packageService: PackageInstallToolService;
   captureTrace: (trace: HarnessTraceRecord) => Promise<void>;
 };
 
@@ -84,6 +86,7 @@ export function createBrokerPiTools(options: BrokerPiToolsOptions) {
     createOpenAppModelTool({
       openApp: (input) => output("apps.open", input),
     }),
+    createPackageInstallModelTool(options.packageService),
     createOpenFileModelTool({
       openPath: (input) => output("files.open", input),
     }),

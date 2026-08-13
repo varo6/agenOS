@@ -35,6 +35,9 @@ import { createToolRunner, type ToolRunResult } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createLocalUiAuth } from "./agent/ui-auth";
 import { createBrokerPiTools } from "./agent/broker-pi-tools";
+import { createAptCatalog, createPackageResolver } from "./agent/package-resolver";
+import { createPackageInstaller } from "./agent/package-installer";
+import { createPackageService } from "./agent/package-service";
 import { createSupportBundle } from "./diagnostics/support-bundle";
 import { createSttService, type SttService } from "./speech/stt";
 import { switchMode } from "../shared/system-services/switch-mode";
@@ -98,6 +101,9 @@ export type InstallerApiDependencies = {
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
   uiAuth: ReturnType<typeof createLocalUiAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
+  packageResolver: ReturnType<typeof createPackageResolver>;
+  packageInstaller: ReturnType<typeof createPackageInstaller>;
+  packageService: ReturnType<typeof createPackageService>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
   setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
@@ -360,6 +366,9 @@ export function createInstallerApiHandler(
   const browserTool = dependencies.browserTool ?? createBrowserTool();
   const fileTool = dependencies.fileTool ?? createFileTool();
   const workspaceService = dependencies.workspaceService ?? createWorkspaceService();
+  const aptCatalog = createAptCatalog();
+  const packageResolver = dependencies.packageResolver ?? createPackageResolver({ catalog: aptCatalog });
+  const packageInstaller = dependencies.packageInstaller ?? createPackageInstaller({ catalog: aptCatalog });
   const effectHandlers: NonNullable<Parameters<typeof createToolRunner>[0]["handlers"]> = {
     "apps.list": () => appTool.listApps(),
     "apps.open": (input) => appTool.openApp(input as never),
@@ -370,6 +379,7 @@ export function createInstallerApiHandler(
     ),
     "files.open": (input) => fileTool.openPath(input as never),
     "workspaces.focus": (input) => workspaceService.focusWorkspace(input as never),
+    "packages.install": (input, context) => packageInstaller.install(input, context.onProgress),
     "setup.status": () => setup.status(),
     "setup.run": () => setup.run(),
     "auth.codex.start": () => setup.startCodexLogin(),
@@ -446,8 +456,15 @@ export function createInstallerApiHandler(
     }
     return learnedMemory.update(record.itemId, { statement: record.statement });
   };
+  const packageService = dependencies.packageService ?? createPackageService({
+    resolver: packageResolver,
+    installer: packageInstaller,
+    toolRunner,
+    confirmations,
+  });
   const brokerPiTools = createBrokerPiTools({
     toolRunner,
+    packageService,
     captureTrace: async (trace) => {
       await selfImprovement.captureHarnessTrace(trace);
     },
@@ -488,6 +505,9 @@ export function createInstallerApiHandler(
     workspaceService,
     shellTool,
     confirmations,
+    packageResolver,
+    packageInstaller,
+    packageService,
     agentAdmin,
     setup,
     supportBundle,
@@ -1452,6 +1472,44 @@ export function createInstallerApiHandler(
               focus: payload.focus !== false,
             },
           }));
+        }
+
+        if (url.pathname === "/api/agent/packages/resolve") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { query?: unknown };
+          const resolution = await deps.packageService.resolve(typeof payload.query === "string" ? payload.query : "");
+          const status = resolution.ok
+            ? 200
+            : resolution.status === "invalid_query"
+              ? 400
+              : resolution.status === "catalog_unavailable"
+                ? 503
+                : 404;
+          return json(resolution, { status });
+        }
+
+        if (url.pathname === "/api/agent/packages/install") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { query?: unknown };
+          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", "ui");
+          const status = result.status === "confirmation_required"
+            ? 409
+            : result.status === "already_installed"
+              ? 200
+              : result.status === "invalid_query"
+                ? 400
+                : result.status === "catalog_unavailable"
+                  ? 503
+                  : result.status === "not_found"
+                    ? 404
+                    : result.ok
+                      ? 202
+                      : 500;
+          return json(result, { status });
         }
 
         const frontend = frontendResponse(request, url, {
