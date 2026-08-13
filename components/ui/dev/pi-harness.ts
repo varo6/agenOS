@@ -37,6 +37,7 @@ import {
 import { createAppTool, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
 import { createOpenBrowserModelTool } from "../../agent/browser-open-tool";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
+import { createPackageInstallModelTool, type PackageInstallToolService } from "../../agent/package-install-tool";
 import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
 import { createOpenClawSetupService, type OpenClawSetupService } from "../../installer-ui/src/bun/agent/setup";
 import type {
@@ -96,12 +97,30 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
+const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
 const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 
 function emptyLearningContext(): LearnedContextResponse {
   return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
 }
+
+const unavailablePackageService: PackageInstallToolService = {
+  requestInstall: async () => ({
+    ok: false,
+    status: "failed",
+    message: "La instalación solo está disponible a través del broker de AgenOS.",
+  }),
+  confirmInstall: async () => ({
+    ok: false,
+    status: "failed",
+    message: "La instalación solo está disponible a través del broker de AgenOS.",
+  }),
+  denyInstall: () => ({
+    ok: false,
+    status: "failed",
+    message: "No hay una instalación pendiente en este harness.",
+  }),
+};
 
 export function composePiSystemPrompt(learningContext: string): string {
   return learningContext.trim() ? `${PI_SYSTEM_PROMPT}\n\n${learningContext.trim()}` : PI_SYSTEM_PROMPT;
@@ -654,6 +673,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         customTools: (customTools ?? [
           createOpenBrowserModelTool(),
           createOpenAppModelTool(appTool),
+          createPackageInstallModelTool(unavailablePackageService),
           createOpenFileModelTool(),
           createOpenClawSetupModelTool(setupService),
           createAgentTaskModelTool(agentTaskClient),
@@ -1270,6 +1290,7 @@ export class PiHarness {
     return [
       createOpenBrowserModelTool(),
       createOpenAppModelTool(this.deps.appTool),
+      createPackageInstallModelTool(unavailablePackageService),
       createOpenFileModelTool(),
       createOpenClawSetupModelTool(this.deps.setupService),
       createAgentTaskModelTool(this.deps.agentTaskClient),

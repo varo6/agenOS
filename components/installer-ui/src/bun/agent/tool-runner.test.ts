@@ -83,6 +83,54 @@ describe("agent tool runner", () => {
     expect(created).toHaveLength(1);
   });
 
+  test("creates a friendly package confirmation only for validated resolved input", async () => {
+    const created: unknown[] = [];
+    const runner = createToolRunner({
+      confirmations: {
+        create: (request) => {
+          created.push(request);
+          return { confirmationId: "conf_firefox", status: "pending" };
+        },
+      } as never,
+      handlers: {
+        "packages.install": async () => ({ ok: true, status: "installed" }),
+      },
+    });
+    const validInput = {
+      packageName: "firefox-esr",
+      displayName: "Firefox ESR",
+      requestedName: "firefox",
+      version: "128.0",
+      selectionReason: "alias",
+    };
+
+    await expect(runner.run({
+      source: "ui",
+      tool: "packages.install",
+      input: validInput,
+    })).resolves.toMatchObject({
+      ok: false,
+      decision: "confirm",
+      confirmationId: "conf_firefox",
+    });
+    expect(created).toEqual([expect.objectContaining({
+      tool: "packages.install",
+      summary: "Voy a instalar Firefox ESR (firefox-esr), ¿sigo?",
+      input: validInput,
+    })]);
+
+    await expect(runner.run({
+      source: "ui",
+      tool: "packages.install",
+      input: { ...validInput, packageName: "firefox-esr;id" },
+    })).resolves.toMatchObject({
+      ok: false,
+      decision: "deny",
+      message: expect.stringContaining("resuelto y validado"),
+    });
+    expect(created).toHaveLength(1);
+  });
+
   test("executes ordinary shell from the authenticated frontend path", async () => {
     const runner = createToolRunner({
       shellTool: async (input) => ({

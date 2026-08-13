@@ -100,6 +100,14 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: all(toolIs("admin.queue.clear"), sourceIs("ui")),
   },
   {
+    ruleId: "agent.packages.install.confirm",
+    tool: "packages.install",
+    source: "*",
+    decision: "confirm",
+    reason: "Instalar software cambia el sistema y requiere una confirmación del usuario.",
+    matches: toolIs("packages.install"),
+  },
+  {
     ruleId: "agent.memory.ui.allow",
     tool: "memory.write",
     source: "ui",
