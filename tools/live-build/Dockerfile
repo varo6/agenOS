@@ -3,9 +3,13 @@ FROM debian:bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_MAJOR=22
 # Fijada a proposito: sin version, cada build de ISO instala el Bun que sea
-# ultimo ese dia y deja de ser reproducible. Debe coincidir con la version que
-# genero los bun.lock del repo, o `bun install --frozen-lockfile` puede fallar.
-ENV BUN_VERSION=1.4.0
+# ultimo ese dia y deja de ser reproducible.
+#
+# Tiene que ser una release publicada de oven-sh/bun, no la que devuelva
+# `bun --version` en el equipo de desarrollo: una canary como 1.4.0-canary.1
+# se reporta como "1.4.0" pero no existe como etiqueta, y el instalador falla
+# con un 404. Coincide con la version que fija tools/openclaw-backend.
+ENV BUN_VERSION=1.3.14
 ENV BUN_INSTALL=/usr/local/bun
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
