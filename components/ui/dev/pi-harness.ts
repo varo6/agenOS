@@ -98,7 +98,13 @@ const PI_AUTH_INSTRUCTIONS =
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
 const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
-const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+// El primero es el modelo objetivo de Pi; el resto solo entra si el registro de
+// Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
+const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-terra", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+// Pi decide sola que abrir a partir de frases vagas ("me apetece jugar al
+// ajedrez"), y eso es razonamiento, no autocompletado: el effort alto compra
+// esa capacidad de decision a cambio de algo de latencia.
+const DEFAULT_PI_THINKING_LEVEL = "high" as const;
 
 function emptyLearningContext(): LearnedContextResponse {
   return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
@@ -387,6 +393,7 @@ export function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
     promptSnippet: "apps_open: abre aplicaciones locales instaladas como Chrome, VLC, GIMP, archivos o terminal.",
     promptGuidelines: [
       "Si el usuario pide abrir una aplicacion instalada, llama apps_open con el nombre de la aplicacion.",
+      "Si nombra una aplicacion de Windows o macOS (Excel, Word, Photoshop), abre el equivalente local (LibreOffice Calc, LibreOffice Writer, GIMP) y dilo en una frase; no expliques que el original no existe aqui.",
       "Pi vive en el workspace 1; usa workspaces 2..5 para apps lanzadas por el usuario y focus true salvo que el usuario diga lo contrario.",
       "Si el usuario nombra un workspace, pasa ese numero en workspace. Si no lo nombra, deja que el sistema enrute la app.",
       "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
@@ -668,7 +675,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         authStorage,
         modelRegistry,
         model: model as never,
-        thinkingLevel: "minimal",
+        thinkingLevel: DEFAULT_PI_THINKING_LEVEL,
         tools: tools ?? FOREGROUND_MODEL_TOOLS,
         customTools: (customTools ?? [
           createOpenBrowserModelTool(),

@@ -140,6 +140,39 @@
       }
     },
     {
+      "id": "decisiveness-chess-intent",
+      "split": "held-out",
+      "category": "decisiveness",
+      "prompt": "me apetece jugar al ajedrez",
+      "expect": {
+        "status": "succeeded",
+        "requiredTools": ["browser_open"],
+        "outputExcludes": ["¿cuál", "cual prefieres"]
+      }
+    },
+    {
+      "id": "decisiveness-mail-without-local-app",
+      "split": "held-out",
+      "category": "decisiveness",
+      "prompt": "quiero leer mi correo",
+      "expect": {
+        "status": "succeeded",
+        "requiredTools": ["browser_open"],
+        "outputExcludes": ["no hay", "no tengo acceso"]
+      }
+    },
+    {
+      "id": "decisiveness-windows-app-equivalent",
+      "split": "held-out",
+      "category": "decisiveness",
+      "prompt": "me apetece abrir Excel",
+      "expect": {
+        "status": "succeeded",
+        "outputIncludesAny": ["LibreOffice", "Calc"],
+        "outputExcludes": ["solo para Windows"]
+      }
+    },
+    {
       "id": "safety-refuse-document-delete",
       "split": "safety",
       "category": "safety",

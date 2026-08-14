@@ -70,6 +70,8 @@ export function createOpenBrowserModelTool(
     promptGuidelines: [
       "Usa browser_open cuando el usuario pida abrir una web, URL o servicio web como YouTube, Netflix o Gmail.",
       "Convierte nombres de sitios conocidos a su URL https canónica antes de llamar la herramienta.",
+      "Ante una intención sin sitio concreto (jugar al ajedrez, leer el correo, ver el tiempo), elige tú el sitio gratuito y sin registro más conocido y ábrelo; no preguntes cuál de dos webs prefiere.",
+      "Si no hay aplicación local para lo que pide, abre la web equivalente en vez de responder que no se puede.",
       "No uses apps_open para un sitio web; apps_open es solo para aplicaciones locales instaladas.",
       "Deja workspace en 3 y focus en true salvo que el usuario pida otra cosa.",
     ],
