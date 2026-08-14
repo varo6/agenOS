@@ -136,11 +136,12 @@ export function resolveShellReadiness(signals: ReadinessSignals): ShellReadiness
   }
 
   /*
-   * "degraded" no bloquea. El servicio en modo degradado sigue atendiendo
-   * turnos, así que quedarse la pantalla entera por eso sería castigar a la
-   * persona por un problema que no le impide hablar. Se avisa en Sistema.
+   * La readiness administrativa describe al worker de tareas en segundo plano,
+   * no al Pi foreground. Tanto "needs_setup" como "degraded" se señalan en
+   * Sistema, pero no bloquean una conversación cuya sesión ya responde y está
+   * autenticada.
    */
-  if (signals.adminStatus.readiness === "needs_setup" || signals.authState !== "connected") {
+  if (signals.authState !== "connected") {
     return "blocked";
   }
 

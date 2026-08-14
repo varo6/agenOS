@@ -199,6 +199,28 @@ describe("HomeView", () => {
     expect(screen.queryByText("Pi funciona a medias")).not.toBeInTheDocument();
   });
 
+  test("un setup pendiente del worker no tapa el Pi foreground ya conectado", () => {
+    renderHome({
+      health: health({
+        status: {
+          ...readyAdminStatus,
+          readiness: "needs_setup",
+          setupItems: [{
+            id: "worker-service",
+            label: "Servicio de worker inactivo",
+            severity: "error",
+            action: "view_logs",
+          }],
+        },
+      }),
+    });
+
+    expect(screen.getByText("Hola, soy Pi")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hablar con Pi" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Escribe a Pi")).toBeEnabled();
+    expect(screen.queryByText("Falta terminar la configuración")).not.toBeInTheDocument();
+  });
+
   test("el campo de texto dice por qué está apagado", () => {
     renderHome({ blockedReason: "busy", busy: true });
 

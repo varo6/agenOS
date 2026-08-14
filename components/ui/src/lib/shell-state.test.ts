@@ -109,9 +109,9 @@ describe("resolveShellReadiness", () => {
     );
   });
 
-  test("un backend por configurar bloquea la pantalla principal", () => {
+  test("un worker por configurar no bloquea el Pi foreground conectado", () => {
     expect(resolveShellReadiness({ ...ready, adminStatus: { readiness: "needs_setup" } })).toBe(
-      "blocked",
+      "ready",
     );
   });
 
