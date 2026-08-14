@@ -14,12 +14,37 @@ export type PiPendingAttempt = {
   userCode?: string;
 };
 
+export type PiTurnProgress = {
+  startedAt: string;
+  streamedText: string;
+  currentTool: string | null;
+  currentToolMessage?: string;
+  completedTools: string[];
+};
+
+export type PiTurnStatus = "processing" | "succeeded" | "failed";
+
+export type PiTurnState = {
+  turnId: string;
+  status: PiTurnStatus;
+  source: PiChatSource;
+  input: string;
+  startedAt: string;
+  finishedAt?: string;
+  progress: PiTurnProgress;
+  reply?: string;
+  modelId?: string;
+  error?: string;
+  errorStatus?: number;
+};
+
 export type PiStatusResponse = {
   authState: PiAuthState;
   providerName: string;
   modelId: string;
   busy: boolean;
   pendingAttempt?: PiPendingAttempt;
+  turn?: PiTurnProgress;
   error?: string;
 };
 

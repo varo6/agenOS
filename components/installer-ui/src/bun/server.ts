@@ -20,41 +20,60 @@ import {
 } from "../shared/installer-http";
 import { createAppTool } from "./agent/apps";
 import { createBrowserTool } from "./agent/browser";
+import { createWorkspaceService } from "./agent/workspaces";
 import { runShellCommand } from "../../../agent/shell";
+import { createFileTool } from "../../../agent/files";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
+import { createLearnedMemoryStore } from "./agent/learned-memory";
+import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
 import { createOpenClawSetupService } from "./agent/setup";
 import { createTaskQueue } from "./agent/tasks";
-import { createToolRunner } from "./agent/tool-runner";
+import { createToolRunner, type ToolRunResult } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
+import { createLocalUiAuth } from "./agent/ui-auth";
+import { createBrokerPiTools } from "./agent/broker-pi-tools";
+import { createAptCatalog, createPackageResolver } from "./agent/package-resolver";
+import { createPackageInstaller } from "./agent/package-installer";
+import { createPackageService } from "./agent/package-service";
 import { createSupportBundle } from "./diagnostics/support-bundle";
+import { createSttService, type SttService } from "./speech/stt";
 import { switchMode } from "../shared/system-services/switch-mode";
-import { HttpError, json, methodNotAllowed, options, readJsonBody } from "./http";
+import { HttpError, json, methodNotAllowed, options, readJsonBody, rejectUntrustedBrowserOrigin } from "./http";
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
 import { isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
-import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "./pi-harness";
+import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
+import type { HarnessTraceRecord } from "../../../agent/harness-trace";
 import type {
   PiAuthAttemptResponse,
+  PiAuthMethod,
   PiChatRequest,
   PiChatResponse,
   PiPendingAttempt,
   PiStatusResponse,
+  PiTurnState,
 } from "../../../ui/src/lib/pi-types";
+import { createNetworkManagerService, type NetworkManagerService } from "../../../network/node/network-manager";
+import type { ConnectWifiRequest } from "../../../network/types";
 
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
-  startAuth(): Promise<PiPendingAttempt>;
+  startAuth(method?: PiAuthMethod): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
+  startChat(request: PiChatRequest): PiTurnState;
+  getTurn(turnId: string): PiTurnState;
+  getLatestTurn(): PiTurnState | null;
+  listTurns(limit?: number): PiTurnState[];
 };
 
 export type InstallerApiDependencies = {
@@ -70,17 +89,29 @@ export type InstallerApiDependencies = {
   piHarness: PiHarnessApi;
   createPiHarness?: () => PiHarnessApi;
   memoryStore: ReturnType<typeof createMemoryStore>;
+  learnedMemory: ReturnType<typeof createLearnedMemoryStore>;
+  selfImprovement: ReturnType<typeof createSelfImprovementLoop>;
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
+  fileTool: ReturnType<typeof createFileTool>;
+  workspaceService: ReturnType<typeof createWorkspaceService>;
   shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
   workerAuth: ReturnType<typeof createLocalWorkerAuth>;
+  uiAuth: ReturnType<typeof createLocalUiAuth>;
   confirmations: ReturnType<typeof createConfirmationStore>;
+  packageResolver: ReturnType<typeof createPackageResolver>;
+  packageInstaller: ReturnType<typeof createPackageInstaller>;
+  packageService: ReturnType<typeof createPackageService>;
   agentAdmin: ReturnType<typeof createAgentAdminService>;
   setup: ReturnType<typeof createOpenClawSetupService>;
   supportBundle: () => Promise<unknown>;
+  network: NetworkManagerService;
+  speech: SttService;
 };
+
+const MAX_SPEECH_AUDIO_BYTES = 25 * 1024 * 1024;
 
 function defaultValidationResponse(payload: unknown): ValidationResponse {
   const result = validateProfile(payload);
@@ -99,6 +130,20 @@ function isPermissionDenied(message: string | undefined): boolean {
   return /denied|denegad|not authorized|cancelled/i.test(message);
 }
 
+function isHarnessTracePayload(value: unknown): value is HarnessTraceRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const trace = value as Partial<HarnessTraceRecord>;
+  return trace.schemaVersion === 1
+    && trace.source === "pi-chat"
+    && typeof trace.traceId === "string"
+    && typeof trace.timestamp === "string"
+    && (trace.status === "succeeded" || trace.status === "failed")
+    && typeof trace.input?.text === "string"
+    && Array.isArray(trace.toolEvents);
+}
+
 function launchFailureStatus(response: LaunchResponse, defaultStatus: number): number {
   if (response.errors && Object.keys(response.errors).length > 0) {
     return 422;
@@ -111,8 +156,27 @@ function launchFailureStatus(response: LaunchResponse, defaultStatus: number): n
   return defaultStatus;
 }
 
+function toolRunResponse(result: ToolRunResult, successStatus = 202, failureStatus = 400): Response {
+  if (result.decision !== "allow") {
+    return json(result, { status: result.decision === "deny" ? 403 : 409 });
+  }
+  const payload = result.shell ?? result.output ?? result;
+  return json(payload, { status: result.ok ? successStatus : failureStatus });
+}
+
 function isPathInside(rootDir: string, candidate: string): boolean {
   return candidate === rootDir || candidate.startsWith(`${rootDir}/`);
+}
+
+function connectWifiPayload(payload: unknown): ConnectWifiRequest {
+  const body = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  return {
+    ssid: typeof body.ssid === "string" ? body.ssid : "",
+    bssid: typeof body.bssid === "string" ? body.bssid : undefined,
+    password: typeof body.password === "string" ? body.password : undefined,
+    hidden: body.hidden === true,
+    device: typeof body.device === "string" ? body.device : undefined,
+  };
 }
 
 function resolveFrontendPath(frontendDistDir: string, pathname: string): string {
@@ -257,8 +321,8 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
         };
       }
     },
-    startAuth() {
-      return getHarness().startAuth();
+    startAuth(method?: PiAuthMethod) {
+      return getHarness().startAuth(method);
     },
     cancelAuth(attemptId?: string) {
       return getHarness().cancelAuth(attemptId);
@@ -275,6 +339,18 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     chat(request: PiChatRequest) {
       return getHarness().chat(request);
     },
+    startChat(request: PiChatRequest) {
+      return getHarness().startChat(request);
+    },
+    getTurn(turnId: string) {
+      return getHarness().getTurn(turnId);
+    },
+    getLatestTurn() {
+      return getHarness().getLatestTurn();
+    },
+    listTurns(limit?: number) {
+      return getHarness().listTurns(limit);
+    },
   };
 }
 
@@ -283,14 +359,126 @@ export function createInstallerApiHandler(
 ): { fetch: (request: Request) => Promise<Response> } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
-  const taskQueue = dependencies.taskQueue ?? createTaskQueue();
+  const learnedMemory = dependencies.learnedMemory ?? createLearnedMemoryStore();
+  const shellTool = dependencies.shellTool ?? runShellCommand;
   const setup = dependencies.setup ?? createOpenClawSetupService();
+  const appTool = dependencies.appTool ?? createAppTool();
+  const browserTool = dependencies.browserTool ?? createBrowserTool();
+  const fileTool = dependencies.fileTool ?? createFileTool();
+  const workspaceService = dependencies.workspaceService ?? createWorkspaceService();
+  const aptCatalog = createAptCatalog();
+  const packageResolver = dependencies.packageResolver ?? createPackageResolver({ catalog: aptCatalog });
+  const packageInstaller = dependencies.packageInstaller ?? createPackageInstaller({ catalog: aptCatalog });
+  const effectHandlers: NonNullable<Parameters<typeof createToolRunner>[0]["handlers"]> = {
+    "apps.list": () => appTool.listApps(),
+    "apps.open": (input) => appTool.openApp(input as never),
+    "browser.open_url": (input) => browserTool.openUrl(
+      input && typeof input === "object" && typeof (input as { url?: unknown }).url === "string"
+        ? (input as { url: string }).url
+        : "",
+    ),
+    "files.open": (input) => fileTool.openPath(input as never),
+    "workspaces.focus": (input) => workspaceService.focusWorkspace(input as never),
+    "packages.install": (input, context) => packageInstaller.install(input, context.onProgress),
+    "setup.status": () => setup.status(),
+    "setup.run": () => setup.run(),
+    "auth.codex.start": () => setup.startCodexLogin(),
+    "telegram.configure": (input) => setup.configureTelegram(
+      input && typeof input === "object" && typeof (input as { token?: unknown }).token === "string"
+        ? (input as { token: string }).token
+        : "",
+    ),
+    "telegram.test": () => setup.testTelegram(),
+    "telegram.enable": () => setup.enableTelegram(),
+    "memory.read": (input) => {
+      const record = input && typeof input === "object" ? input as { action?: unknown; query?: unknown; tokenBudget?: unknown; includeDeleted?: unknown } : {};
+      if (record.action === "context") {
+        return learnedMemory.context(
+          typeof record.query === "string" ? record.query : "",
+          typeof record.tokenBudget === "number" ? record.tokenBudget : 256,
+        );
+      }
+      return learnedMemory.list({ includeDeleted: record.includeDeleted === true });
+    },
+    "memory.delete": (input) => learnedMemory.delete(
+      input && typeof input === "object" && typeof (input as { itemId?: unknown }).itemId === "string"
+        ? (input as { itemId: string }).itemId
+        : "",
+    ),
+  };
+  const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, learnedMemory, shellTool, handlers: effectHandlers });
+  const selfImprovement = dependencies.selfImprovement ?? createSelfImprovementLoop({
+    memory: learnedMemory,
+    listConfirmations: (limit) => confirmations.list(limit),
+    proposeMemoryWrite: (input) => toolRunner.run({ source: "system", tool: "memory.write", input }),
+  });
+  const taskQueue = dependencies.taskQueue ?? createTaskQueue({
+    learnedContextProvider: (query) => learnedMemory.context(query, 256).text,
+    runToolCall: (call) => toolRunner.run({
+      source: "system",
+      taskId: call.taskId,
+      correlationId: call.correlationId,
+      tool: call.tool,
+      input: call.input,
+    }),
+  });
+  effectHandlers["tasks.enqueue"] = (input) => taskQueue.enqueue({
+    message: input && typeof input === "object" && typeof (input as { message?: unknown }).message === "string"
+      ? (input as { message: string }).message
+      : "",
+    source: "ui",
+  });
+  effectHandlers["tasks.read"] = async (input) => {
+    const record = input && typeof input === "object" ? input as { action?: unknown; taskId?: unknown; limit?: unknown } : {};
+    const taskId = typeof record.taskId === "string" ? record.taskId : "";
+    if (record.action === "status") {
+      const task = await taskQueue.status(taskId);
+      if (task) {
+        await selfImprovement.captureTask(task);
+      }
+      return task;
+    }
+    if (record.action === "events") {
+      return taskQueue.events(taskId);
+    }
+    if (record.action === "list") {
+      return taskQueue.list(typeof record.limit === "number" ? record.limit : undefined);
+    }
+    if (record.action === "health") {
+      return taskQueue.health();
+    }
+    return null;
+  };
+  effectHandlers["memory.write"] = (input) => {
+    const record = input && typeof input === "object" ? input as { action?: unknown; itemId?: unknown; statement?: unknown } : {};
+    if (record.action !== "correct" || typeof record.itemId !== "string" || typeof record.statement !== "string") {
+      return { ok: false, message: "Correccion de memoria invalida." };
+    }
+    return learnedMemory.update(record.itemId, { statement: record.statement });
+  };
+  const packageService = dependencies.packageService ?? createPackageService({
+    resolver: packageResolver,
+    installer: packageInstaller,
+    toolRunner,
+    confirmations,
+  });
+  const brokerPiTools = createBrokerPiTools({
+    toolRunner,
+    packageService,
+    captureTrace: async (trace) => {
+      await selfImprovement.captureHarnessTrace(trace);
+    },
+  });
   const agentAdmin = dependencies.agentAdmin ?? createAgentAdminService({
     worker: taskQueue,
     taskQueue,
     memoryStore,
     confirmations,
     setup,
+  });
+  const uiAuth = dependencies.uiAuth ?? createLocalUiAuth({
+    tokenPath: process.env.AGENOS_UI_TOKEN_PATH?.trim()
+      || join(homedir(), ".agenos", "broker", "ui-token"),
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
   const deps: InstallerApiDependencies = {
@@ -303,20 +491,33 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({ setupService: setup })),
+    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({
+      setupService: setup,
+      ...brokerPiTools,
+    })),
     memoryStore,
+    learnedMemory,
+    selfImprovement,
     taskQueue,
-    appTool: dependencies.appTool ?? createAppTool(),
-    browserTool: dependencies.browserTool ?? createBrowserTool(),
-    shellTool: dependencies.shellTool ?? runShellCommand,
+    appTool,
+    browserTool,
+    fileTool,
+    workspaceService,
+    shellTool,
     confirmations,
+    packageResolver,
+    packageInstaller,
+    packageService,
     agentAdmin,
     setup,
     supportBundle,
-    toolRunner: dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, shellTool: dependencies.shellTool ?? runShellCommand }),
+    network: dependencies.network ?? createNetworkManagerService(),
+    speech: dependencies.speech ?? createSttService(),
+    toolRunner,
     workerAuth: dependencies.workerAuth ?? createLocalWorkerAuth({
       tokenPath: join(homedir(), ".agenos", "broker", "worker-token"),
     }),
+    uiAuth,
   };
 
   return {
@@ -324,8 +525,22 @@ export function createInstallerApiHandler(
       const url = new URL(request.url);
 
       try {
+        if (url.pathname.startsWith("/api/")) {
+          const rejectedOrigin = rejectUntrustedBrowserOrigin(request);
+          if (rejectedOrigin) {
+            return rejectedOrigin;
+          }
+        }
+
         if (request.method === "OPTIONS") {
-          return options(["GET", "POST", "OPTIONS"]);
+          return options(["GET", "POST", "DELETE", "OPTIONS"]);
+        }
+
+        if (url.pathname.startsWith("/api/") && url.pathname !== "/api/agent/worker/tool-call") {
+          const auth = deps.uiAuth.authorizeUiRequest(request);
+          if (auth.ok === false) {
+            return json({ ok: false, message: auth.message }, { status: auth.status });
+          }
         }
 
         if (url.pathname === INSTALLER_ROUTES.health) {
@@ -342,6 +557,55 @@ export function createInstallerApiHandler(
           }
 
           return json(await deps.supportBundle());
+        }
+
+        if (url.pathname === "/api/network/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.network.getStatus());
+        }
+
+        if (url.pathname === "/api/network/wifi/scan") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          return json(await deps.network.scanWifi(), { status: 202 });
+        }
+
+        if (url.pathname === "/api/network/wifi/access-points") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(await deps.network.listAccessPoints());
+        }
+
+        if (url.pathname === "/api/network/wifi/connect") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.network.connectWifi(connectWifiPayload(await readJsonBody(request)));
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/network/wifi/disconnect") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const response = await deps.network.disconnectWifi();
+          return json(response, { status: response.ok ? 202 : 400 });
+        }
+
+        if (url.pathname === "/api/network/wifi/radio") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { enabled?: unknown };
+          if (typeof payload.enabled !== "boolean") {
+            return json({ ok: false, message: "enabled debe ser boolean." }, { status: 400 });
+          }
+          const response = await deps.network.setWifiEnabled(payload.enabled);
+          return json(response, { status: response.ok ? 202 : 400 });
         }
 
         if (url.pathname === INSTALLER_ROUTES.preflight) {
@@ -482,7 +746,9 @@ export function createInstallerApiHandler(
           }
 
           try {
-            return json(await deps.piHarness.startAuth());
+            const payload = await readJsonBody(request) as { method?: unknown };
+            const method: PiAuthMethod = payload.method === "browser" ? "browser" : "device";
+            return json(await deps.piHarness.startAuth(method));
           } catch (error) {
             return piErrorResponse(error);
           }
@@ -579,12 +845,184 @@ export function createInstallerApiHandler(
           }
         }
 
+        if (url.pathname === "/api/pi/turns") {
+          if (request.method === "GET") {
+            try {
+              const limit = Number(url.searchParams.get("limit") ?? "20");
+              return json(deps.piHarness.listTurns(Number.isFinite(limit) ? limit : undefined));
+            } catch (error) {
+              return piErrorResponse(error);
+            }
+          }
+
+          if (request.method !== "POST") {
+            return methodNotAllowed(["GET", "POST", "OPTIONS"]);
+          }
+
+          try {
+            const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
+            const source = typeof payload.source === "string" ? payload.source : "";
+            if (source !== "text" && source !== "voice") {
+              return json(
+                {
+                  ok: false,
+                  message: "El origen debe ser text o voice.",
+                },
+                {
+                  status: 400,
+                },
+              );
+            }
+
+            return json(deps.piHarness.startChat({
+              message: typeof payload.message === "string" ? payload.message : "",
+              source,
+            }), { status: 202 });
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/turns/latest") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getLatestTurn());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        const turnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)$/);
+        if (turnMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          try {
+            return json(deps.piHarness.getTurn(decodeURIComponent(turnMatch[1] ?? "")));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/speech/status") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.speech.status());
+        }
+
+        if (url.pathname === "/api/speech/transcribe") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          const audio = new Uint8Array(await request.arrayBuffer());
+          if (audio.byteLength === 0) {
+            return json({ ok: false, message: "El body debe contener audio." }, { status: 400 });
+          }
+          if (audio.byteLength > MAX_SPEECH_AUDIO_BYTES) {
+            return json({ ok: false, message: "El audio supera el tamano maximo permitido." }, { status: 413 });
+          }
+
+          const result = await deps.speech.transcribe({
+            audio,
+            contentType: request.headers.get("content-type") ?? "",
+            lang: url.searchParams.get("lang") ?? undefined,
+          });
+
+          if (result.ok === false) {
+            const speechStatus = result.code === "unavailable" ? 503 : result.code === "unsupported-media" ? 400 : 500;
+            return json(result, { status: speechStatus });
+          }
+
+          return json(result);
+        }
+
         if (url.pathname === "/api/agent/memory/events") {
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
           const limit = Number(url.searchParams.get("limit") ?? "50");
           return json(deps.memoryStore.events(Number.isFinite(limit) ? limit : 50));
+        }
+
+        if (url.pathname === "/api/agent/learning/memories") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          return json(deps.learnedMemory.list({ includeDeleted: url.searchParams.get("includeDeleted") === "true" }));
+        }
+
+        if (url.pathname === "/api/agent/learning/signals") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const limit = Number(url.searchParams.get("limit") ?? "100");
+          return json(deps.learnedMemory.signals(Number.isFinite(limit) ? limit : 100));
+        }
+
+        if (url.pathname === "/api/agent/learning/context") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const tokenBudget = Number(url.searchParams.get("tokenBudget") ?? "256");
+          return json(deps.learnedMemory.context(
+            url.searchParams.get("query") ?? "",
+            Number.isFinite(tokenBudget) ? tokenBudget : 256,
+          ));
+        }
+
+        if (url.pathname === "/api/agent/learning/signals/harness") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request);
+          if (!isHarnessTracePayload(payload)) {
+            return json({ ok: false, message: "Traza de harness invalida." }, { status: 400 });
+          }
+          const captured = await deps.selfImprovement.captureHarnessTrace(payload);
+          return json({
+            ok: true,
+            signalIds: captured.signals.map((signal) => signal.signalId),
+            proposals: captured.proposals.length,
+          }, { status: 202 });
+        }
+
+        const learnedMemoryMatch = url.pathname.match(/^\/api\/agent\/learning\/memories\/([^/]+)$/);
+        if (learnedMemoryMatch) {
+          const itemId = decodeURIComponent(learnedMemoryMatch[1] ?? "");
+          if (request.method === "POST") {
+            const payload = await readJsonBody(request) as { statement?: unknown; explicitUserIntent?: unknown };
+            if (payload.explicitUserIntent !== true) {
+              return json({ ok: false, message: "La correccion requiere intencion explicita del usuario." }, { status: 403 });
+            }
+            const policy = decidePolicy({ tool: "memory.write", source: "ui", explicitUserIntent: payload.explicitUserIntent === true });
+            if (policy.decision !== "allow") {
+              return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, { status: policy.decision === "deny" ? 403 : 409 });
+            }
+            if (typeof payload.statement !== "string" || !payload.statement.trim()) {
+              return json({ ok: false, message: "La correccion no puede estar vacia." }, { status: 400 });
+            }
+            const item = deps.learnedMemory.update(itemId, { statement: payload.statement });
+            return item ? json(item, { status: 202 }) : json({ ok: false, message: "Memoria aprendida no encontrada." }, { status: 404 });
+          }
+          if (request.method === "DELETE") {
+            const payload = await readJsonBody(request) as { explicitUserIntent?: unknown };
+            if (payload.explicitUserIntent !== true) {
+              return json({ ok: false, message: "Olvidar memoria requiere intencion explicita del usuario." }, { status: 403 });
+            }
+            const policy = decidePolicy({ tool: "memory.delete", source: "ui", explicitUserIntent: payload.explicitUserIntent === true });
+            if (policy.decision !== "allow") {
+              return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, { status: 403 });
+            }
+            const item = deps.learnedMemory.delete(itemId);
+            return item ? json(item, { status: 202 }) : json({ ok: false, message: "Memoria aprendida no encontrada." }, { status: 404 });
+          }
+          return methodNotAllowed(["POST", "DELETE", "OPTIONS"]);
         }
 
         if (url.pathname === "/api/agent/admin/status") {
@@ -598,21 +1036,21 @@ export function createInstallerApiHandler(
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
           }
-          return json(await deps.setup.status());
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "setup.status", input: {} }), 200, 200);
         }
 
         if (url.pathname === "/api/agent/setup/run") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.run(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "setup.run", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/auth/codex/start") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.startCodexLogin(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "auth.codex.start", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/configure") {
@@ -623,21 +1061,21 @@ export function createInstallerApiHandler(
           if (typeof payload.token !== "string" || !payload.token.trim()) {
             return json({ ok: false, message: "Telegram bot token is required." }, { status: 400 });
           }
-          return json(await deps.setup.configureTelegram(payload.token), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.configure", input: { token: payload.token } }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/test") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.testTelegram(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.test", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/channels/telegram/enable") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          return json(await deps.setup.enableTelegram(), { status: 202 });
+          return toolRunResponse(await deps.toolRunner.run({ source: "ui", tool: "telegram.enable", input: {} }), 202, 202);
         }
 
         if (url.pathname === "/api/agent/admin/config") {
@@ -647,7 +1085,7 @@ export function createInstallerApiHandler(
           if (request.method === "POST") {
             const payload = await readJsonBody(request) as Record<string, unknown>;
             const response = await deps.agentAdmin.writeConfig(payload, "ui");
-            return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+            return json(response, { status: response.decision === "confirm" ? 409 : response.ok ? 202 : 403 });
           }
           return methodNotAllowed(["GET", "POST", "OPTIONS"]);
         }
@@ -664,7 +1102,7 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const response = await deps.agentAdmin.restart("ui");
-          return json(response, { status: response.decision === "confirm" ? 409 : 202 });
+          return json(response, { status: response.decision === "confirm" ? 409 : response.ok ? 202 : 403 });
         }
 
         if (url.pathname === "/api/agent/admin/test-connection") {
@@ -692,7 +1130,16 @@ export function createInstallerApiHandler(
           const response = action === "retry"
             ? await deps.agentAdmin.retryTask(taskId, "ui")
             : await deps.agentAdmin.clearTask(taskId, "ui");
-          return json(response, { status: "decision" in response && response.decision === "confirm" ? 409 : 202 });
+          if (action === "retry") {
+            await deps.selfImprovement.captureRetry(taskId);
+          }
+          return json(response, {
+            status: "decision" in response && response.decision === "confirm"
+              ? 409
+              : response.ok
+                ? 202
+                : 409,
+          });
         }
 
         const memoryMatch = url.pathname.match(/^\/api\/agent\/memory\/([^/]+)$/);
@@ -712,7 +1159,7 @@ export function createInstallerApiHandler(
               source?: unknown;
               explicitUserIntent?: unknown;
             };
-            const source = payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui";
+            const source = "ui" as const;
             const policy = decidePolicy({
               tool: "memory.write",
               source,
@@ -772,6 +1219,18 @@ export function createInstallerApiHandler(
 
           const confirmationId = decodeURIComponent(confirmationActionMatch[1] ?? "");
           const action = confirmationActionMatch[2];
+          const pending = deps.confirmations.get(confirmationId);
+          if (!pending) {
+            return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
+          }
+          if (pending.status !== "pending") {
+            return json({
+              ok: false,
+              message: `La confirmacion ya fue ${pending.status === "confirmed" ? "confirmada" : "denegada"}; no se ha repetido la accion.`,
+              confirmation: pending,
+            }, { status: 409 });
+          }
+
           const record = action === "confirm"
             ? deps.confirmations.confirm(confirmationId, "ui")
             : deps.confirmations.deny(confirmationId, "ui");
@@ -779,20 +1238,41 @@ export function createInstallerApiHandler(
             return json({ ok: false, message: "Confirmacion no encontrada." }, { status: 404 });
           }
 
-          if (record.status === "confirmed" && record.tool === "memory.write") {
-            const input = record.input as { namespace?: unknown; content?: unknown };
-            const namespace = input.namespace;
-            if (namespace === "contacts" || namespace === "preferences" || namespace === "facts") {
-              deps.memoryStore.append(namespace, typeof input.content === "string" ? input.content : "", {
-                source: record.source,
-                taskId: record.taskId,
-                correlationId: record.correlationId,
-                confirmationId: record.confirmationId,
-              });
-            }
+          if (record.status === "denied") {
+            await deps.selfImprovement.captureDenied(record);
+            const taskResolution = record.taskId
+              ? await deps.taskQueue.resolveConfirmation(record.taskId, {
+                ok: false,
+                message: `El usuario denego la accion ${record.tool}.`,
+              })
+              : null;
+            return json({
+              ok: taskResolution?.ok !== false,
+              confirmation: record,
+              task: taskResolution,
+              message: taskResolution?.message ?? "Accion denegada; no se ejecuto ningun efecto.",
+            }, { status: taskResolution?.ok === false ? 409 : 202 });
           }
 
-          return json({ ok: true, confirmation: record }, { status: 202 });
+          const execution = record.tool.startsWith("admin.")
+            ? await deps.agentAdmin.executeConfirmed(record)
+            : await deps.toolRunner.executeConfirmed(record);
+          const taskResolution = record.taskId
+            ? await deps.taskQueue.resolveConfirmation(record.taskId, {
+              ok: execution.ok,
+              message: execution.message,
+            })
+            : null;
+          const ok = execution.ok && taskResolution?.ok !== false;
+          const unsupported = execution.ok === false && /no esta disponible|no esta implementada|no tiene un ejecutor/i.test(execution.message ?? "");
+
+          return json({
+            ok,
+            confirmation: record,
+            execution,
+            task: taskResolution,
+            message: taskResolution?.message ?? execution.message,
+          }, { status: ok ? 202 : unsupported ? 501 : 500 });
         }
 
         const confirmationMatch = url.pathname.match(/^\/api\/agent\/confirmations\/([^/]+)$/);
@@ -817,16 +1297,12 @@ export function createInstallerApiHandler(
           if (request.method !== "POST") {
             return methodNotAllowed(["GET", "POST", "OPTIONS"]);
           }
-          const payload = await readJsonBody(request) as { message?: unknown; source?: unknown };
-          const policy = decidePolicy({ tool: "tasks.enqueue", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
-          const response = await deps.taskQueue.enqueue({
-            message: typeof payload.message === "string" ? payload.message : "",
-            source: payload.source === "openclaw" || payload.source === "system" ? payload.source : "ui",
-          });
-          return json(response, { status: response.ok ? 202 : 400 });
+          const payload = await readJsonBody(request) as { message?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "tasks.enqueue",
+            input: { message: typeof payload.message === "string" ? payload.message : "" },
+          }), 202, 503);
         }
 
         const taskEventsMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)\/events$/);
@@ -848,6 +1324,7 @@ export function createInstallerApiHandler(
           if (!task) {
             return json({ ok: false, message: "Tarea no encontrada." }, { status: 404 });
           }
+          await deps.selfImprovement.captureTask(task);
           return json(task);
         }
 
@@ -885,13 +1362,11 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { url?: unknown };
-          const policy = decidePolicy({ tool: "browser.open_url", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
-
-          const response = await deps.browserTool.openUrl(typeof payload.url === "string" ? payload.url : "");
-          return json(response, { status: response.ok ? 202 : 400 });
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "browser.open_url",
+            input: { url: typeof payload.url === "string" ? payload.url : "" },
+          }));
         }
 
         if (url.pathname === "/api/agent/shell/exec") {
@@ -899,33 +1374,142 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { command?: unknown; cwd?: unknown; timeoutMs?: unknown };
-          const policy = decidePolicy({ tool: "shell.exec", source: "ui", explicitUserIntent: true });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, decision: policy.decision, ruleId: policy.ruleId, message: policy.reason }, {
-              status: policy.decision === "deny" ? 403 : 409,
-            });
-          }
-
-          const response = await deps.shellTool({
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "shell.exec",
+            explicitUserIntent: true,
+            input: {
             command: typeof payload.command === "string" ? payload.command : "",
             cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
             timeoutMs: typeof payload.timeoutMs === "number" ? payload.timeoutMs : undefined,
+            },
+          }));
+        }
+
+        if (url.pathname === "/api/agent/files/open") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { path?: unknown; workspace?: unknown; focus?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "files.open",
+            input: {
+              path: typeof payload.path === "string" ? payload.path : "",
+              workspace: payload.workspace,
+              focus: payload.focus !== false,
+            },
+          }));
+        }
+
+        if (url.pathname === "/api/agent/workspaces") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          return json(deps.workspaceService.listWorkspaces());
+        }
+
+        if (url.pathname === "/api/agent/workspaces/events") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+
+          const encoder = new TextEncoder();
+          let unsubscribe = () => {};
+          let stopped = false;
+          const stop = () => {
+            if (stopped) {
+              return;
+            }
+            stopped = true;
+            unsubscribe();
+          };
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              unsubscribe = deps.workspaceService.subscribeWorkspaceChanges((state) => {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(state)}\n\n`));
+              });
+              request.signal.addEventListener("abort", stop, { once: true });
+              if (request.signal.aborted) {
+                stop();
+              }
+            },
+            cancel: stop,
           });
-          return json(response, { status: response.ok ? 202 : 400 });
+
+          return new Response(stream, {
+            headers: {
+              "Cache-Control": "no-cache",
+              "Content-Type": "text/event-stream; charset=utf-8",
+            },
+          });
+        }
+
+        if (url.pathname === "/api/agent/workspaces/focus") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { workspace?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "workspaces.focus",
+            input: { workspace: payload.workspace, source: "ui" },
+          }));
         }
 
         if (url.pathname === "/api/agent/apps/open") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
-          const payload = await readJsonBody(request) as { app?: unknown };
-          const policy = decidePolicy({ tool: "apps.open", source: "ui" });
-          if (policy.decision !== "allow") {
-            return json({ ok: false, message: policy.reason }, { status: 403 });
-          }
+          const payload = await readJsonBody(request) as { app?: unknown; workspace?: unknown; focus?: unknown };
+          return toolRunResponse(await deps.toolRunner.run({
+            source: "ui",
+            tool: "apps.open",
+            input: {
+              app: typeof payload.app === "string" ? payload.app : "",
+              workspace: payload.workspace,
+              focus: payload.focus !== false,
+            },
+          }));
+        }
 
-          const response = await deps.appTool.openApp(typeof payload.app === "string" ? payload.app : "");
-          return json(response, { status: response.ok ? 202 : 400 });
+        if (url.pathname === "/api/agent/packages/resolve") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { query?: unknown };
+          const resolution = await deps.packageService.resolve(typeof payload.query === "string" ? payload.query : "");
+          const status = resolution.ok
+            ? 200
+            : resolution.status === "invalid_query"
+              ? 400
+              : resolution.status === "catalog_unavailable"
+                ? 503
+                : 404;
+          return json(resolution, { status });
+        }
+
+        if (url.pathname === "/api/agent/packages/install") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { query?: unknown };
+          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", "ui");
+          const status = result.status === "confirmation_required"
+            ? 409
+            : result.status === "already_installed"
+              ? 200
+              : result.status === "invalid_query"
+                ? 400
+                : result.status === "catalog_unavailable"
+                  ? 503
+                  : result.status === "not_found"
+                    ? 404
+                    : result.ok
+                      ? 202
+                      : 500;
+          return json(result, { status });
         }
 
         const frontend = frontendResponse(request, url, {
@@ -933,7 +1517,7 @@ export function createInstallerApiHandler(
           systemFrontendDistDir: deps.systemFrontendDistDir,
         });
         if (frontend) {
-          return frontend;
+          return deps.uiAuth.attachSession(frontend);
         }
 
         return json(
@@ -983,6 +1567,9 @@ export function startInstallerApiServer(
   const server = Bun.serve({
     hostname: options.hostname ?? INSTALLER_API_HOST,
     port: options.port ?? INSTALLER_API_PORT,
+    // Pi chat turns hold the request open while the agent runs tools, so the
+    // default 10s idle timeout would kill them mid-turn. 0 disables it.
+    idleTimeout: 0,
     fetch: handler.fetch,
   });
 

@@ -1,30 +1,50 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { cpus, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 
-import { createPiHarness, PiHarnessError } from "../../dev/pi-harness";
-import { launchBrowserUrl } from "../../../agent/browser-launcher";
-import { PI_IPC_CHANNELS, SYSTEM_IPC_CHANNELS } from "./ipc";
-import type { PiChatSource } from "../lib/pi-types";
-import type { ApiMessageResponse, PreflightResponse, ShellMode, SystemRuntimeInfo } from "../lib/system-types";
+import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from "./broker-pi-client";
+import { loadPreferredFrontend } from "./frontend-loader";
+import {
+  PI_IPC_CHANNELS,
+  SPEECH_IPC_CHANNELS,
+  SYSTEM_IPC_CHANNELS,
+  type SpeechCapturePhase,
+} from "./ipc";
+import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
+import { createNetworkManagerService } from "../../../network/node/network-manager";
+import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
+import { createSystemIpcServices } from "./system-ipc-services";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
 const GPU_MODE = process.env.AGENOS_ELECTRON_GPU_MODE?.trim().toLowerCase() === "off" ? "off" : "on";
+const BROKER_BASE_URL = process.env.AGENOS_AGENT_API_BASE?.trim() || DEFAULT_BROKER_BASE_URL;
 
 type IpcEnvelope<T> =
   | { ok: true; value: T }
   | { ok: false; status?: number; message: string };
 
+type SpeechTranscriptionResponse = {
+  transcript: string;
+  engine: "whisper.cpp";
+  language: "es";
+  model: string;
+};
+
+type CommandResult = {
+  stdout: string;
+  stderr: string;
+};
+
 let mainWindow: BrowserWindow | null = null;
-const piHarness = createPiHarness(undefined, {
-  onAuth: (info, attempt) => {
-    if (attempt.method === "browser") {
-      openExternalUrl(info.url);
-    }
-  },
-});
+const networkService = createNetworkManagerService();
+const systemServices = createSystemIpcServices();
+type PiBrokerClient = ReturnType<typeof createBrokerPiClient>;
+let piClient: PiBrokerClient | null = null;
 
 function configureCommandLine(): void {
   if (GPU_MODE === "off") {
@@ -66,6 +86,20 @@ function firstExistingPath(candidates: Array<string | null | undefined>): string
   }
 
   return null;
+}
+
+function resolveCommand(commandName: string, configuredPath: string | undefined, candidates: string[]): string | null {
+  const trimmed = configuredPath?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  const existing = firstExistingPath(candidates);
+  if (existing) {
+    return existing;
+  }
+
+  return commandName;
 }
 
 function resolveIndexPath(): string | null {
@@ -148,15 +182,40 @@ function showWindow(): void {
 
   mainWindow.show();
   mainWindow.focus();
-  mainWindow.setFullScreen(true);
+  // Maximizada, no en fullscreen: el fullscreen esconde la barra de escritorios
+  // de Sway y el usuario pierde de vista en que workspace esta. En tiling la
+  // ventana ya ocupa todo el area util; maximize solo importa fuera de Sway.
+  mainWindow.maximize();
 }
 
 function openExternalUrl(url: string): void {
+  if (!isHttpUrl(url)) {
+    console.warn(`URL externa bloqueada: ${url}`);
+    return;
+  }
+
+  void getPiClient().openBrowserUrl(url)
+    .then((result) => {
+      if (!result.ok) {
+        console.warn(`El broker no pudo abrir Chromium: ${result.message}`);
+      }
+    })
+    .catch((error) => {
+      console.warn(`El broker no pudo abrir la URL: ${normalizeErrorMessage(error)}`);
+    });
+}
+
+function getPiClient(): PiBrokerClient {
+  piClient ??= createBrokerPiClient({ baseUrl: BROKER_BASE_URL });
+  return piClient;
+}
+
+function isHttpUrl(input: string): boolean {
   try {
-    launchBrowserUrl(url);
-  } catch (error) {
-    console.warn(`No se pudo abrir Chromium directamente: ${normalizeErrorMessage(error)}`);
-    void shell.openExternal(url);
+    const url = new URL(input);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
   }
 }
 
@@ -167,14 +226,235 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
   };
 }
 
-function createVisualPreflight(): PreflightResponse {
-  return {
-    firmware: existsSync("/sys/firmware/efi") ? "UEFI" : "BIOS",
-    isLiveSession: existsSync("/run/live/medium"),
-    totalRamBytes: 0,
-    installableDiskBytes: 0,
-    checks: [],
-  };
+function parsePositiveInteger(value: string | undefined, fallback: number, options: { min: number; max: number }): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(options.max, Math.max(options.min, parsed));
+}
+
+function runCommand(
+  command: string,
+  args: string[],
+  options: { timeoutMs: number; env?: NodeJS.ProcessEnv },
+): Promise<CommandResult> {
+  return new Promise((resolveCommandResult, reject) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        ...options.env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let settled = false;
+
+    const finish = (error: Error | null, result?: CommandResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      if (error) {
+        reject(error);
+      } else {
+        resolveCommandResult(result ?? { stdout: "", stderr: "" });
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(new Error(`El comando ${command} excedio el tiempo limite.`));
+    }, options.timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      finish(error);
+    });
+    child.on("close", (code) => {
+      const result = {
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      };
+
+      if (code === 0) {
+        finish(null, result);
+        return;
+      }
+
+      const detail = result.stderr.trim() || result.stdout.trim();
+      finish(new Error(`${command} termino con codigo ${code ?? 1}${detail ? `: ${detail}` : "."}`));
+    });
+  });
+}
+
+function normalizeTranscript(output: string): string {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*\[[^\]]+\]\s*/, "").trim())
+    .filter((line) => line && !line.startsWith("whisper_") && !line.startsWith("main:") && !isNonSpeechTranscript(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isNonSpeechTranscript(line: string): boolean {
+  const normalized = line
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return /^\[(musica|music|silencio|silence|aplausos|applause|ruido|noise|sonido)\]$/.test(normalized);
+}
+
+function resolveWhisperBinary(): string | null {
+  const configuredPath = process.env.AGENOS_WHISPER_CPP_BIN?.trim();
+  if (configuredPath) {
+    return configuredPath;
+  }
+
+  const simdCandidates = [
+    ...appPathCandidates("../whisper.cpp/whisper-cli"),
+    "/opt/agenos/system/whisper.cpp/whisper-cli",
+    "/usr/local/bin/whisper-cli",
+    "/usr/bin/whisper-cli",
+  ];
+  const baselineCandidates = [
+    ...appPathCandidates("../whisper.cpp/whisper-cli-baseline"),
+    "/opt/agenos/system/whisper.cpp/whisper-cli-baseline",
+  ];
+  const packagedCandidates = cpuSupportsPackagedWhisperSimd()
+    ? [...simdCandidates, ...baselineCandidates]
+    : [...baselineCandidates, ...simdCandidates];
+
+  return firstExistingPath(packagedCandidates) ?? "whisper-cli";
+}
+
+function cpuSupportsPackagedWhisperSimd(): boolean {
+  if (process.env.AGENOS_STT_FORCE_BASELINE?.trim() === "1") {
+    return false;
+  }
+
+  if (process.platform !== "linux" || process.arch !== "x64") {
+    return true;
+  }
+
+  try {
+    const flagsLine = readFileSync("/proc/cpuinfo", "utf8")
+      .toLowerCase()
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("flags"));
+    const flags = new Set((flagsLine?.split(":")[1] ?? "").trim().split(/\s+/));
+
+    return ["sse4_2", "avx", "avx2", "fma", "f16c", "bmi2"].every((flag) => flags.has(flag));
+  } catch {
+    return true;
+  }
+}
+
+function resolveWhisperModel(): string | null {
+  const configuredPath = process.env.AGENOS_WHISPER_MODEL?.trim();
+  return firstExistingPath([
+    configuredPath ? resolve(configuredPath) : null,
+    ...appPathCandidates("../whisper.cpp/models/ggml-base.bin"),
+    "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+  ]);
+}
+
+function resolveRecorderBinary(): string | null {
+  return resolveCommand("arecord", process.env.AGENOS_STT_RECORDER_BIN, [
+    "/usr/bin/arecord",
+    "/bin/arecord",
+  ]);
+}
+
+/** Avisa al renderer de en qué punto de la captura estamos. */
+function emitSpeechPhase(phase: SpeechCapturePhase): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send(SPEECH_IPC_CHANNELS.phase, phase);
+}
+
+async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
+  const whisperBinary = resolveWhisperBinary();
+  const modelPath = resolveWhisperModel();
+  const recorderBinary = resolveRecorderBinary();
+
+  if (!whisperBinary || !modelPath || !recorderBinary) {
+    throw new Error("STT local no esta instalado. Falta whisper.cpp, el modelo base multilingue o arecord.");
+  }
+
+  const seconds = parsePositiveInteger(process.env.AGENOS_STT_RECORD_SECONDS, 4, { min: 2, max: 30 });
+  const threads = parsePositiveInteger(process.env.AGENOS_STT_THREADS, Math.max(1, Math.min(4, cpus().length || 4)), { min: 1, max: 16 });
+  const runtimeDir = await mkdtemp(join(tmpdir(), "agenos-stt-"));
+  const wavPath = join(runtimeDir, "utterance.wav");
+  const device = process.env.AGENOS_STT_ALSA_DEVICE?.trim() || "default";
+
+  try {
+    emitSpeechPhase("listening");
+    await runCommand(recorderBinary, [
+      "-q",
+      "-D",
+      device,
+      "-t",
+      "wav",
+      "-f",
+      "S16_LE",
+      "-r",
+      "16000",
+      "-c",
+      "1",
+      "-d",
+      String(seconds),
+      wavPath,
+    ], { timeoutMs: (seconds + 3) * 1000 });
+
+    emitSpeechPhase("transcribing");
+    const transcription = await runCommand(whisperBinary, [
+      "-m",
+      modelPath,
+      "-f",
+      wavPath,
+      "-l",
+      "es",
+      "-t",
+      String(threads),
+      "-nt",
+      "-np",
+    ], {
+      timeoutMs: Math.max(20000, seconds * 12000),
+      env: {
+        LD_LIBRARY_PATH: [
+          resolve(whisperBinary, "..", "lib"),
+          process.env.LD_LIBRARY_PATH,
+        ].filter(Boolean).join(":"),
+      },
+    });
+    const transcript = normalizeTranscript(transcription.stdout);
+
+    if (!transcript) {
+      throw new Error("No se detecto voz. Intentalo otra vez o usa texto.");
+    }
+
+    return {
+      transcript,
+      engine: "whisper.cpp",
+      language: "es",
+      model: modelPath,
+    };
+  } finally {
+    await rm(runtimeDir, { recursive: true, force: true });
+  }
 }
 
 function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
@@ -183,21 +463,19 @@ function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
     .then((value) => ({ ok: true, value }) satisfies IpcEnvelope<T>)
     .catch((error) => ({
       ok: false,
-      status: error instanceof PiHarnessError ? error.status : 500,
+      status: error instanceof BrokerApiError ? error.status : 500,
       message: normalizeErrorMessage(error),
     }) satisfies IpcEnvelope<T>);
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => createVisualPreflight());
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.runMaintenance, async (): Promise<ApiMessageResponse> => normalizeApiMessageResponse({
-    ok: true,
-    message: "Mantenimiento no implementado en la shell visual nativa.",
-  }));
-  ipcMain.handle(SYSTEM_IPC_CHANNELS.switchMode, async (_event, mode: ShellMode): Promise<ApiMessageResponse> => normalizeApiMessageResponse({
-    ok: mode === "installer" || mode === "system",
-    message: mode === "installer" || mode === "system" ? `Modo ${mode} solicitado.` : "El modo debe ser installer o system.",
-  }));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => systemServices.getPreflight());
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.runMaintenance, async (_event, action: unknown): Promise<ApiMessageResponse> => (
+    normalizeApiMessageResponse(await systemServices.runMaintenance(action))
+  ));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.switchMode, async (_event, mode: unknown): Promise<ApiMessageResponse> => (
+    normalizeApiMessageResponse(await systemServices.switchMode(mode))
+  ));
   ipcMain.handle(SYSTEM_IPC_CHANNELS.getRuntimeInfo, async (): Promise<SystemRuntimeInfo> => ({
     mode: BRIDGE_MODE,
     host: "electron",
@@ -205,38 +483,79 @@ function registerIpcHandlers(): void {
     version: app.getVersion(),
   }));
 
-  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => piHarness.getStatus()));
-  ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(() => {
+  ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
+  ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {
     const method = String(payload?.method ?? "device");
     if (method !== "device" && method !== "browser") {
-      throw new PiHarnessError(400, "El metodo de login debe ser device o browser.");
+      throw new BrokerApiError(400, "El metodo de login debe ser device o browser.");
     }
 
-    return piHarness.startAuth(method);
+    const attempt = await getPiClient().startAuth(method);
+    if (method === "browser" && attempt.url) {
+      openExternalUrl(attempt.url);
+    }
+    return attempt;
   }));
   ipcMain.handle(PI_IPC_CHANNELS.cancelAuth, (_event, payload: { attemptId?: unknown }) => wrapPi(() => {
-    piHarness.cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
+    return getPiClient().cancelAuth(typeof payload?.attemptId === "string" ? payload.attemptId : undefined);
   }));
   ipcMain.handle(PI_IPC_CHANNELS.getAuthAttempt, (_event, payload: { attemptId?: unknown }) => wrapPi(() => (
-    piHarness.getAuthAttempt(String(payload.attemptId ?? ""))
+    getPiClient().getAuthAttempt(String(payload.attemptId ?? ""))
   )));
   ipcMain.handle(PI_IPC_CHANNELS.submitManualCode, (_event, payload: { attemptId?: unknown; input?: unknown }) => wrapPi(() => (
-    piHarness.submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
+    getPiClient().submitManualCode(String(payload.attemptId ?? ""), String(payload.input ?? ""))
   )));
   ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(() => {
-    piHarness.logout();
+    return getPiClient().logout();
   }));
-  ipcMain.handle(PI_IPC_CHANNELS.sendMessage, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(() => {
+  ipcMain.handle(PI_IPC_CHANNELS.sendMessage, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(async () => {
     const source = String(payload.source ?? "");
     if (source !== "text" && source !== "voice") {
-      throw new PiHarnessError(400, "El origen debe ser text o voice.");
+      throw new BrokerApiError(400, "El origen debe ser text o voice.");
     }
 
-    return piHarness.chat({
+    return getPiClient().chat({
       message: String(payload.message ?? ""),
-      source: source as PiChatSource,
+      source,
     });
   }));
+  ipcMain.handle(PI_IPC_CHANNELS.startTurn, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(async () => {
+    const source = String(payload.source ?? "");
+    if (source !== "text" && source !== "voice") {
+      throw new BrokerApiError(400, "El origen debe ser text o voice.");
+    }
+
+    return getPiClient().startChat({
+      message: String(payload.message ?? ""),
+      source,
+    });
+  }));
+  ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
+    getPiClient().getTurn(String(payload.turnId ?? ""))
+  )));
+  ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(() => getPiClient().getLatestTurn()));
+  ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(() => (
+    getPiClient().listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
+  )));
+
+  ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
+
+  ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.listAccessPoints, () => networkService.listAccessPoints());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.connectWifi, (_event, payload: ConnectWifiRequest) => (
+    networkService.connectWifi({
+      ssid: typeof payload?.ssid === "string" ? payload.ssid : "",
+      bssid: typeof payload?.bssid === "string" ? payload.bssid : undefined,
+      password: typeof payload?.password === "string" ? payload.password : undefined,
+      hidden: payload?.hidden === true,
+      device: typeof payload?.device === "string" ? payload.device : undefined,
+    })
+  ));
+  ipcMain.handle(NETWORK_IPC_CHANNELS.disconnectWifi, () => networkService.disconnectWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.setWifiEnabled, (_event, payload: { enabled?: unknown }) => (
+    networkService.setWifiEnabled(payload?.enabled === true)
+  ));
 }
 
 async function loadMainContent(): Promise<void> {
@@ -250,7 +569,16 @@ async function loadMainContent(): Promise<void> {
     return;
   }
 
-  await mainWindow.loadFile(indexPath);
+  const loadResult = await loadPreferredFrontend({
+    brokerBaseUrl: BROKER_BASE_URL,
+    localIndexPath: indexPath,
+    loadUrl: (url) => mainWindow?.loadURL(url) ?? Promise.reject(new Error("La ventana principal ya no está disponible.")),
+    loadFile: (path) => mainWindow?.loadFile(path) ?? Promise.reject(new Error("La ventana principal ya no está disponible.")),
+  });
+
+  if (loadResult === "local") {
+    console.warn("El broker no estaba disponible durante el arranque; se cargó la interfaz local empaquetada.");
+  }
 }
 
 function createMainWindow(): void {
@@ -261,10 +589,10 @@ function createMainWindow(): void {
 
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    show: false,
+    show: true,
     backgroundColor: "#090b12",
     autoHideMenuBar: true,
-    fullscreen: true,
+    fullscreen: false,
     useContentSize: true,
     webPreferences: {
       backgroundThrottling: false,
@@ -279,10 +607,19 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https://") || url.startsWith("http://")) {
+    if (isHttpUrl(url)) {
       openExternalUrl(url);
     }
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("data:") || url.startsWith("file://") || new URL(url).origin === new URL(BROKER_BASE_URL).origin) {
+      return;
+    }
+
+    event.preventDefault();
+    openExternalUrl(url);
   });
 
   mainWindow.once("ready-to-show", showWindow);

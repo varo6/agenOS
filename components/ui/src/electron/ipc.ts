@@ -13,4 +13,21 @@ export const PI_IPC_CHANNELS = {
   submitManualCode: "agenos-pi:submit-manual-code",
   logout: "agenos-pi:logout",
   sendMessage: "agenos-pi:send-message",
+  startTurn: "agenos-pi:start-turn",
+  getTurn: "agenos-pi:get-turn",
+  getLatestTurn: "agenos-pi:get-latest-turn",
+  listTurns: "agenos-pi:list-turns",
 } as const;
+
+export const SPEECH_IPC_CHANNELS = {
+  transcribeOnce: "agenos-speech:transcribe-once",
+  /**
+   * Evento del proceso principal al renderer con la fase de la captura. Sin
+   * esto la interfaz no puede distinguir "te escucho" de "estoy entendiendo lo
+   * que has dicho", que es la señal más importante de una interfaz por voz.
+   */
+  phase: "agenos-speech:phase",
+} as const;
+
+/** Fases observables de una captura de voz local. */
+export type SpeechCapturePhase = "listening" | "transcribing";

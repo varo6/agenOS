@@ -1,7 +1,14 @@
 dist/
+# Caches de descarga (cargo, bun, electron) que scripts/build-iso.sh redirige
+# aqui para que sobrevivan al contenedor --rm entre builds.
+.cache/
 components/ui/dist/
 components/ui/build/
 components/ui/node_modules/
+components/network/dist/
+components/network/build/
+components/network/node_modules/
+components/network/node/node_modules/
 components/installer-ui/build/
 components/installer-ui/node_modules/
 components/installer-ui/dist/
@@ -26,7 +33,15 @@ build/live-build/vmlinuz
 build/live-build/config/includes.chroot/opt/agenos/installer/
 build/live-build/config/includes.chroot/opt/agenos/system/
 build/live-build/config/includes.chroot/usr/local/share/agenos-ui/
+build/live-build/config/includes.chroot/usr/local/bin/agenos-shell-helper
+build/live-build/config/includes.chroot/usr/local/lib/agenos-shell/server
+build/live-build/config/includes.chroot/usr/local/lib/agenos-shell/emergency
 tools/agenos-shell-rust/target/
+tools/pi-harness-eval/.out/
 releases/
 __pycache__/
 *.pyc
+.superpowers/
+
+# Andamiaje de orquestacion: briefs de trabajo, no fuente del proyecto.
+.orchestration/

@@ -12,10 +12,16 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "baseUrl": ".",
+    "paths": {
+      "react": ["node_modules/@types/react"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["node_modules/@types/react/jsx-dev-runtime"],
+      "lucide-react": ["node_modules/lucide-react"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/shared/**/*.ts", "src/views/**/*.ts", "src/views/**/*.tsx"]
+  "include": ["src/shared/**/*.ts", "src/views/**/*.ts", "src/views/**/*.tsx", "../network/**/*.ts", "../network/**/*.tsx"]
 }

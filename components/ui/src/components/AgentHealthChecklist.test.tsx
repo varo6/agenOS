@@ -29,7 +29,9 @@ const setupStatus: AgentAdminStatus = {
 };
 
 describe("AgentHealthChecklist", () => {
-  test("summarizes backend, worker, codex auth and support status", () => {
+  // Mismas cuatro comprobaciones que antes (servicio, motor, cuenta y soporte),
+  // pero nombradas por lo que significan para quien mira la pantalla.
+  test("summarizes service, worker, account and support status in plain Spanish", () => {
     render(
       <AgentHealthChecklist
         adminStatus={setupStatus}
@@ -39,13 +41,29 @@ describe("AgentHealthChecklist", () => {
       />,
     );
 
-    expect(screen.getByText("Backend")).toBeInTheDocument();
-    expect(screen.getByText("Broker local disponible")).toBeInTheDocument();
-    expect(screen.getByText("Worker")).toBeInTheDocument();
-    expect(screen.getByText("Setup requerido")).toBeInTheDocument();
-    expect(screen.getByText("Codex/Auth")).toBeInTheDocument();
+    expect(screen.getByText("Servicio de Pi")).toBeInTheDocument();
+    expect(screen.getByText("Funcionando")).toBeInTheDocument();
+    expect(screen.getByText("Motor de tareas")).toBeInTheDocument();
+    expect(screen.getByText("Falta configurarlo")).toBeInTheDocument();
+    expect(screen.getByText("Tu cuenta")).toBeInTheDocument();
     expect(screen.getByText("Conecta ChatGPT")).toBeInTheDocument();
     expect(screen.getByText("Soporte")).toBeInTheDocument();
-    expect(screen.getByText("Diagnostico listo")).toBeInTheDocument();
+    expect(screen.getByText("Informe disponible")).toBeInTheDocument();
+  });
+
+  // El dato técnico sigue estando: es lo que hace falta para diagnosticar y
+  // para defender el trabajo, pero como tercera línea y no como titular.
+  test("keeps the technical reading available as the supporting line", () => {
+    render(
+      <AgentHealthChecklist
+        adminStatus={setupStatus}
+        authState="disconnected"
+        backendError={null}
+        harnessAvailable
+      />,
+    );
+
+    expect(screen.getByText("Configura provider auth")).toBeInTheDocument();
+    expect(screen.getByText(/127\.0\.0\.1:4173/)).toBeInTheDocument();
   });
 });

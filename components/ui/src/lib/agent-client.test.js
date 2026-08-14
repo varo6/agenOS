@@ -98,12 +98,76 @@ describe("agent client", () => {
     };
 
     const client = createAgentClient({ baseUrl: "http://agent.test" });
-    expect(await client.openApp("Chrome")).toEqual({
+    expect(await client.openApp("Chrome", { workspace: 3, focus: true })).toEqual({
       ok: true,
       message: "Abriendo Chrome.",
     });
     expect(requestedUrl).toBe("http://agent.test/api/agent/apps/open");
-    expect(JSON.parse(payload)).toEqual({ app: "Chrome" });
+    expect(JSON.parse(payload)).toEqual({ app: "Chrome", workspace: 3, focus: true });
+  });
+
+  test("lists workspaces through the broker", async () => {
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        ok: true,
+        activeWorkspace: 1,
+        workspaces: [{ number: 1, name: "1:home", label: "Home" }],
+      }), { status: 200 });
+    };
+
+    const client = createAgentClient({ baseUrl: "http://agent.test" });
+    expect(await client.listWorkspaces()).toMatchObject({ ok: true, activeWorkspace: 1 });
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces");
+  });
+
+  test("focuses workspaces through the broker", async () => {
+    let requestedUrl = "";
+    let payload = "";
+    globalThis.fetch = async (input, init) => {
+      requestedUrl = String(input);
+      payload = String(init?.body ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        activeWorkspace: 2,
+        workspaces: [],
+      }), { status: 202 });
+    };
+
+    const client = createAgentClient({ baseUrl: "http://agent.test" });
+    expect(await client.focusWorkspace(2)).toMatchObject({ ok: true, activeWorkspace: 2 });
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces/focus");
+    expect(JSON.parse(payload)).toEqual({ workspace: 2, source: "ui" });
+  });
+
+  test("subscribes to pushed workspace state and closes the stream", () => {
+    let requestedUrl = "";
+    let closed = false;
+    const eventSource = {
+      onmessage: null,
+      close() {
+        closed = true;
+      },
+    };
+    const client = createAgentClient({
+      baseUrl: "http://agent.test",
+      eventSourceFactory: (url) => {
+        requestedUrl = url;
+        return eventSource;
+      },
+    });
+    const states = [];
+
+    const unsubscribe = client.subscribeWorkspaceChanges((state) => states.push(state));
+    eventSource.onmessage({
+      data: JSON.stringify({ ok: true, activeWorkspace: 5, workspaces: [] }),
+    });
+
+    expect(requestedUrl).toBe("http://agent.test/api/agent/workspaces/events");
+    expect(states).toEqual([{ ok: true, activeWorkspace: 5, workspaces: [] }]);
+    unsubscribe();
+    expect(closed).toBe(true);
   });
 
   test("uses the real packaged broker from file and Vite dev origins", async () => {

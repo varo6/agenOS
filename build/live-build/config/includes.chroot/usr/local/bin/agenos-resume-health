@@ -1,0 +1,36 @@
+#!/bin/sh
+set -u
+
+probe_url() {
+    url="$1"
+    attempt=1
+
+    while [ "${attempt}" -le 3 ]; do
+        if curl --silent --show-error --output /dev/null --max-time 3 "${url}"; then
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+
+    return 1
+}
+
+recover_service() {
+    service="$1"
+    url="$2"
+
+    if systemctl is-active --quiet "${service}" && probe_url "${url}"; then
+        logger -t agenos-resume "${service} is healthy after resume"
+        return 0
+    fi
+
+    logger -t agenos-resume "${service} is unhealthy after resume; restarting"
+    systemctl restart "${service}"
+}
+
+# The broker and shell use request/response HTTP or local Electron IPC, not a
+# long-lived WebSocket. Probe the two listening processes that can nevertheless
+# lose a local socket across a buggy platform resume.
+recover_service agenos-agent-api.service http://127.0.0.1:4173/api/speech/status
+recover_service agenos-openclaw.service http://127.0.0.1:18789/v1/models

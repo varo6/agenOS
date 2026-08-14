@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentAdminService } from "./admin";
@@ -44,27 +44,67 @@ describe("agent admin service", () => {
     });
   });
 
-  test("config writes and restart are allowed for the frontend superuser", async () => {
+  test("persists confirmed config writes and invokes a real restart effect", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
+    const userConfigPath = join(rootDir, "config.json");
+    const restartCalls: string[] = [];
     const service = createAgentAdminService({
       stateDir: rootDir,
+      env: { AGENOS_OPENCLAW_USER_CONFIG: userConfigPath },
       worker: { health: async () => ({ ok: true, mode: "local-simulated", serviceActive: false }) } as never,
       confirmations: {
         create: (request) => ({ confirmationId: `conf_${request.tool}`, status: "pending" }),
       } as never,
+      restartWorker: async () => {
+        restartCalls.push("restart");
+        return { ok: true, message: "reiniciado" };
+      },
     });
 
     await expect(service.writeConfig({ mode: "local-simulated" }, "ui")).resolves.toMatchObject({
-      ok: true,
-      decision: "allow",
+      ok: false,
+      decision: "confirm",
+      confirmationId: "conf_admin.config.write",
     });
     await expect(service.restart("ui")).resolves.toMatchObject({
-      ok: true,
-      decision: "allow",
+      ok: false,
+      decision: "confirm",
+      confirmationId: "conf_admin.service.restart",
     });
+
+    await expect(service.executeConfirmed({
+      schemaVersion: 1,
+      confirmationId: "conf_config",
+      correlationId: "corr_config",
+      timestamp: "2026-08-13T10:00:00.000Z",
+      action: "confirmation.confirm",
+      status: "confirmed",
+      source: "ui",
+      tool: "admin.config.write",
+      summary: "config",
+      input: { mode: "local-simulated", explicitUserIntent: true },
+      actor: "ui",
+    })).resolves.toMatchObject({ ok: true, message: expect.stringContaining("guardada y aplicada") });
+    expect(JSON.parse(readFileSync(userConfigPath, "utf8"))).toMatchObject({ mode: "local-simulated" });
+    await expect(service.readConfig()).resolves.toMatchObject({ mode: "local-simulated" });
+
+    await expect(service.executeConfirmed({
+      schemaVersion: 1,
+      confirmationId: "conf_restart",
+      correlationId: "corr_restart",
+      timestamp: "2026-08-13T10:00:00.000Z",
+      action: "confirmation.confirm",
+      status: "confirmed",
+      source: "ui",
+      tool: "admin.service.restart",
+      summary: "restart",
+      input: {},
+      actor: "ui",
+    })).resolves.toEqual({ ok: true, message: "reiniciado" });
+    expect(restartCalls).toEqual(["restart"]);
   });
 
-  test("test connection reports setup needs without failing runtime", async () => {
+  test("test connection fails honestly outside the real OpenClaw gateway", async () => {
     const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
     const service = createAgentAdminService({
       stateDir: rootDir,
@@ -74,8 +114,69 @@ describe("agent admin service", () => {
     await expect(service.testConnection("ui")).resolves.toMatchObject({
       ok: false,
       status: 503,
-      readiness: "needs_setup",
+      readiness: "degraded",
+      message: expect.stringContaining("no esta disponible"),
     });
+  });
+
+  test("test connection performs a real OpenClaw provider round trip", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
+    let probes = 0;
+    const service = createAgentAdminService({
+      stateDir: rootDir,
+      worker: {
+        health: async () => {
+          return { ok: true, mode: "openclaw-process", serviceActive: true };
+        },
+        testConnection: async () => {
+          probes += 1;
+          return { ok: true, message: "proveedor verificado" };
+        },
+      } as never,
+    });
+
+    await expect(service.testConnection("ui")).resolves.toMatchObject({
+      ok: true,
+      status: 200,
+      readiness: "ready",
+      message: "proveedor verificado",
+    });
+    expect(probes).toBe(1);
+  });
+
+  test("retry and confirmed clear delegate to the task queue and expose failures", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "agenos-admin-"));
+    const calls: string[] = [];
+    const taskQueue = {
+      health: async () => ({ ok: true, mode: "openclaw-process", serviceActive: true }),
+      events: async () => [],
+      list: async () => [],
+      retry: async (taskId: string) => {
+        calls.push(`retry:${taskId}`);
+        return { ok: true, taskId: "task_new", message: "reintentada" };
+      },
+      clear: async (taskId: string) => {
+        calls.push(`clear:${taskId}`);
+        return { ok: true, taskId, message: "eliminada" };
+      },
+    };
+    const service = createAgentAdminService({ stateDir: rootDir, taskQueue: taskQueue as never });
+
+    await expect(service.retryTask("task_old", "ui")).resolves.toMatchObject({ ok: true, taskId: "task_new" });
+    await expect(service.executeConfirmed({
+      schemaVersion: 1,
+      confirmationId: "conf_clear",
+      correlationId: "corr_clear",
+      timestamp: "2026-08-13T10:00:00.000Z",
+      action: "confirmation.confirm",
+      status: "confirmed",
+      source: "ui",
+      tool: "admin.queue.clear",
+      summary: "clear",
+      input: { taskId: "task_old" },
+      actor: "ui",
+    })).resolves.toMatchObject({ ok: true, message: "eliminada" });
+    expect(calls).toEqual(["retry:task_old", "clear:task_old"]);
   });
 
   test("includes setup actions in backend status", async () => {

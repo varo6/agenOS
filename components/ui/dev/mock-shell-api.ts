@@ -220,6 +220,58 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  if (url.pathname === "/api/pi/turns" && method === "GET") {
+    try {
+      const limit = Number(url.searchParams.get("limit") ?? "20");
+      sendJson(response, 200, piHarness.listTurns(Number.isFinite(limit) ? limit : undefined));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/turns" && method === "POST") {
+    try {
+      const payload = await readJsonBody(request);
+      const message =
+        payload && typeof payload === "object" && "message" in payload ? String(payload.message ?? "") : "";
+      const source =
+        payload && typeof payload === "object" && "source" in payload ? String(payload.source ?? "") : "";
+
+      if (source !== "text" && source !== "voice") {
+        sendJson(response, 400, {
+          ok: false,
+          message: "El origen debe ser text o voice.",
+        });
+        return true;
+      }
+
+      sendJson(response, 202, piHarness.startChat({ message, source }));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/pi/turns/latest" && method === "GET") {
+    try {
+      sendJson(response, 200, piHarness.getLatestTurn());
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  const turnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)$/);
+  if (turnMatch && method === "GET") {
+    try {
+      sendJson(response, 200, piHarness.getTurn(decodeURIComponent(turnMatch[1] ?? "")));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   sendJson(response, 404, {
     ok: false,
     message: `Ruta mock no implementada: ${method} ${url.pathname}`,

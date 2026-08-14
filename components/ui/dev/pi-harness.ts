@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai/oauth";
 import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
@@ -14,8 +15,31 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 
+import {
+  createHarnessTraceId,
+  createHarnessTraceRecorder,
+  hashHarnessPrompt,
+  previewHarnessTraceText,
+  redactHarnessTraceText,
+  type HarnessTraceRecorder,
+  type HarnessTraceRecord,
+  type HarnessTraceStatus,
+  type HarnessTraceToolEvent,
+} from "../../agent/harness-trace";
 import { PI_SYSTEM_CONTEXT_MARKDOWN } from "../../agent/pi-system-context";
-import { createAppTool, type AppInstallResponse, type AppOpenResponse } from "../../agent/apps";
+import { createAgentTaskModelTool, createHttpAgentTaskClient, type AgentTaskClient } from "../../agent/agent-task-tool";
+import {
+  createHttpLearningMemoryClient,
+  createLearningMemoryModelTool,
+  type LearnedContextResponse,
+  type LearningMemoryClient,
+} from "../../agent/learning-memory-tool";
+import { createAppTool, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
+import { createOpenBrowserModelTool } from "../../agent/browser-open-tool";
+import { createOpenFileModelTool } from "../../agent/file-open-tool";
+import { createPackageInstallModelTool, type PackageInstallToolService } from "../../agent/package-install-tool";
+import { createOpenClawSetupModelTool } from "../../installer-ui/src/bun/agent/openclaw-setup-tool";
+import { createOpenClawSetupService, type OpenClawSetupService } from "../../installer-ui/src/bun/agent/setup";
 import type {
   PiAuthAttemptResponse,
   PiAuthMethod,
@@ -24,6 +48,7 @@ import type {
   PiChatResponse,
   PiPendingAttempt,
   PiStatusResponse,
+  PiTurnState,
 } from "../src/lib/pi-types";
 
 export const PI_PROVIDER_ID = "openai-codex" as const;
@@ -39,6 +64,9 @@ export type PiHarnessPaths = {
   agentDir: string;
   authPath: string;
   codexDeviceDir: string;
+  tracePath: string;
+  turnsPath: string;
+  sessionsDir: string;
 };
 
 export function resolvePiHarnessPaths(
@@ -51,6 +79,9 @@ export function resolvePiHarnessPaths(
     agentDir,
     authPath: join(agentDir, "auth.json"),
     codexDeviceDir: join(agentDir, "codex-device"),
+    tracePath: join(agentDir, "traces", "pi-chat.ndjson"),
+    turnsPath: join(agentDir, "turns.json"),
+    sessionsDir: join(agentDir, "sessions"),
   };
 }
 
@@ -58,13 +89,48 @@ const PI_PATHS = resolvePiHarnessPaths();
 const PI_AGENT_DIR = PI_PATHS.agentDir;
 const PI_AUTH_PATH = PI_PATHS.authPath;
 const PI_CODEX_DEVICE_DIR = PI_PATHS.codexDeviceDir;
+const PI_TRACE_PATH = PI_PATHS.tracePath;
+const PI_TURNS_PATH = PI_PATHS.turnsPath;
+const PI_SESSIONS_DIR = PI_PATHS.sessionsDir;
 export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "apps_open", "apps_install"];
-const FOREGROUND_TOOL_RESULT_NAMES = new Set(FOREGROUND_MODEL_TOOLS);
+const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
+// El primero es el modelo objetivo de Pi; el resto solo entra si el registro de
+// Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
+const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-terra", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+// Pi decide sola que abrir a partir de frases vagas ("me apetece jugar al
+// ajedrez"), y eso es razonamiento, no autocompletado: el effort alto compra
+// esa capacidad de decision a cambio de algo de latencia.
+const DEFAULT_PI_THINKING_LEVEL = "high" as const;
+
+function emptyLearningContext(): LearnedContextResponse {
+  return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
+}
+
+const unavailablePackageService: PackageInstallToolService = {
+  requestInstall: async () => ({
+    ok: false,
+    status: "failed",
+    message: "La instalación solo está disponible a través del broker de AgenOS.",
+  }),
+  confirmInstall: async () => ({
+    ok: false,
+    status: "failed",
+    message: "La instalación solo está disponible a través del broker de AgenOS.",
+  }),
+  denyInstall: () => ({
+    ok: false,
+    status: "failed",
+    message: "No hay una instalación pendiente en este harness.",
+  }),
+};
+
+export function composePiSystemPrompt(learningContext: string): string {
+  return learningContext.trim() ? `${PI_SYSTEM_PROMPT}\n\n${learningContext.trim()}` : PI_SYSTEM_PROMPT;
+}
 
 type PiModelLike = {
   id: string;
@@ -81,6 +147,7 @@ type PiAgentEventLike = {
   message?: PiMessageLike;
   toolName?: string;
   result?: unknown;
+  partialResult?: { content?: unknown };
   isError?: boolean;
   assistantMessageEvent?: {
     type?: string;
@@ -130,11 +197,18 @@ type CodexDeviceAuthOptions = {
 };
 
 type AppToolLike = {
-  openApp(input: string): Promise<AppOpenResponse>;
-  installApp(input: string, options?: { openAfterInstall?: boolean; openAs?: string }): Promise<AppInstallResponse>;
+  openApp(
+    input: string | { app?: unknown; workspace?: unknown; focus?: unknown },
+    options?: AppLaunchOptions,
+  ): Promise<AppOpenResponse>;
 };
 
-type PiCustomToolLike = {
+type PiToolUpdateCallback = (update: {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown;
+}) => void;
+
+export type PiCustomToolLike = {
   name: string;
   label: string;
   description: string;
@@ -145,22 +219,36 @@ type PiCustomToolLike = {
     toolCallId: string,
     params: Record<string, unknown>,
     signal?: AbortSignal,
-    onUpdate?: unknown,
+    onUpdate?: PiToolUpdateCallback,
     ctx?: unknown,
   ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
+};
+
+export type PiTurnStoreLike = {
+  load(): PiTurnState[];
+  save(turns: PiTurnState[]): void;
 };
 
 type PiHarnessDependencies = {
   authStorage: PiAuthStorageLike;
   modelRegistry: PiModelRegistryLike;
-  createSessionManager: () => PiSessionManagerLike;
+  createSessionManager: (mode?: "resume" | "fresh") => PiSessionManagerLike;
+  turnStore?: PiTurnStoreLike;
   createAgentSession: (options: {
     model: PiModelLike;
     sessionManager: PiSessionManagerLike;
     tools?: string[];
     customTools?: PiCustomToolLike[];
+    systemPrompt?: string;
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
+  setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "codexLoginStatus" | "configureTelegram" | "testTelegram" | "enableTelegram">;
+  agentTaskClient?: AgentTaskClient;
+  learningMemoryClient?: LearningMemoryClient;
+  traceRecorder?: HarnessTraceRecorder;
+  modelPreference?: string[];
+  modelTools?: string[];
+  customTools?: PiCustomToolLike[];
   loginOpenAICodex: (options: PiLoginOpenAICodexOptions) => Promise<OAuthCredentials>;
   loginOpenAICodexDevice: (options: CodexDeviceAuthOptions) => Promise<OAuthCredentials>;
   now: () => number;
@@ -239,6 +327,15 @@ function normalizeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function normalizeModelId(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function resolvePiModelPreference(env: Record<string, string | undefined> = process.env): string[] {
+  const configured = env.AGENOS_PI_MODEL_ID?.trim();
+  return configured ? [configured, ...DEFAULT_PI_MODEL_PREFERENCE] : DEFAULT_PI_MODEL_PREFERENCE;
+}
+
 function extractTextContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -275,32 +372,20 @@ const OPEN_APP_TOOL_PARAMETERS = {
       type: "string",
       description: "Nombre de la aplicacion local instalada que se quiere abrir. Ejemplos: Chrome, VLC, GIMP, terminal, archivos.",
     },
+    workspace: {
+      type: "number",
+      description: "Workspace de AgenOS donde abrir la app: 1 agent, 2 apps, 3 web, 4 media, 5 work.",
+    },
+    focus: {
+      type: "boolean",
+      description: "Cambiar el foco del usuario al workspace. Por defecto true.",
+    },
   },
   required: ["app"],
   additionalProperties: false,
 };
 
-const INSTALL_APP_TOOL_PARAMETERS = {
-  type: "object",
-  properties: {
-    package: {
-      type: "string",
-      description: "Nombre del paquete Debian a instalar, por ejemplo vlc, gimp o libreoffice.",
-    },
-    app: {
-      type: "string",
-      description: "Nombre de la aplicacion a abrir despues de instalar si difiere del paquete.",
-    },
-    openAfterInstall: {
-      type: "boolean",
-      description: "Abrir la aplicacion despues de instalarla. Por defecto true.",
-    },
-  },
-  required: ["package"],
-  additionalProperties: false,
-};
-
-function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
+export function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
   return {
     name: "apps_open",
     label: "Abrir app",
@@ -308,41 +393,26 @@ function createOpenAppModelTool(appTool: AppToolLike): PiCustomToolLike {
     promptSnippet: "apps_open: abre aplicaciones locales instaladas como Chrome, VLC, GIMP, archivos o terminal.",
     promptGuidelines: [
       "Si el usuario pide abrir una aplicacion instalada, llama apps_open con el nombre de la aplicacion.",
+      "Si nombra una aplicacion de Windows o macOS (Excel, Word, Photoshop), abre el equivalente local (LibreOffice Calc, LibreOffice Writer, GIMP) y dilo en una frase; no expliques que el original no existe aqui.",
+      "Pi vive en el workspace 1; usa workspaces 2..5 para apps lanzadas por el usuario y focus true salvo que el usuario diga lo contrario.",
+      "Si el usuario nombra un workspace, pasa ese numero en workspace. Si no lo nombra, deja que el sistema enrute la app.",
       "No pidas confirmacion para apps_open cuando la peticion venga del usuario actual.",
     ],
     parameters: OPEN_APP_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
-      const response = await appTool.openApp(typeof params.app === "string" ? params.app : "");
+    async execute(_toolCallId, params, signal, onUpdate) {
+      const response = await appTool.openApp({
+        app: typeof params.app === "string" ? params.app : "",
+        workspace: params.workspace,
+        focus: typeof params.focus === "boolean" ? params.focus : true,
+      }, {
+        signal,
+        onProgress: (message) => onUpdate?.({
+          content: [{ type: "text", text: message }],
+          details: { ok: true, status: "starting", message },
+        }),
+      });
       return {
         content: [{ type: "text", text: response.message ?? "Solicitud de apertura procesada." }],
-        details: response,
-      };
-    },
-  };
-}
-
-function createInstallAppModelTool(appTool: AppToolLike): PiCustomToolLike {
-  return {
-    name: "apps_install",
-    label: "Instalar app",
-    description: "Instala un paquete Debian y opcionalmente abre la aplicacion instalada.",
-    promptSnippet: "apps_install: instala paquetes Debian cuando el usuario lo pide, y puede abrir la app al terminar.",
-    promptGuidelines: [
-      "Si el usuario pide instalar una app o paquete, llama apps_install con el nombre del paquete Debian.",
-      "Si el usuario pide instalar y abrir una app, deja openAfterInstall en true y usa app si el nombre de apertura difiere del paquete.",
-      "No uses apps_install para paquetes que el usuario no haya pedido instalar.",
-    ],
-    parameters: INSTALL_APP_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
-      const response = await appTool.installApp(
-        typeof params.package === "string" ? params.package : "",
-        {
-          openAfterInstall: typeof params.openAfterInstall === "boolean" ? params.openAfterInstall : true,
-          openAs: typeof params.app === "string" ? params.app : undefined,
-        },
-      );
-      return {
-        content: [{ type: "text", text: response.message ?? "Solicitud de instalacion procesada." }],
         details: response,
       };
     },
@@ -370,6 +440,49 @@ function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
     expiresAt: attempt.expiresAt,
     userCode: attempt.userCode,
     error: attempt.error,
+  };
+}
+
+const TURN_TEXT_MAX_CHARS = 4000;
+const MAX_RETAINED_TURNS = 20;
+
+function truncateTurnText(value: string): string {
+  return value.length > TURN_TEXT_MAX_CHARS ? value.slice(value.length - TURN_TEXT_MAX_CHARS) : value;
+}
+
+function snapshotTurn(turn: PiTurnState): PiTurnState {
+  return {
+    ...turn,
+    progress: {
+      ...turn.progress,
+      completedTools: [...turn.progress.completedTools],
+    },
+  };
+}
+
+export function createFileTurnStore(filePath: string): PiTurnStoreLike {
+  return {
+    load(): PiTurnState[] {
+      try {
+        const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+        if (!Array.isArray(parsed)) {
+          return [];
+        }
+        return parsed.filter((turn): turn is PiTurnState => (
+          Boolean(turn)
+          && typeof turn === "object"
+          && typeof (turn as PiTurnState).turnId === "string"
+          && typeof (turn as PiTurnState).input === "string"
+          && typeof (turn as PiTurnState).status === "string"
+        ));
+      } catch {
+        return [];
+      }
+    },
+    save(turns: PiTurnState[]): void {
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, `${JSON.stringify(turns)}\n`, { mode: 0o600 });
+    },
   };
 }
 
@@ -519,12 +632,27 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const authStorage = AuthStorage.create(PI_AUTH_PATH);
   const modelRegistry = ModelRegistry.inMemory(authStorage);
   const appTool = createAppTool();
+  const setupService = createOpenClawSetupService();
+  const agentTaskClient = createHttpAgentTaskClient();
+  const learningMemoryClient = createHttpLearningMemoryClient();
+  const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
     authStorage,
     modelRegistry,
-    createSessionManager: () => SessionManager.inMemory(process.cwd()),
-    createAgentSession: async ({ model, sessionManager, tools, customTools }) => {
+    // Persist the conversation under the Pi agent dir so Pi keeps its context
+    // across shell restarts; "fresh" starts a new session file (logout).
+    createSessionManager: (mode) => {
+      try {
+        return mode === "fresh"
+          ? SessionManager.create(process.cwd(), PI_SESSIONS_DIR)
+          : SessionManager.continueRecent(process.cwd(), PI_SESSIONS_DIR);
+      } catch {
+        return SessionManager.inMemory(process.cwd());
+      }
+    },
+    turnStore: createFileTurnStore(PI_TURNS_PATH),
+    createAgentSession: async ({ model, sessionManager, tools, customTools, systemPrompt }) => {
       const settingsManager = SettingsManager.inMemory();
       const resourceLoader = new DefaultResourceLoader({
         cwd: process.cwd(),
@@ -535,7 +663,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
-        systemPromptOverride: () => PI_SYSTEM_PROMPT,
+        systemPromptOverride: () => systemPrompt ?? PI_SYSTEM_PROMPT,
         appendSystemPromptOverride: () => [],
       });
 
@@ -547,11 +675,16 @@ function createDefaultDependencies(): PiHarnessDependencies {
         authStorage,
         modelRegistry,
         model: model as never,
-        thinkingLevel: "minimal",
+        thinkingLevel: DEFAULT_PI_THINKING_LEVEL,
         tools: tools ?? FOREGROUND_MODEL_TOOLS,
         customTools: (customTools ?? [
+          createOpenBrowserModelTool(),
           createOpenAppModelTool(appTool),
-          createInstallAppModelTool(appTool),
+          createPackageInstallModelTool(unavailablePackageService),
+          createOpenFileModelTool(),
+          createOpenClawSetupModelTool(setupService),
+          createAgentTaskModelTool(agentTaskClient),
+          createLearningMemoryModelTool(learningMemoryClient),
         ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
@@ -561,6 +694,15 @@ function createDefaultDependencies(): PiHarnessDependencies {
       return { session: created.session as unknown as PiAgentSessionLike };
     },
     appTool,
+    setupService,
+    agentTaskClient,
+    learningMemoryClient,
+    traceRecorder,
+    // A standalone harness is deliberately capability-free. The broker is
+    // the only runtime allowed to inject system-effecting custom tools.
+    modelTools: [],
+    customTools: [],
+    modelPreference: resolvePiModelPreference(),
     loginOpenAICodex,
     loginOpenAICodexDevice,
     now: () => Date.now(),
@@ -576,14 +718,64 @@ export class PiHarness {
   private sessionManager: PiSessionManagerLike;
   private session: PiAgentSessionLike | undefined;
   private sessionModelId: string | undefined;
+  private sessionContextKey: string | undefined;
   private pendingAttemptId: string | undefined;
   private busy = false;
   private lastError: string | undefined;
+  private readonly turns = new Map<string, PiTurnState>();
+  private readonly turnWaiters = new Map<string, Deferred<PiChatResponse>>();
+  private activeTurnId: string | undefined;
 
   constructor(dependencies: PiHarnessDependencies, options: PiHarnessOptions = {}) {
     this.deps = dependencies;
     this.options = options;
-    this.sessionManager = this.deps.createSessionManager();
+    this.sessionManager = this.deps.createSessionManager("resume");
+    this.restoreTurns();
+  }
+
+  private restoreTurns(): void {
+    let stored: PiTurnState[] = [];
+    try {
+      stored = this.deps.turnStore?.load() ?? [];
+    } catch {
+      return;
+    }
+
+    for (const turn of stored.slice(-MAX_RETAINED_TURNS)) {
+      if (!turn || typeof turn.turnId !== "string" || !turn.turnId) {
+        continue;
+      }
+
+      const progress = turn.progress && Array.isArray(turn.progress.completedTools)
+        ? turn.progress
+        : {
+          startedAt: turn.startedAt,
+          streamedText: "",
+          currentTool: null,
+          completedTools: [],
+        };
+
+      // A turn persisted as "processing" cannot survive a restart.
+      const restored: PiTurnState = turn.status === "processing"
+        ? {
+          ...turn,
+          progress,
+          status: "failed",
+          error: "El turno se interrumpio por un reinicio.",
+          errorStatus: 500,
+          finishedAt: turn.finishedAt ?? new Date(this.deps.now()).toISOString(),
+        }
+        : { ...turn, progress };
+      this.turns.set(restored.turnId, restored);
+    }
+  }
+
+  private persistTurns(): void {
+    try {
+      this.deps.turnStore?.save([...this.turns.values()].map(snapshotTurn));
+    } catch {
+      // Turn persistence must never block the foreground assistant.
+    }
   }
 
   getStatus(): PiStatusResponse {
@@ -602,8 +794,15 @@ export class PiHarness {
       modelId: this.selectModel().id,
       busy: this.busy,
       pendingAttempt: pendingAttempt?.status === "pending" ? toPendingAttempt(pendingAttempt) : undefined,
+      turn: this.busy && this.activeTurn()
+        ? snapshotTurn(this.activeTurn()!).progress
+        : undefined,
       error: this.lastError,
     };
+  }
+
+  private activeTurn(): PiTurnState | undefined {
+    return this.activeTurnId ? this.turns.get(this.activeTurnId) : undefined;
   }
 
   async startAuth(method: PiAuthMethod = "device"): Promise<PiPendingAttempt> {
@@ -719,7 +918,7 @@ export class PiHarness {
     this.resetSession();
   }
 
-  async chat(request: PiChatRequest): Promise<PiChatResponse> {
+  startChat(request: PiChatRequest): PiTurnState {
     const message = request.message.trim();
     if (!message) {
       throw new PiHarnessError(400, "Escribe un mensaje.");
@@ -733,30 +932,126 @@ export class PiHarness {
       throw new PiHarnessError(409, "Ya hay una respuesta en curso.");
     }
 
+    const startedAtMs = this.deps.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const turn: PiTurnState = {
+      turnId: `turn_${startedAtMs.toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+      status: "processing",
+      source: request.source,
+      input: message,
+      startedAt,
+      progress: {
+        startedAt,
+        streamedText: "",
+        currentTool: null,
+        completedTools: [],
+      },
+    };
+
     this.busy = true;
+    this.activeTurnId = turn.turnId;
+    this.turns.set(turn.turnId, turn);
+    this.pruneTurns();
+    this.persistTurns();
+    this.turnWaiters.set(turn.turnId, createDeferred<PiChatResponse>());
+
+    void this.runTurn(turn, startedAtMs);
+
+    return snapshotTurn(turn);
+  }
+
+  getTurn(turnId: string): PiTurnState {
+    const turn = this.turns.get(turnId);
+    if (!turn) {
+      throw new PiHarnessError(404, "Turno no encontrado.");
+    }
+
+    return snapshotTurn(turn);
+  }
+
+  getLatestTurn(): PiTurnState | null {
+    let latest: PiTurnState | undefined;
+    for (const turn of this.turns.values()) {
+      latest = turn;
+    }
+
+    return latest ? snapshotTurn(latest) : null;
+  }
+
+  listTurns(limit = 20): PiTurnState[] {
+    const normalizedLimit = Math.max(1, Math.min(Math.floor(limit) || 20, MAX_RETAINED_TURNS));
+    return [...this.turns.values()].slice(-normalizedLimit).map(snapshotTurn);
+  }
+
+  async chat(request: PiChatRequest): Promise<PiChatResponse> {
+    const turn = this.startChat(request);
+    const waiter = this.turnWaiters.get(turn.turnId);
+    if (!waiter) {
+      throw new PiHarnessError(500, "El turno no se registro correctamente.");
+    }
+
+    return waiter.promise;
+  }
+
+  private async runTurn(turn: PiTurnState, startedAtMs: number): Promise<void> {
+    const waiter = this.turnWaiters.get(turn.turnId);
+    const traceId = createHarnessTraceId(() => this.deps.now());
+    const toolEvents: HarnessTraceToolEvent[] = [];
+    let model: PiModelLike | undefined;
+    let learningContext = emptyLearningContext();
     let unsubscribe = () => {};
 
     try {
-      const model = this.selectModel();
-      const session = await this.ensureSession(model);
+      model = this.selectModel();
+      learningContext = await this.resolveLearningContext(turn.input);
+      const session = await this.ensureSession(model, learningContext);
       let streamedReply = "";
       let completedReply = "";
       let toolReply = "";
       unsubscribe = session.subscribe((event) => {
         if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
           streamedReply += event.assistantMessageEvent.delta ?? "";
+          turn.progress.streamedText = truncateTurnText(streamedReply);
         }
 
         if (event.type === "message_end" && event.message?.role === "assistant") {
           completedReply = extractTextContent(event.message.content);
         }
 
-        if (event.type === "tool_execution_end" && event.toolName && FOREGROUND_TOOL_RESULT_NAMES.has(event.toolName) && !event.isError) {
-          toolReply = extractTextContent(extractToolResultContent(event.result));
+        if (event.type === "tool_execution_start" && event.toolName) {
+          turn.progress.currentTool = event.toolName;
+          delete turn.progress.currentToolMessage;
+        }
+
+        if (event.type === "tool_execution_update" && event.toolName) {
+          const update = extractTextContent(event.partialResult?.content).trim();
+          if (update) {
+            turn.progress.currentTool = event.toolName;
+            turn.progress.currentToolMessage = truncateTurnText(update);
+          }
+        }
+
+        if (event.type === "tool_execution_end" && event.toolName && this.foregroundToolNames().has(event.toolName)) {
+          const toolOutput = extractTextContent(extractToolResultContent(event.result));
+          toolEvents.push({
+            toolName: event.toolName,
+            ok: !event.isError,
+            timestamp: new Date(this.deps.now()).toISOString(),
+            output: toolOutput ? previewHarnessTraceText(toolOutput) : undefined,
+          });
+          if (!event.isError) {
+            toolReply = toolOutput;
+          }
+        }
+
+        if (event.type === "tool_execution_end" && event.toolName) {
+          turn.progress.completedTools.push(event.toolName);
+          turn.progress.currentTool = null;
+          delete turn.progress.currentToolMessage;
         }
       });
 
-      await session.prompt(message);
+      await session.prompt(turn.input);
 
       const reply = (streamedReply || completedReply || toolReply || this.getLastAssistantReply(session)).trim();
       if (!reply) {
@@ -764,25 +1059,119 @@ export class PiHarness {
       }
 
       this.lastError = undefined;
-
-      return {
-        ok: true,
+      this.recordChatTrace({
+        traceId,
+        startedAtMs,
+        status: "succeeded",
+        channel: turn.source,
+        model,
+        message: turn.input,
         reply,
-        provider: PI_PROVIDER_ID,
-        modelId: model.id,
-      };
+        toolEvents,
+        learningContext,
+      });
+
+      turn.status = "succeeded";
+      turn.reply = reply;
+      turn.modelId = model.id;
+      turn.finishedAt = new Date(this.deps.now()).toISOString();
+      if (waiter) {
+        resolveDeferred(waiter, {
+          ok: true,
+          reply,
+          provider: PI_PROVIDER_ID,
+          modelId: model.id,
+        });
+      }
     } catch (error) {
       const message = normalizeErrorMessage(error);
       this.lastError = message;
+      this.recordChatTrace({
+        traceId,
+        startedAtMs,
+        status: "failed",
+        channel: turn.source,
+        model,
+        message: turn.input,
+        error: message,
+        toolEvents,
+        learningContext,
+      });
 
-      if (this.isAuthenticationFailure(message)) {
-        throw new PiHarnessError(401, message);
+      const harnessError = this.isAuthenticationFailure(message)
+        ? new PiHarnessError(401, message)
+        : new PiHarnessError(500, message);
+      turn.status = "failed";
+      turn.error = harnessError.message;
+      turn.errorStatus = harnessError.status;
+      turn.finishedAt = new Date(this.deps.now()).toISOString();
+      if (waiter) {
+        rejectDeferred(waiter, harnessError);
       }
-
-      throw new PiHarnessError(500, message);
     } finally {
       unsubscribe();
       this.busy = false;
+      this.activeTurnId = this.activeTurnId === turn.turnId ? undefined : this.activeTurnId;
+      this.turnWaiters.delete(turn.turnId);
+      this.persistTurns();
+    }
+  }
+
+  private pruneTurns(): void {
+    while (this.turns.size > MAX_RETAINED_TURNS) {
+      const oldest = this.turns.keys().next().value;
+      if (oldest === undefined) {
+        return;
+      }
+      this.turns.delete(oldest);
+    }
+  }
+
+  private recordChatTrace(input: {
+    traceId: string;
+    startedAtMs: number;
+    status: HarnessTraceStatus;
+    channel: string;
+    model?: PiModelLike;
+    message: string;
+    reply?: string;
+    error?: string;
+    toolEvents: HarnessTraceToolEvent[];
+    learningContext: LearnedContextResponse;
+  }): void {
+    try {
+      const systemPrompt = composePiSystemPrompt(input.learningContext.text);
+      const record: HarnessTraceRecord = {
+        schemaVersion: 1,
+        traceId: input.traceId,
+        timestamp: new Date(input.startedAtMs).toISOString(),
+        source: "pi-chat",
+        channel: input.channel,
+        status: input.status,
+        provider: input.model?.provider ?? PI_PROVIDER_ID,
+        modelId: input.model?.id,
+        durationMs: Math.max(0, this.deps.now() - input.startedAtMs),
+        harness: {
+          promptHash: hashHarnessPrompt(systemPrompt),
+          tools: [...this.foregroundToolNames()],
+          learningContext: {
+            itemIds: [...input.learningContext.itemIds],
+            estimatedTokens: input.learningContext.estimatedTokens,
+            tokenBudget: input.learningContext.tokenBudget,
+            truncated: input.learningContext.truncated,
+          },
+        },
+        input: previewHarnessTraceText(input.message),
+        output: input.reply ? previewHarnessTraceText(input.reply) : undefined,
+        error: input.error ? redactHarnessTraceText(input.error) : undefined,
+        toolEvents: input.toolEvents,
+      };
+      this.deps.traceRecorder?.record(record);
+      void this.deps.learningMemoryClient?.captureTrace(record).catch(() => {
+        // Learning is best-effort and must never block the foreground response.
+      });
+    } catch {
+      // Trace persistence must never block the foreground assistant.
     }
   }
 
@@ -867,9 +1256,12 @@ export class PiHarness {
       .filter((model) => model.provider === PI_PROVIDER_ID)
       .sort((left, right) => left.id.localeCompare(right.id));
 
+    const preference = this.deps.modelPreference ?? DEFAULT_PI_MODEL_PREFERENCE;
     const preferred =
-      models.find((model) => model.id === "gpt-5.4")
-      ?? models.find((model) => model.id === "gpt-5.4-mini")
+      preference
+        .map(normalizeModelId)
+        .map((wanted) => models.find((model) => normalizeModelId(model.id) === wanted))
+        .find((model): model is PiModelLike => Boolean(model))
       ?? models[0];
 
     if (!preferred) {
@@ -879,8 +1271,9 @@ export class PiHarness {
     return preferred;
   }
 
-  private async ensureSession(model: PiModelLike): Promise<PiAgentSessionLike> {
-    if (this.session && this.sessionModelId === model.id) {
+  private async ensureSession(model: PiModelLike, learningContext: LearnedContextResponse): Promise<PiAgentSessionLike> {
+    const contextKey = hashHarnessPrompt(learningContext.text);
+    if (this.session && this.sessionModelId === model.id && this.sessionContextKey === contextKey) {
       return this.session;
     }
 
@@ -889,23 +1282,47 @@ export class PiHarness {
     const created = await this.deps.createAgentSession({
       model,
       sessionManager: this.sessionManager,
-      tools: FOREGROUND_MODEL_TOOLS,
-      customTools: [
-        createOpenAppModelTool(this.deps.appTool),
-        createInstallAppModelTool(this.deps.appTool),
-      ],
+      tools: this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS,
+      customTools: this.deps.customTools ?? this.defaultCustomTools(),
+      systemPrompt: composePiSystemPrompt(learningContext.text),
     });
 
     this.session = created.session;
     this.sessionModelId = model.id;
+    this.sessionContextKey = contextKey;
     return created.session;
+  }
+
+  private defaultCustomTools(): PiCustomToolLike[] {
+    return [
+      createOpenBrowserModelTool(),
+      createOpenAppModelTool(this.deps.appTool),
+      createPackageInstallModelTool(unavailablePackageService),
+      createOpenFileModelTool(),
+      createOpenClawSetupModelTool(this.deps.setupService),
+      createAgentTaskModelTool(this.deps.agentTaskClient),
+      createLearningMemoryModelTool(this.deps.learningMemoryClient),
+    ];
+  }
+
+  private foregroundToolNames(): Set<string> {
+    return new Set(this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS);
   }
 
   private resetSession(): void {
     this.session?.dispose?.();
     this.session = undefined;
     this.sessionModelId = undefined;
-    this.sessionManager = this.deps.createSessionManager();
+    this.sessionContextKey = undefined;
+    this.sessionManager = this.deps.createSessionManager("fresh");
+  }
+
+  private async resolveLearningContext(query: string): Promise<LearnedContextResponse> {
+    try {
+      return await this.deps.learningMemoryClient?.context(query, 256) ?? emptyLearningContext();
+    } catch {
+      return emptyLearningContext();
+    }
   }
 
   private getLastAssistantReply(session: PiAgentSessionLike): string {
@@ -945,7 +1362,12 @@ let sharedHarness: PiHarness | undefined;
 
 export function createPiHarness(dependencies?: Partial<PiHarnessDependencies>, options: PiHarnessOptions = {}): PiHarness {
   if (dependencies) {
-    return new PiHarness(dependencies as PiHarnessDependencies, options);
+    // Tests inject a complete dependency set; runtime callers (e.g. the HTTP
+    // server passing only setupService) need the rest filled with defaults.
+    const complete = dependencies.authStorage && dependencies.modelRegistry
+      ? (dependencies as PiHarnessDependencies)
+      : { ...createDefaultDependencies(), ...dependencies };
+    return new PiHarness(complete, options);
   }
 
   sharedHarness ??= new PiHarness(createDefaultDependencies(), options);

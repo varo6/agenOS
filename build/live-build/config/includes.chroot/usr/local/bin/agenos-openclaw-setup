@@ -5,6 +5,7 @@ export HOME="${HOME:-/home/agenos}"
 export AGENOS_OPENCLAW_SYSTEM_CONFIG="${AGENOS_OPENCLAW_SYSTEM_CONFIG:-/etc/agenos/openclaw.json}"
 export AGENOS_OPENCLAW_USER_CONFIG="${AGENOS_OPENCLAW_USER_CONFIG:-$HOME/.agenos/openclaw/config.json}"
 export AGENOS_OPENCLAW_STATE_DIR="${AGENOS_OPENCLAW_STATE_DIR:-$HOME/.agenos/openclaw}"
+export AGENOS_OPENCLAW_AUTO_INSTALL="${AGENOS_OPENCLAW_AUTO_INSTALL:-1}"
 
 mkdir -p "$AGENOS_OPENCLAW_STATE_DIR"
 exec /usr/local/bin/agenos-installer-server setup-openclaw

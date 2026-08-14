@@ -9,6 +9,7 @@ import type {
 } from "./system-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
+const REQUEST_TIMEOUT_MS = 8_000;
 
 export type AgentAdminClientOptions = {
   baseUrl?: string;
@@ -40,21 +41,36 @@ function resolveHttpBase(options: AgentAdminClientOptions = {}): string {
 }
 
 async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(new URL(path, `${baseUrl}/`).toString(), init);
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) as T | ErrorPayload : undefined;
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const message =
-      payload && typeof payload === "object" && "decision" in payload && typeof payload.decision === "string"
-        ? payload.decision
-        : payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
-          ? payload.message
-          : `${response.status} ${response.statusText}`;
-    throw new Error(message);
+  try {
+    const response = await fetch(new URL(path, `${baseUrl}/`).toString(), {
+      ...init,
+      signal: init?.signal ?? controller.signal,
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) as T | ErrorPayload : undefined;
+
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "decision" in payload && typeof payload.decision === "string"
+          ? payload.decision
+          : payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+            ? payload.message
+            : `${response.status} ${response.statusText}`;
+      throw new Error(message);
+    }
+
+    return payload as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("La solicitud al backend excedio el tiempo limite.");
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
   }
-
-  return payload as T;
 }
 
 function postJson<T>(baseUrl: string, path: string, body: unknown = { explicitUserIntent: true }): Promise<T> {

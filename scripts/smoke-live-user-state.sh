@@ -49,8 +49,13 @@ require_literal "${CALAMARES_DESKTOP}" 'XDG_DOCUMENTS_DIR="$HOME/Documentos"'
 require_literal "${LIVE_BOOT_CONFIG}" "persistence hostname=agenos"
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
 require_literal "${SWAY_CONFIG}" "agenos-workspace-watch"
+require_literal "${SWAY_CONFIG}" "seat * xcursor_theme Adwaita 24"
+require_literal "${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-session" 'WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"'
 require_literal "${SWAY_CONFIG}" 'workspace 1:home'
 require_literal "${SWAY_CONFIG}" 'workspace 2:app'
+require_literal "${SWAY_CONFIG}" 'workspace 3:web'
+require_literal "${SWAY_CONFIG}" 'workspace 4:media'
+require_literal "${SWAY_CONFIG}" 'workspace 5:work'
 require_literal "${KEYBOARD_DEFAULTS}" 'XKBLAYOUT="es"'
 require_literal "${RUN_VM}" "VM_LIVE_PERSISTENCE"
 require_literal "${RUN_VM}" "VM_PERSIST_DISK"

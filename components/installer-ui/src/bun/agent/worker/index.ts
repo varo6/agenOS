@@ -4,20 +4,24 @@ import { homedir } from "node:os";
 import { createObservabilityState } from "./observability";
 import { AGENT_PROTOCOL_SCHEMA_VERSION } from "./protocol";
 import { readWorkerConfig, type WorkerConfig, type WorkerConfiguredMode } from "./config";
-import { createAgenosWorkerDaemonAdapter } from "./agenos-worker-daemon";
+import { createAgenosWorkerDaemonAdapter, type WorkerToolCall } from "./agenos-worker-daemon";
 import { createLocalSimulatedWorkerAdapter, type LocalSimulatedWorkerAdapterOptions } from "./local-simulated";
 import { createOpenClawProcessAdapter } from "./openclaw-process";
+import { createOpenClawRuntime } from "./openclaw-runtime";
 import type { WorkerAdapter, WorkerMode } from "./types";
 
 export type CreateWorkerAdapterOptions = Partial<LocalSimulatedWorkerAdapterOptions> & {
   config?: WorkerConfig;
+  env?: Record<string, string | undefined>;
   configMode?: WorkerConfiguredMode;
   openClawBinaryPath?: string;
   bundledWorkerPath?: string;
+  runToolCall?: (call: WorkerToolCall) => Promise<unknown>;
+  learnedContextProvider?: (query: string) => Promise<string> | string;
 };
 
 export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): WorkerAdapter {
-  const config = options.config ?? readWorkerConfig();
+  const config = options.config ?? readWorkerConfig({ env: options.env });
   const configuredMode = options.configMode ?? config.mode;
   const rootDir = options.rootDir ?? config.stateDir;
 
@@ -26,7 +30,7 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
   }
 
   if (configuredMode === "openclaw-process") {
-    return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
+    return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now, learnedContextProvider: options.learnedContextProvider });
   }
 
   if (configuredMode === "agenos-bun-worker") {
@@ -36,12 +40,15 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
       idFactory: options.idFactory,
       correlationIdFactory: options.correlationIdFactory,
       config,
+      env: options.env,
+      runToolCall: options.runToolCall,
+      learnedContextProvider: options.learnedContextProvider,
     });
   }
 
   if (configuredMode === "auto") {
     if (openClawAvailable(options.openClawBinaryPath)) {
-      return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now });
+      return createOpenClawProcessAdapter({ binaryPath: options.openClawBinaryPath, stateDir: rootDir, now: options.now, learnedContextProvider: options.learnedContextProvider });
     }
     if (bundledWorkerAvailable(options.bundledWorkerPath)) {
       return createAgenosWorkerDaemonAdapter({
@@ -50,6 +57,9 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
         idFactory: options.idFactory,
         correlationIdFactory: options.correlationIdFactory,
         config,
+        env: options.env,
+        runToolCall: options.runToolCall,
+        learnedContextProvider: options.learnedContextProvider,
       });
     }
     return createLocalSimulatedWorkerAdapter({ ...options, rootDir });
@@ -62,12 +72,17 @@ export function createWorkerAdapter(options: CreateWorkerAdapterOptions = {}): W
   );
 }
 
-function openClawAvailable(binaryPath = "/usr/bin/openclaw"): boolean {
-  return existsSync(binaryPath);
+function openClawAvailable(binaryPath?: string): boolean {
+  return createOpenClawRuntime({ binaryPath }).resolveBinary() !== null;
 }
 
-function bundledWorkerAvailable(workerPath = join(import.meta.dir, "agenos-worker-daemon.ts")): boolean {
-  return existsSync(workerPath);
+function bundledWorkerAvailable(workerPath?: string): boolean {
+  const candidates = [
+    workerPath,
+    join(import.meta.dir, "agenos-worker-daemon.ts"),
+    "/usr/local/bin/agenos-openclaw-worker",
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.some((candidate) => existsSync(candidate));
 }
 
 function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, stateDir: string, reason: string | null): WorkerAdapter {
@@ -89,6 +104,9 @@ function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, 
         ...observability.snapshot(),
       };
     },
+    async testConnection() {
+      return { ok: false, message: reason ?? `${mode} worker adapter is not available.` };
+    },
     async enqueue() {
       return { ok: false, message: reason ?? `${mode} worker adapter is not available.` };
     },
@@ -100,6 +118,15 @@ function createUnavailableAdapter(mode: Exclude<WorkerMode, "local-simulated">, 
     },
     async list() {
       return [];
+    },
+    async retry(taskId) {
+      return { ok: false, taskId, message: reason ?? `${mode} worker adapter is not available.` };
+    },
+    async clear(taskId) {
+      return { ok: false, taskId, message: `No existe la tarea ${taskId}.` };
+    },
+    async resolveConfirmation(taskId) {
+      return { ok: false, taskId, message: reason ?? `${mode} worker adapter is not available.` };
     },
   };
 }

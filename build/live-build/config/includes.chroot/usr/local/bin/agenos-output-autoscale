@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+"""Apply a conservative scale to the built-in laptop panel under Sway."""
+
+from __future__ import annotations
+
+import json
+import math
+import subprocess
+import sys
+
+
+def recommended_scale(output: dict[str, object]) -> float | None:
+    mode = output.get("current_mode")
+    if not isinstance(mode, dict):
+        return None
+
+    try:
+        width_px = float(mode["width"])
+        height_px = float(mode["height"])
+        width_mm = float(output["physical_width"])
+        height_mm = float(output["physical_height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    diagonal_inches = math.hypot(width_mm, height_mm) / 25.4
+    if diagonal_inches <= 0:
+        return None
+
+    dpi = math.hypot(width_px, height_px) / diagonal_inches
+    if dpi >= 190:
+        return 2.0
+    if dpi >= 135:
+        return 1.5
+    return 1.0
+
+
+def main() -> int:
+    result = subprocess.run(
+        ["swaymsg", "-r", "-t", "get_outputs"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"agenos-output-autoscale: {result.stderr.strip()}", file=sys.stderr)
+        return result.returncode
+
+    try:
+        outputs = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        print(f"agenos-output-autoscale: invalid sway output JSON: {error}", file=sys.stderr)
+        return 1
+
+    for output in outputs:
+        name = output.get("name")
+        if not output.get("active") or not isinstance(name, str):
+            continue
+        if not (name.startswith("eDP-") or name.startswith("LVDS-")):
+            continue
+
+        current_scale = output.get("scale")
+        if isinstance(current_scale, (int, float)) and not math.isclose(
+            float(current_scale), 1.0, abs_tol=0.01
+        ):
+            print(
+                f"agenos-output-autoscale: preserving configured scale "
+                f"{float(current_scale):g}x on {name}"
+            )
+            continue
+
+        scale = recommended_scale(output)
+        if scale is None:
+            continue
+
+        subprocess.run(
+            ["swaymsg", "output", name, "scale", str(scale)],
+            check=False,
+        )
+        subprocess.run(
+            ["swaymsg", "output", name, "scale_filter", "smart"],
+            check=False,
+        )
+        print(f"agenos-output-autoscale: {name} -> {scale:g}x")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,9 @@
+{
+  "name": "@agenos/network-node",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "dbus-next": "^0.10.2"
+  }
+}

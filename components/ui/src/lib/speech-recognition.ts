@@ -1,3 +1,14 @@
+import {
+  createLocalHttpSpeechController,
+  getCachedLocalSttAvailability,
+  probeLocalSttAvailability,
+} from "./local-stt";
+import {
+  getSpeechBridge,
+  type AgenosSpeechBridge,
+  type SpeechCapturePhase,
+} from "./speech-bridge";
+
 type BrowserSpeechRecognitionAlternative = {
   transcript: string;
 };
@@ -25,6 +36,7 @@ type BrowserSpeechRecognition = {
   lang: string;
   onstart: (() => void) | null;
   onend: (() => void) | null;
+  onspeechend: (() => void) | null;
   onerror: ((event: BrowserSpeechRecognitionErrorEvent) => void) | null;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   start(): void;
@@ -47,14 +59,23 @@ export type SpeechRecognitionError = {
   disableVoice: boolean;
 };
 
+export type { SpeechCapturePhase };
+
 export type SpeechRecognitionCallbacks = {
   onResult: (transcript: string) => void;
   onError: (error: SpeechRecognitionError) => void;
   onEnd: () => void;
+  /**
+   * Progreso de la captura: permite distinguir "te escucho" de "estoy
+   * entendiendo lo que has dicho". Es opcional para no romper a quien ya
+   * construye controladores con las tres callbacks originales.
+   */
+  onPhase?: (phase: SpeechCapturePhase) => void;
 };
 
 export type SpeechRecognitionController = {
   supported: boolean;
+  engine: "native" | "local-http" | "browser" | "none";
   start: () => boolean;
   stop: () => void;
   dispose: () => void;
@@ -94,6 +115,38 @@ function normalizeSpeechError(code: string | undefined): SpeechRecognitionError 
   }
 }
 
+function normalizeNativeSpeechError(error: unknown): SpeechRecognitionError {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("no se detecto voz")) {
+    return {
+      code: "no-speech",
+      message,
+      disableVoice: false,
+    };
+  }
+
+  if (
+    normalized.includes("no esta instalado")
+    || normalized.includes("enoent")
+    || normalized.includes("arecord")
+    || normalized.includes("whisper")
+  ) {
+    return {
+      code: "native-unavailable",
+      message: "STT local no disponible. Revisa whisper.cpp, el modelo base multilingue y el microfono.",
+      disableVoice: true,
+    };
+  }
+
+  return {
+    code: "native-error",
+    message: message || "No se pudo transcribir con STT local. Usa texto.",
+    disableVoice: false,
+  };
+}
+
 function extractTranscript(results: BrowserSpeechRecognitionResultList): string {
   const chunks: string[] = [];
 
@@ -113,17 +166,99 @@ function extractTranscript(results: BrowserSpeechRecognitionResultList): string 
 }
 
 export function isSpeechRecognitionSupported(targetWindow: Window | undefined = globalThis.window): boolean {
-  return Boolean(getSpeechRecognitionConstructor(targetWindow));
+  const bridge = getSpeechBridge();
+  return Boolean(
+    bridge?.isAvailable()
+    || getCachedLocalSttAvailability()
+    || getSpeechRecognitionConstructor(targetWindow),
+  );
+}
+
+function createNativeSpeechRecognitionController(
+  callbacks: SpeechRecognitionCallbacks,
+  bridge: AgenosSpeechBridge,
+): SpeechRecognitionController {
+  let disposed = false;
+  let listening = false;
+
+  // El puente empuja la fase real (grabando / transcribiendo) si la expone.
+  const unsubscribePhase = bridge.onPhase?.((phase) => {
+    if (!disposed && listening) {
+      callbacks.onPhase?.(phase);
+    }
+  });
+
+  return {
+    supported: true,
+    engine: "native",
+    start() {
+      if (listening || disposed) {
+        return false;
+      }
+
+      listening = true;
+      callbacks.onPhase?.("listening");
+      void bridge.transcribeOnce()
+        .then((result) => {
+          if (!disposed && result.transcript.trim()) {
+            callbacks.onResult(result.transcript);
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            callbacks.onError(normalizeNativeSpeechError(error));
+          }
+        })
+        .finally(() => {
+          listening = false;
+          if (!disposed) {
+            callbacks.onEnd();
+          }
+        });
+
+      return true;
+    },
+    stop() {
+      listening = false;
+    },
+    dispose() {
+      disposed = true;
+      listening = false;
+      unsubscribePhase?.();
+    },
+  };
+}
+
+export async function createPreferredSpeechRecognitionController(
+  callbacks: SpeechRecognitionCallbacks,
+  targetWindow: Window | undefined = globalThis.window,
+): Promise<SpeechRecognitionController> {
+  const bridge = getSpeechBridge();
+  if (bridge?.isAvailable()) {
+    return createNativeSpeechRecognitionController(callbacks, bridge);
+  }
+
+  if (await probeLocalSttAvailability()) {
+    return createLocalHttpSpeechController(callbacks);
+  }
+
+  return createSpeechRecognitionController(callbacks, targetWindow);
 }
 
 export function createSpeechRecognitionController(
   callbacks: SpeechRecognitionCallbacks,
   targetWindow: Window | undefined = globalThis.window,
 ): SpeechRecognitionController {
+  const bridge = getSpeechBridge();
+  if (bridge?.isAvailable()) {
+    return createNativeSpeechRecognitionController(callbacks, bridge);
+  }
+
   const SpeechRecognitionCtor = getSpeechRecognitionConstructor(targetWindow);
   if (!SpeechRecognitionCtor) {
     return {
       supported: false,
+      engine: "none",
       start: () => false,
       stop: () => {},
       dispose: () => {},
@@ -141,6 +276,9 @@ export function createSpeechRecognitionController(
       callbacks.onResult(transcript);
     }
   };
+  recognition.onspeechend = () => {
+    callbacks.onPhase?.("transcribing");
+  };
   recognition.onerror = (event) => {
     callbacks.onError(normalizeSpeechError(event.error));
   };
@@ -150,9 +288,11 @@ export function createSpeechRecognitionController(
 
   return {
     supported: true,
+    engine: "browser",
     start() {
       try {
         recognition.start();
+        callbacks.onPhase?.("listening");
         return true;
       } catch {
         callbacks.onError(normalizeSpeechError("start-failed"));
@@ -166,6 +306,7 @@ export function createSpeechRecognitionController(
       recognition.onresult = null;
       recognition.onerror = null;
       recognition.onend = null;
+      recognition.onspeechend = null;
 
       if (typeof recognition.abort === "function") {
         recognition.abort();

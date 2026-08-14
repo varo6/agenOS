@@ -25,9 +25,24 @@ if [[ "${SKIP_DOCKER_BUILD}" != "1" ]]; then
   fi
 fi
 
+# Las caches de descarga viven por defecto dentro de la imagen (CARGO_HOME en
+# /usr/local/cargo) o bajo HOME, y este contenedor es --rm: cada build volvia a
+# bajar las crates del Cargo.lock y, en frio, los paquetes de Bun y el runtime
+# de Electron. Redirigirlas a /workspace/.cache las hace sobrevivir entre
+# builds. Son caches verificadas por checksum: la entrada del build es la misma,
+# solo deja de re-descargarse.
+#
+# Tienen que quedar en la raiz del repo y NO bajo build/live-build/config/
+# includes.*, o acabarian copiadas dentro de la ISO.
+BUILD_CACHE_DIR="${ROOT_DIR}/.cache"
+mkdir -p "${BUILD_CACHE_DIR}/cargo" "${BUILD_CACHE_DIR}/bun" "${BUILD_CACHE_DIR}/electron"
+
 docker run --rm \
   -e DEBIAN_FRONTEND=noninteractive \
   -e HOME=/tmp \
+  -e CARGO_HOME=/workspace/.cache/cargo \
+  -e BUN_INSTALL_CACHE_DIR=/workspace/.cache/bun \
+  -e ELECTRON_CACHE=/workspace/.cache/electron \
   -u "$(id -u):$(id -g)" \
   -v "${ROOT_DIR}:/workspace" \
   -w /workspace \
@@ -55,5 +70,8 @@ if [[ -z "${ISO_PATH}" ]]; then
   exit 1
 fi
 
-cp "${ISO_PATH}" "${DIST_DIR}/$(basename "${ISO_PATH}")"
+# --reflink=auto: en btrfs/XFS la copia de 1,8 GB es instantanea y no duplica
+# espacio; en cualquier otro sistema de ficheros degrada a una copia normal.
+# Los bytes de la ISO son los mismos en ambos casos.
+cp --reflink=auto "${ISO_PATH}" "${DIST_DIR}/$(basename "${ISO_PATH}")"
 echo "ISO generada en ${DIST_DIR}/$(basename "${ISO_PATH}")"

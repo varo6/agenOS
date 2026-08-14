@@ -1,6 +1,8 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, XCircle } from "lucide-react";
+import { cx } from "../lib/cx";
 import type { PiAuthState } from "../lib/pi-types";
 import type { AgentAdminStatus } from "../lib/system-types";
+import { Panel, PanelInset, TONE_SURFACE, type Tone } from "./ui";
 
 type HealthTone = "ok" | "warning" | "error" | "pending";
 
@@ -19,49 +21,50 @@ export type AgentHealthChecklistProps = {
   harnessAvailable: boolean;
 };
 
-function toneClasses(tone: HealthTone): string {
-  switch (tone) {
-    case "ok":
-      return "border-accent/35 bg-accent/10 text-accent-light";
-    case "warning":
-      return "border-accent-light/35 bg-accent-light/10 text-accent-light";
-    case "error":
-      return "border-danger/40 bg-danger/10 text-danger";
-    default:
-      return "border-white/12 bg-white/[0.04] text-white/55";
-  }
-}
+/** Cada estado de salud se pinta con el tono compartido del sistema. */
+const HEALTH_TONE: Record<HealthTone, Tone> = {
+  ok: "positive",
+  warning: "warning",
+  error: "danger",
+  pending: "neutral",
+};
 
 function ToneIcon({ tone }: { tone: HealthTone }) {
   if (tone === "ok") {
-    return <CheckCircle2 className="h-4 w-4" />;
+    return <CheckCircle2 aria-hidden="true" className="h-5 w-5" />;
   }
   if (tone === "warning") {
-    return <AlertTriangle className="h-4 w-4" />;
+    return <AlertTriangle aria-hidden="true" className="h-5 w-5" />;
   }
   if (tone === "error") {
-    return <XCircle className="h-4 w-4" />;
+    return <XCircle aria-hidden="true" className="h-5 w-5" />;
   }
-  return <CircleDashed className="h-4 w-4" />;
+  return <CircleDashed aria-hidden="true" className="h-5 w-5" />;
 }
 
+/*
+ * Cada tarjeta se lee en dos niveles: nombre y estado en castellano llano para
+ * quien solo quiere saber si va o no va, y una tercera línea con el dato
+ * técnico (mensaje del servicio, modo del motor, cola) para quien tenga que
+ * arreglarlo o defenderlo. La jerga vive en esa línea, nunca en el titular.
+ */
 function backendItem(harnessAvailable: boolean, backendError: string | null): HealthItem {
   if (!harnessAvailable || backendError) {
     return {
       id: "backend",
-      label: "Backend",
+      label: "Servicio de Pi",
       tone: "error",
       status: "No responde",
-      detail: backendError ?? "El broker local no esta disponible.",
+      detail: backendError ?? "El broker local (127.0.0.1:4173) no está disponible.",
     };
   }
 
   return {
     id: "backend",
-    label: "Backend",
+    label: "Servicio de Pi",
     tone: "ok",
-    status: "Broker local disponible",
-    detail: "La UI puede hablar con el servicio local.",
+    status: "Funcionando",
+    detail: "El broker local responde en 127.0.0.1:4173.",
   };
 }
 
@@ -69,49 +72,52 @@ function workerItem(adminStatus: AgentAdminStatus | null, backendError: string |
   if (backendError) {
     return {
       id: "worker",
-      label: "Worker",
+      label: "Motor de tareas",
       tone: "pending",
-      status: "Sin lectura",
-      detail: "Primero hay que recuperar el backend.",
+      status: "Sin datos",
+      detail: "Primero tiene que volver el servicio de Pi.",
     };
   }
 
   if (!adminStatus) {
     return {
       id: "worker",
-      label: "Worker",
+      label: "Motor de tareas",
       tone: "pending",
-      status: "Leyendo estado",
-      detail: "Esperando respuesta del backend.",
+      status: "Comprobando",
+      detail: "Esperando respuesta del servicio.",
     };
   }
 
   if (!adminStatus.worker.serviceActive || adminStatus.readiness === "needs_setup") {
     return {
       id: "worker",
-      label: "Worker",
+      label: "Motor de tareas",
       tone: adminStatus.worker.serviceActive ? "warning" : "error",
-      status: adminStatus.worker.serviceActive ? "Setup requerido" : "Servicio inactivo",
-      detail: adminStatus.setupItems[0]?.label ?? "Revisa la configuracion del backend.",
+      status: adminStatus.worker.serviceActive ? "Falta configurarlo" : "Parado",
+      detail: adminStatus.setupItems[0]?.label ?? "Revisa la configuración del worker.",
     };
   }
 
   if (adminStatus.readiness === "degraded") {
     return {
       id: "worker",
-      label: "Worker",
+      label: "Motor de tareas",
       tone: "warning",
-      status: "Modo degradado",
-      detail: adminStatus.worker.degradedReason ?? adminStatus.worker.lastError ?? "El worker esta usable, pero necesita revision.",
+      status: "Funciona a medias",
+      detail:
+        adminStatus.worker.degradedReason
+        ?? adminStatus.worker.lastError
+        ?? "El worker responde en modo degradado.",
     };
   }
 
   return {
     id: "worker",
-    label: "Worker",
+    label: "Motor de tareas",
     tone: "ok",
-    status: "Worker listo",
-    detail: `${adminStatus.worker.mode} / cola ${adminStatus.worker.queueDepth}`,
+    status: "Listo",
+    detail: `Modo ${adminStatus.worker.mode}, ${adminStatus.worker.queueDepth} en cola.`,
   };
 }
 
@@ -119,39 +125,39 @@ function authItem(authState: PiAuthState): HealthItem {
   if (authState === "connected") {
     return {
       id: "auth",
-      label: "Codex/Auth",
+      label: "Tu cuenta",
       tone: "ok",
-      status: "Conectado",
-      detail: "ChatGPT/Codex esta listo para recibir mensajes.",
+      status: "Conectada",
+      detail: "ChatGPT puede recibir tus mensajes.",
     };
   }
 
   if (authState === "authorizing") {
     return {
       id: "auth",
-      label: "Codex/Auth",
+      label: "Tu cuenta",
       tone: "warning",
-      status: "Login en curso",
-      detail: "Termina el flujo en navegador o codigo.",
+      status: "Conectando",
+      detail: "Falta terminar el inicio de sesión.",
     };
   }
 
   if (authState === "error") {
     return {
       id: "auth",
-      label: "Codex/Auth",
+      label: "Tu cuenta",
       tone: "error",
-      status: "Requiere atencion",
-      detail: "Reintenta el login o refresca el estado.",
+      status: "Necesita atención",
+      detail: "Vuelve a conectarla desde esta misma pantalla.",
     };
   }
 
   return {
     id: "auth",
-    label: "Codex/Auth",
+    label: "Tu cuenta",
     tone: "pending",
     status: "Conecta ChatGPT",
-    detail: "Falta iniciar sesion para usar el chat.",
+    detail: "Sin cuenta conectada Pi no puede responder.",
   };
 }
 
@@ -161,8 +167,8 @@ function supportItem(harnessAvailable: boolean, backendError: string | null): He
       id: "support",
       label: "Soporte",
       tone: "warning",
-      status: "Diagnostico limitado",
-      detail: "El boton Diagnostico aun puede copiar contexto del navegador.",
+      status: "Informe incompleto",
+      detail: "Sin servicio solo se recoge el contexto del navegador.",
     };
   }
 
@@ -170,8 +176,8 @@ function supportItem(harnessAvailable: boolean, backendError: string | null): He
     id: "support",
     label: "Soporte",
     tone: "ok",
-    status: "Diagnostico listo",
-    detail: "El bundle de soporte se puede copiar desde la esquina superior.",
+    status: "Informe disponible",
+    detail: "Puedes copiar el informe técnico para pedir ayuda.",
   };
 }
 
@@ -189,30 +195,23 @@ export function AgentHealthChecklist({
   ];
 
   return (
-    <section aria-label="Salud del agente" className="glass-panel w-full p-5 text-left">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase text-white/35">Salud del agente</p>
-          <h2 className="mt-2 text-xl font-medium text-white">Checklist operativo</h2>
-        </div>
-      </div>
-
-      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+    <Panel ariaLabel="Estado del sistema" className="w-full" title="Estado del sistema">
+      <div className="grid gap-3 md:grid-cols-2">
         {items.map((item) => (
-          <div className="rounded-lg border border-white/8 bg-black/20 p-3" key={item.id}>
+          <PanelInset className="p-4" key={item.id}>
             <div className="flex items-start gap-3">
-              <div className={`mt-0.5 rounded-md border p-1 ${toneClasses(item.tone)}`}>
+              <span className={cx("mt-1 rounded-control border p-1.5", TONE_SURFACE[HEALTH_TONE[item.tone]])}>
                 <ToneIcon tone={item.tone} />
-              </div>
+              </span>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-white">{item.label}</p>
-                <p className="mt-1 text-sm text-white/75">{item.status}</p>
-                <p className="mt-1 break-words text-xs leading-5 text-white/45">{item.detail}</p>
+                <p className="text-base font-semibold text-ink">{item.label}</p>
+                <p className="text-sm text-ink-muted">{item.status}</p>
+                <p className="mt-1 break-words text-xs text-ink-faint">{item.detail}</p>
               </div>
             </div>
-          </div>
+          </PanelInset>
         ))}
       </div>
-    </section>
+    </Panel>
   );
 }

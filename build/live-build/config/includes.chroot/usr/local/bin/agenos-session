@@ -9,6 +9,9 @@ export GDK_BACKEND="${GDK_BACKEND:-wayland,x11}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-wayland}"
 export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
+# Los cursores hardware de virtio/QEMU pueden existir para wlroots pero no
+# llegar a pintarse en el visor. El cursor software funciona también en equipo
+# físico y evita una sesión aparentemente inmanejable dentro de la VM.
 export WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"
 export MOZ_ENABLE_WAYLAND=1
 export _JAVA_AWT_WM_NONREPARENTING=1

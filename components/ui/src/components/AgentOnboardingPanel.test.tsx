@@ -29,9 +29,9 @@ const readyStatus: AgentAdminStatus = {
 };
 
 describe("AgentOnboardingPanel", () => {
-  test("prioritizes backend recovery when the broker is unavailable", () => {
+  test("prioritizes recovering the service, and says so without naming it", () => {
     const onRefresh = vi.fn();
-    const onOpenBackend = vi.fn();
+    const onOpenSystem = vi.fn();
 
     render(
       <AgentOnboardingPanel
@@ -40,20 +40,23 @@ describe("AgentOnboardingPanel", () => {
         backendError="Failed to fetch"
         harnessAvailable={false}
         onConnectCodex={vi.fn()}
-        onOpenBackend={onOpenBackend}
+        onOpenSystem={onOpenSystem}
         onRefresh={onRefresh}
       />,
     );
 
-    expect(screen.getByText("Backend no disponible")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Refrescar salud" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Backend" }));
+    expect(screen.getByText("Pi no está disponible")).toBeInTheDocument();
+    // El mensaje crudo del servicio no llega a la pantalla principal.
+    expect(screen.queryByText("Failed to fetch")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abrir Sistema" }));
 
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(onOpenBackend).toHaveBeenCalledTimes(1);
+    expect(onOpenSystem).toHaveBeenCalledTimes(1);
   });
 
-  test("guides the user to connect Codex after the backend is ready", () => {
+  test("guides the user to connect the account once the service is ready", () => {
     const onConnectCodex = vi.fn();
 
     render(
@@ -63,19 +66,19 @@ describe("AgentOnboardingPanel", () => {
         backendError={null}
         harnessAvailable
         onConnectCodex={onConnectCodex}
-        onOpenBackend={vi.fn()}
+        onOpenSystem={vi.fn()}
         onRefresh={vi.fn()}
       />,
     );
 
-    expect(screen.getByText("Conecta ChatGPT/Codex")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Conectar ahora" }));
+    expect(screen.getByText("Conecta tu cuenta")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Conectar" }));
 
     expect(onConnectCodex).toHaveBeenCalledTimes(1);
   });
 
-  test("prioritizes backend Codex setup items before foreground login", () => {
-    const onOpenBackend = vi.fn();
+  test("prioritizes pending setup before login, without leaking the raw item", () => {
+    const onOpenSystem = vi.fn();
     render(
       <AgentOnboardingPanel
         adminStatus={{
@@ -95,14 +98,18 @@ describe("AgentOnboardingPanel", () => {
         backendError={null}
         harnessAvailable
         onConnectCodex={vi.fn()}
-        onOpenBackend={onOpenBackend}
+        onOpenSystem={onOpenSystem}
         onRefresh={vi.fn()}
       />,
     );
 
-    expect(screen.getByText("Setup del backend")).toBeInTheDocument();
-    expect(screen.getByText("Connect backend Codex auth for OpenClaw.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Backend" }));
-    expect(onOpenBackend).toHaveBeenCalledTimes(1);
+    // La configuración pendiente gana al login, pero se cuenta en castellano:
+    // el texto del `setupItem` viene en inglés y de ingeniería, y vive en Sistema.
+    expect(screen.getByText("Falta terminar la configuración")).toBeInTheDocument();
+    expect(screen.queryByText("Connect backend Codex auth for OpenClaw.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conectar" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir Sistema" }));
+    expect(onOpenSystem).toHaveBeenCalledTimes(1);
   });
 });

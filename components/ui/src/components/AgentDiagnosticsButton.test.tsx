@@ -30,9 +30,9 @@ describe("AgentDiagnosticsButton", () => {
 
     render(<AgentDiagnosticsButton collectDiagnostics={collectDiagnostics} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Diagnostico" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ver informe técnico" }));
 
-    expect(await screen.findByText("Diagnostico de AgenOS")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Informe técnico" })).toBeInTheDocument();
     expect(screen.getByText("Failed to fetch")).toBeInTheDocument();
     expect(screen.getByText("systemctl status agenos-agent-api.service")).toBeInTheDocument();
     expect(screen.getByText("cat ~/.cache/agenos-system/runtime/api.log")).toBeInTheDocument();
@@ -56,7 +56,7 @@ describe("AgentDiagnosticsButton", () => {
 
     render(<AgentDiagnosticsButton collectDiagnostics={vi.fn().mockResolvedValue(bundle)} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Diagnostico" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ver informe técnico" }));
     expect(await screen.findByText("journalctl -u agenos-agent-api.service")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Copiar" }));
 

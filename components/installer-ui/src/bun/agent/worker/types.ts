@@ -48,6 +48,7 @@ export type WorkerProgressEvent = {
 
 export type WorkerAdapter = {
   health(): Promise<WorkerHealth>;
+  testConnection(): Promise<{ ok: boolean; message: string }>;
   enqueue(input: {
     message: string;
     source: WorkerTaskSource;
@@ -56,4 +57,10 @@ export type WorkerAdapter = {
   status(taskId: string): Promise<WorkerTask | null>;
   events(taskId: string): Promise<WorkerProgressEvent[]>;
   list(limit?: number): Promise<WorkerTask[]>;
+  retry(taskId: string): Promise<{ ok: boolean; taskId?: string; correlationId?: string; message?: string }>;
+  clear(taskId: string): Promise<{ ok: boolean; taskId: string; message: string }>;
+  resolveConfirmation(
+    taskId: string,
+    result: { ok: boolean; message?: string },
+  ): Promise<{ ok: boolean; taskId: string; message: string }>;
 };

@@ -5,12 +5,30 @@ curl
 wget
 locales
 network-manager
+wpasupplicant
+iw
+rfkill
+wireless-regdb
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-brcm80211
+firmware-libertas
+firmware-ti-connectivity
+firmware-misc-nonfree
 pipewire
 pipewire-alsa
 pipewire-pulse
 wireplumber
 alsa-utils
+ffmpeg
 grub-common
 grub-pc-bin
 grub-efi-amd64-bin
 efibootmgr
+
+# Invocado directamente por el agente (components/agent/files.ts, apps.ts) para
+# abrir ficheros y el gestor de archivos. Hoy solo llega de forma transitiva a
+# traves de chromium-common: si esa dependencia cambia, abrir un fichero falla
+# en silencio.
+xdg-utils

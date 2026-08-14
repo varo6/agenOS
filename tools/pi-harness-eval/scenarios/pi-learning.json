@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "AgenOS Pi confirmed-memory eval",
+  "description": "Checks whether a confirmed preference is selected within budget and changes the real foreground answer.",
+  "scenarios": [
+    {
+      "id": "recall-summary-format",
+      "split": "held-out",
+      "category": "learning",
+      "prompt": "¿En qué formato prefiero que me des los resúmenes?",
+      "expect": {
+        "status": "succeeded",
+        "outputIncludes": ["tres viñetas"],
+        "learningContextIncludes": ["learn_summary_format"],
+        "maxLearningContextTokens": 256,
+        "maxDurationMs": 30000
+      }
+    }
+  ]
+}

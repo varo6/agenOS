@@ -1,0 +1,12 @@
+{
+  "name": "agenos-pi-harness-eval",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "codex:direct": "bun run src/codex-direct.ts",
+    "learning:live": "bun run src/learning-live.ts",
+    "eval": "bun run src/cli.ts run",
+    "test": "bun test src"
+  }
+}

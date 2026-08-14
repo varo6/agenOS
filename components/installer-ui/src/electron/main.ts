@@ -25,6 +25,8 @@ import {
   shouldTrackGpuFallback,
   writePersistedElectronGpuState,
 } from "../shared/system-services/runtime";
+import { createNetworkManagerService } from "../../../network/node/network-manager";
+import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 
 const APP_URL = process.env.AGENOS_INSTALLER_URL || "http://127.0.0.1:4173/";
 const APP_KIND: ShellMode = isShellMode(process.env.AGENOS_APP_KIND)
@@ -51,6 +53,7 @@ const preflightService = createPreflightService({
 });
 const maintenanceService = createMaintenanceService();
 const switchModeService = createSwitchModeService();
+const networkService = createNetworkManagerService();
 
 let mainWindow: BrowserWindow | null = null;
 let ipcRegistered = false;
@@ -89,12 +92,42 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
   };
 }
 
+function isHttpUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function registerIpcHandlers(): void {
-  if (ipcRegistered || APP_KIND !== "system") {
+  if (ipcRegistered) {
     return;
   }
 
   ipcRegistered = true;
+
+  ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.listAccessPoints, () => networkService.listAccessPoints());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.connectWifi, (_event, payload: ConnectWifiRequest) => (
+    networkService.connectWifi({
+      ssid: typeof payload?.ssid === "string" ? payload.ssid : "",
+      bssid: typeof payload?.bssid === "string" ? payload.bssid : undefined,
+      password: typeof payload?.password === "string" ? payload.password : undefined,
+      hidden: payload?.hidden === true,
+      device: typeof payload?.device === "string" ? payload.device : undefined,
+    })
+  ));
+  ipcMain.handle(NETWORK_IPC_CHANNELS.disconnectWifi, () => networkService.disconnectWifi());
+  ipcMain.handle(NETWORK_IPC_CHANNELS.setWifiEnabled, (_event, payload: { enabled?: unknown }) => (
+    networkService.setWifiEnabled(payload?.enabled === true)
+  ));
+
+  if (APP_KIND !== "system") {
+    return;
+  }
 
   ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => {
     try {
@@ -328,7 +361,7 @@ function createMainWindow(): void {
 
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    show: false,
+    show: true,
     backgroundColor: "#090b12",
     autoHideMenuBar: true,
     fullscreen: true,
@@ -346,8 +379,21 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isHttpUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url.startsWith("file://") || url === APP_URL || url.startsWith(`${APP_URL}/`)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (isHttpUrl(url)) {
+      void shell.openExternal(url);
+    }
   });
 
   mainWindow.once("ready-to-show", () => {

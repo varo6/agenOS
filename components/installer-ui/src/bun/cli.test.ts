@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { runCli } from "./cli";
+import { runCli, workerHealthPollDelayMs } from "./cli";
+
+describe("worker health polling", () => {
+  test("polls healthy workers rarely and backs off persistent failures", () => {
+    expect(workerHealthPollDelayMs(true, 0)).toBe(300_000);
+    expect(workerHealthPollDelayMs(false, 0)).toBe(30_000);
+    expect(workerHealthPollDelayMs(false, 1)).toBe(60_000);
+    expect(workerHealthPollDelayMs(false, 4)).toBe(300_000);
+    expect(workerHealthPollDelayMs(false, 20)).toBe(300_000);
+  });
+});
 
 describe("runCli", () => {
   test("doctor prints a redacted support bundle as JSON", async () => {

@@ -1,6 +1,5 @@
 [Unit]
 Description=AgenOS Background Agent Worker
-After=agenos-agent-api.service
 Wants=agenos-agent-api.service
 
 [Service]
@@ -17,6 +16,9 @@ ExecStartPre=/usr/local/bin/agenos-openclaw-setup
 ExecStart=/usr/local/bin/agenos-openclaw-worker
 Restart=on-failure
 RestartSec=3
+Nice=10
+CPUWeight=20
+IOWeight=20
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

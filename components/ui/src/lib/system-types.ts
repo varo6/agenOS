@@ -58,6 +58,25 @@ export type AgentTaskResponse = AgentActionResponse & {
   taskId?: string;
 };
 
+export type AgentWorkspaceNumber = 1 | 2 | 3 | 4 | 5;
+
+export type AgentWorkspace = {
+  number: AgentWorkspaceNumber;
+  name: string;
+  label: string;
+};
+
+export type AgentWorkspaceListResponse = {
+  ok: true;
+  workspaces: AgentWorkspace[];
+  activeWorkspace?: AgentWorkspaceNumber;
+};
+
+export type AgentWorkspaceFocusResponse = AgentActionResponse & {
+  workspaces: AgentWorkspace[];
+  activeWorkspace?: AgentWorkspaceNumber;
+};
+
 export type AgentWorkerMode = "openclaw-process" | "agenos-bun-worker" | "local-simulated";
 
 export type AgentAdminConfig = {

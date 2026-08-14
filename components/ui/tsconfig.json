@@ -11,12 +11,19 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "react": ["node_modules/@types/react"],
+      "react/jsx-runtime": ["node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["node_modules/@types/react/jsx-dev-runtime"],
+      "lucide-react": ["node_modules/lucide-react"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "types": ["vite/client"],
     "jsx": "react-jsx"
   },
-  "include": ["src"],
+  "include": ["src", "../network/**/*.ts", "../network/**/*.tsx"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.js"]
 }

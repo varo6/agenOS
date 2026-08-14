@@ -1,13 +1,15 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { restartAgentWorker, type AdminEffectResult } from "./admin-effects";
 import { createConfirmationStore, type ConfirmationStoreOptions } from "./confirmations";
+import type { ConfirmationRecord } from "./confirmations";
 import { createDiagnosticsBundle } from "./diagnostics";
 import { createMemoryStore } from "./memory";
 import { createOpenClawSetupService, type OpenClawSetupState } from "./setup";
 import { createTaskQueue } from "./tasks";
 import { decidePolicy } from "./policy";
 import { POLICY_RULES } from "./policy-rules";
-import { readWorkerConfig, redactWorkerConfig, type RedactedWorkerConfig, type WorkerConfig } from "./worker/config";
+import { readWorkerConfig, redactWorkerConfig, writeWorkerConfig, type RedactedWorkerConfig, type WorkerConfig } from "./worker/config";
 import type { WorkerAdapter, WorkerHealth } from "./worker/types";
 
 export type AgentAdminReadiness = "ready" | "degraded" | "needs_setup";
@@ -33,26 +35,28 @@ export type AgentAdminServiceOptions = {
   stateDir?: string;
   env?: Record<string, string | undefined>;
   config?: WorkerConfig;
-  worker?: Pick<WorkerAdapter, "health" | "events" | "list">;
+  worker?: Pick<WorkerAdapter, "health" | "testConnection" | "events" | "list">;
   setup?: Pick<ReturnType<typeof createOpenClawSetupService>, "status">;
   memoryStore?: ReturnType<typeof createMemoryStore>;
   taskQueue?: ReturnType<typeof createTaskQueue>;
   confirmations?: ReturnType<typeof createConfirmationStore> | { create(input: unknown): { confirmationId: string; status: string } };
   confirmationOptions?: ConfirmationStoreOptions;
+  restartWorker?: () => Promise<AdminEffectResult>;
 };
 
 export function createAgentAdminService(options: AgentAdminServiceOptions = {}) {
   const env = options.env ?? process.env;
   const baseConfig = options.config ?? readWorkerConfig({ env });
-  const config: WorkerConfig = {
+  let config: WorkerConfig = {
     ...baseConfig,
     stateDir: options.stateDir ?? baseConfig.stateDir,
   };
   const worker = options.worker ?? options.taskQueue ?? createTaskQueue();
   const setup = options.setup ?? createOpenClawSetupService({ stateDir: config.stateDir, env });
   const memoryStore = options.memoryStore ?? createMemoryStore({ rootDir: join(expandHome(config.stateDir), "memory") });
-  const taskQueue = options.taskQueue ?? createTaskQueue({ rootDir: expandHome(config.stateDir) });
+  const taskQueue = options.taskQueue ?? createTaskQueue({ rootDir: expandHome(config.stateDir), env });
   const confirmations = options.confirmations ?? createConfirmationStore(options.confirmationOptions);
+  const restartWorker = options.restartWorker ?? restartAgentWorker;
 
   async function status() {
     const workerHealth = normalizeHealth(await worker.health(), config.stateDir);
@@ -120,17 +124,40 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
       });
     },
     async testConnection(_actor: AgentAdminActor) {
-      const current = await status();
+      const health = normalizeHealth(await worker.health(), config.stateDir);
+      if (health.mode !== "openclaw-process") {
+        return {
+          ok: false,
+          status: 503,
+          readiness: "degraded" as const,
+          message: health.mode === "local-simulated"
+            ? "No se puede probar una conexion real en modo simulado. Configura OpenClaw y vuelve a intentarlo."
+            : "La prueba remota no esta disponible para el worker Bun porque no tiene un planner/proveedor conectado.",
+          setupItems: setupItemsFor(health, redactWorkerConfig(config, env)),
+        };
+      }
+
+      if (!health.ok || !health.serviceActive) {
+        return {
+          ok: false,
+          status: 503,
+          readiness: "degraded" as const,
+          message: health.degradedReason ?? health.lastError ?? "El gateway de OpenClaw no esta disponible.",
+          setupItems: setupItemsFor(health, redactWorkerConfig(config, env)),
+        };
+      }
+
+      const probe = await worker.testConnection();
       return {
-        ok: current.readiness === "ready",
-        status: current.readiness === "ready" ? 200 : 503,
-        readiness: current.readiness,
-        message: current.readiness === "ready" ? "Connection ready." : "Provider/auth is not configured.",
-        setupItems: current.setupItems,
+        ok: probe.ok,
+        status: probe.ok ? 200 : 503,
+        readiness: probe.ok ? "ready" as const : "degraded" as const,
+        message: probe.message,
+        setupItems: setupItemsFor(health, redactWorkerConfig(config, env)),
       };
     },
     async retryTask(taskId: string, _actor: AgentAdminActor) {
-      return { ok: true, taskId, message: "Task retry requested." };
+      return taskQueue.retry(taskId);
     },
     async clearTask(taskId: string, actor: AgentAdminActor) {
       return confirmationRequired({
@@ -151,12 +178,40 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
         policyRules: this.readPolicy().rules,
       });
     },
+    async executeConfirmed(record: ConfirmationRecord) {
+      try {
+        if (record.tool === "admin.config.write") {
+          config = writeWorkerConfig(record.input as Partial<WorkerConfig>, { env, current: config });
+          const reloaded = await taskQueue.reload();
+          if (!reloaded.ok) {
+            return { ok: false, message: `La configuracion se guardo, pero el broker no pudo recargarla: ${reloaded.message}` };
+          }
+          return { ok: true, message: `Configuracion guardada y aplicada. ${reloaded.message}` };
+        }
+        if (record.tool === "admin.service.restart") {
+          return restartWorker();
+        }
+        if (record.tool === "admin.queue.clear") {
+          const taskId = taskIdFromInput(record.input);
+          if (!taskId) {
+            return { ok: false, message: "La confirmacion no contiene un taskId valido." };
+          }
+          return taskQueue.clear(taskId);
+        }
+        return { ok: false, message: `La accion admin ${record.tool} no esta implementada; no se ha ejecutado ningun cambio.` };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : "No se pudo ejecutar la accion administrativa confirmada.",
+        };
+      }
+    },
   };
 
   function confirmationRequired(input: { actor: AgentAdminActor; tool: string; summary: string; input: unknown }) {
     const policy = decidePolicy({ tool: input.tool, source: input.actor });
     if (policy.decision !== "confirm") {
-      return { ok: true, decision: policy.decision, message: policy.reason };
+      return { ok: false, decision: policy.decision, message: policy.reason };
     }
 
     const confirmation = confirmations.create({
@@ -175,6 +230,14 @@ export function createAgentAdminService(options: AgentAdminServiceOptions = {}) 
       message: policy.reason,
     };
   }
+}
+
+function taskIdFromInput(input: unknown): string | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const taskId = (input as { taskId?: unknown }).taskId;
+  return typeof taskId === "string" && taskId.trim() ? taskId : null;
 }
 
 function normalizeSetup(setup: Partial<OpenClawSetupState>): OpenClawSetupState {
@@ -197,6 +260,14 @@ function normalizeSetup(setup: Partial<OpenClawSetupState>): OpenClawSetupState 
       profile: null,
       loginAvailable: false,
       lastError: null,
+      login: {
+        status: "idle",
+        url: null,
+        userCode: null,
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+      },
     },
     telegram: setup.telegram ?? {
       enabled: false,

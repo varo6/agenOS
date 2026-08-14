@@ -7,16 +7,8 @@ export class HttpError extends Error {
   }
 }
 
-function corsHeaders(headers?: unknown): Headers {
-  const result = new Headers(headers as ConstructorParameters<typeof Headers>[0]);
-  result.set("Access-Control-Allow-Origin", "*");
-  result.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  result.set("Access-Control-Allow-Headers", "content-type");
-  return result;
-}
-
 export function json(payload: unknown, init: ResponseInit = {}): Response {
-  const headers = corsHeaders(init.headers);
+  const headers = new Headers(init.headers as ConstructorParameters<typeof Headers>[0]);
   headers.set("Content-Type", "application/json; charset=utf-8");
   return new Response(JSON.stringify(payload), {
     ...init,
@@ -25,13 +17,30 @@ export function json(payload: unknown, init: ResponseInit = {}): Response {
 }
 
 export function options(allow: string[]): Response {
-  const headers = corsHeaders({
+  const headers = new Headers({
     Allow: allow.join(", "),
   });
   return new Response(null, {
     status: 204,
     headers,
   });
+}
+
+const TRUSTED_UI_ORIGINS = new Set([
+  "http://127.0.0.1:4173",
+  "http://localhost:4173",
+]);
+
+export function rejectUntrustedBrowserOrigin(request: Request): Response | null {
+  const fetchSite = request.headers.get("sec-fetch-site")?.toLowerCase();
+  const origin = request.headers.get("origin");
+  if (fetchSite === "cross-site" || (origin && !TRUSTED_UI_ORIGINS.has(origin))) {
+    return json({
+      ok: false,
+      message: "Origen web no autorizado para la API local de AgenOS.",
+    }, { status: 403 });
+  }
+  return null;
 }
 
 export function methodNotAllowed(allow: string[]): Response {

@@ -78,10 +78,12 @@ export async function createSupportBundle(options: SupportBundleOptions = {}) {
   const agentAdmin = options.agentAdmin ?? createAgentAdminService({ env });
   const packageDir = resolve(import.meta.dir, "..");
   const runtimePaths = resolveRuntimePaths(env, packageDir);
+  const uiToken = readTextIfPresent(runtimePaths.uiTokenPath);
+  const probeHeaders = uiToken ? { Authorization: `Bearer ${uiToken}` } : undefined;
 
   const [healthProbe, adminProbe, agentStatus, agentConfig, ...commands] = await Promise.all([
     readProbe(options.fetch ?? fetch, "health", "/health", options.baseUrl ?? DEFAULT_BASE_URL),
-    readProbe(options.fetch ?? fetch, "agent admin status", "/api/agent/admin/status", options.baseUrl ?? DEFAULT_BASE_URL),
+    readProbe(options.fetch ?? fetch, "agent admin status", "/api/agent/admin/status", options.baseUrl ?? DEFAULT_BASE_URL, probeHeaders),
     readSafe(() => agentAdmin.status()),
     readSafe(() => agentAdmin.readConfig()),
     ...COMMANDS.map(([command, args]) => captureCommand(command, [...args], runCommand, commandTimeoutMs, maxOutputBytes)),
@@ -127,13 +129,14 @@ export function resolveRuntimePaths(env: Record<string, string | undefined>, pac
     userConfig: env.AGENOS_OPENCLAW_USER_CONFIG ?? join(home, ".agenos", "openclaw", "config.json"),
     stateDir: env.AGENOS_OPENCLAW_STATE_DIR ?? join(home, ".agenos", "openclaw"),
     workerTokenPath: env.AGENOS_WORKER_TOKEN_PATH ?? join(home, ".agenos", "broker", "worker-token"),
+    uiTokenPath: env.AGENOS_UI_TOKEN_PATH ?? join(home, ".agenos", "broker", "ui-token"),
   };
 }
 
-async function readProbe(fetcher: FetchLike, name: string, path: string, baseUrl: string): Promise<SupportHttpProbe> {
+async function readProbe(fetcher: FetchLike, name: string, path: string, baseUrl: string, headers?: Record<string, string>): Promise<SupportHttpProbe> {
   const url = new URL(path, `${baseUrl}/`).toString();
   try {
-    const response = await fetcher(url, { headers: { Accept: "application/json" } });
+    const response = await fetcher(url, { headers: { Accept: "application/json", ...headers } });
     const text = await response.text();
     return {
       name,

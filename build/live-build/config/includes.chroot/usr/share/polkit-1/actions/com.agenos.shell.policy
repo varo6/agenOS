@@ -4,8 +4,8 @@
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <action id="com.agenos.shell.run-helper">
-    <description>Run the AgenOS shell helper</description>
-    <message>Authentication is required to run the AgenOS shell helper.</message>
+    <description>Run a typed AgenOS system operation</description>
+    <message>Authentication is required to run this AgenOS system operation.</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
