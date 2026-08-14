@@ -30,6 +30,8 @@ class BootCriticalPathTests(unittest.TestCase):
         electron_exec = script.index("  'exec flock -n")
         self.assertLess(background_start, electron_exec)
         self.assertIn("systemctl is-enabled --quiet agenos-agent-api.service", script)
+        self.assertIn("systemctl is-failed --quiet agenos-agent-api.service", script)
+        self.assertIn('while [ "${attempts}" -lt 12 ]', script)
         self.assertNotIn("  'start_api || true' \\", script)
 
 

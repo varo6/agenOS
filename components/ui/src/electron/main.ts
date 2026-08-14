@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 
 import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from "./broker-pi-client";
+import { loadPreferredFrontend } from "./frontend-loader";
 import {
   PI_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
@@ -181,7 +182,10 @@ function showWindow(): void {
 
   mainWindow.show();
   mainWindow.focus();
-  mainWindow.setFullScreen(true);
+  // Maximizada, no en fullscreen: el fullscreen esconde la barra de escritorios
+  // de Sway y el usuario pierde de vista en que workspace esta. En tiling la
+  // ventana ya ocupa todo el area util; maximize solo importa fuera de Sway.
+  mainWindow.maximize();
 }
 
 function openExternalUrl(url: string): void {
@@ -559,7 +563,22 @@ async function loadMainContent(): Promise<void> {
     return;
   }
 
-  await mainWindow.loadURL(new URL("/", `${BROKER_BASE_URL}/`).toString());
+  const indexPath = resolveIndexPath();
+  if (!indexPath) {
+    showFallback("No se encontró el build local de AgenOS.", "Se esperaba dist/index.html junto al runtime de components/ui.");
+    return;
+  }
+
+  const loadResult = await loadPreferredFrontend({
+    brokerBaseUrl: BROKER_BASE_URL,
+    localIndexPath: indexPath,
+    loadUrl: (url) => mainWindow?.loadURL(url) ?? Promise.reject(new Error("La ventana principal ya no está disponible.")),
+    loadFile: (path) => mainWindow?.loadFile(path) ?? Promise.reject(new Error("La ventana principal ya no está disponible.")),
+  });
+
+  if (loadResult === "local") {
+    console.warn("El broker no estaba disponible durante el arranque; se cargó la interfaz local empaquetada.");
+  }
 }
 
 function createMainWindow(): void {
@@ -573,7 +592,7 @@ function createMainWindow(): void {
     show: true,
     backgroundColor: "#090b12",
     autoHideMenuBar: true,
-    fullscreen: true,
+    fullscreen: false,
     useContentSize: true,
     webPreferences: {
       backgroundThrottling: false,
@@ -595,7 +614,7 @@ function createMainWindow(): void {
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("data:") || new URL(url).origin === new URL(BROKER_BASE_URL).origin) {
+    if (url.startsWith("data:") || url.startsWith("file://") || new URL(url).origin === new URL(BROKER_BASE_URL).origin) {
       return;
     }
 

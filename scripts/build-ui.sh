@@ -26,16 +26,19 @@ source_hash() {
       [[ -e "${path}" ]] && inputs+=("${path}")
     done
 
-    find "${inputs[@]}" -type f -print 2>/dev/null \
+    find "${inputs[@]}" -type f -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
 }
 
+# Los tests quedan fuera del hash a proposito: no se empaquetan ni se importan
+# desde el codigo que se compila, asi que editarlos solo disparaba un rebuild
+# completo cuyo resultado era byte a byte identico.
 agent_source_hash() {
   (
     cd "${AGENT_DIR}"
-    find . -type f -print 2>/dev/null \
+    find . -type f -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )
@@ -249,9 +252,20 @@ printf '%s\n' \
   'export TMPDIR="${RUNTIME_DIR}"' \
   '' \
   'start_api() {' \
-  '  # La ISO ya gestiona el broker con systemd. No lo dupliques mientras arranca.' \
+  '  # Da prioridad al broker supervisado por systemd, pero no presupongas que' \
+  '  # estar habilitado significa que haya arrancado correctamente.' \
   '  if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet agenos-agent-api.service 2>/dev/null; then' \
-  '    return 0' \
+  '    attempts=0' \
+  '    while [ "${attempts}" -lt 12 ]; do' \
+  '      if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
+  '        return 0' \
+  '      fi' \
+  '      if systemctl is-failed --quiet agenos-agent-api.service 2>/dev/null; then' \
+  '        break' \
+  '      fi' \
+  '      attempts=$((attempts + 1))' \
+  '      sleep 0.25' \
+  '    done' \
   '  fi' \
   '' \
   '  if curl --silent --fail --max-time 1 "${API_URL}" >/dev/null 2>&1; then' \
