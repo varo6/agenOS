@@ -3,8 +3,11 @@ VERSION ?=
 
 .PHONY: build clean docker-image quick-test release release-build shell vm-live vm-disk vm-reset pi-harness-eval test
 
+# Sin llamada previa a docker-image: ese target no lee SKIP_DOCKER_BUILD, asi
+# que construia la imagen sin la etiqueta agenos.livebuild.hash y build-iso.sh
+# la volvia a construir acto seguido al no reconocerla. build-iso.sh ya crea la
+# imagen cuando falta o cuando cambia el Dockerfile, y lo hace etiquetandola.
 build:
-	SKIP_DOCKER_BUILD=1 $(MAKE) docker-image
 	./scripts/build-iso.sh
 
 clean: docker-image

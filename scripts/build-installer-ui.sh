@@ -16,6 +16,9 @@ PI_AGENT_PACKAGE_DIR="${UI_DIR}/node_modules/@mariozechner/pi-coding-agent"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 
+# Los tests quedan fuera del hash a proposito: no se empaquetan ni se importan
+# desde el codigo que se compila, asi que editarlos solo disparaba un rebuild
+# completo cuyo resultado era byte a byte identico.
 source_hash() {
   local target_dir="$1"
   shift
@@ -27,7 +30,7 @@ source_hash() {
       [[ -e "${path}" ]] && inputs+=("${path}")
     done
 
-    find "${inputs[@]}" -type f -not -path "*/node_modules/*" -print 2>/dev/null \
+    find "${inputs[@]}" -type f -not -path "*/node_modules/*" -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
       | LC_ALL=C sort \
       | xargs sha256sum
   )

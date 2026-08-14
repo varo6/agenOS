@@ -6,7 +6,7 @@ STATE_DIR="${STATE_DIR:-${ROOT_DIR}/state/qemu}"
 MODE="${1:-live}"
 
 VM_NAME="${VM_NAME:-agenos-dev}"
-VM_RAM_MB="${VM_RAM_MB:-8192}"
+VM_RAM_MB="${VM_RAM_MB:-4096}"
 VM_CPUS="${VM_CPUS:-4}"
 VM_DISK="${VM_DISK:-${STATE_DIR}/${VM_NAME}.qcow2}"
 VM_DISK_SIZE="${VM_DISK_SIZE:-32G}"

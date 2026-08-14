@@ -32,13 +32,15 @@ Comandos:
 make build
 ```
 
-La ISO resultante se copia a `dist/`. El build normal reutiliza la cache de `live-build` para acelerar compilaciones repetidas.
+La ISO resultante se copia a `dist/`. El build normal reutiliza la cache de `live-build` (los `.deb` ya descargados y el chroot de bootstrap) y las caches de descarga de cargo, Bun y Electron bajo `.cache/`, todas verificadas por checksum.
 
 Si necesitas forzar un build completamente en frio:
 
 ```bash
 LB_PURGE=1 make build
 ```
+
+`LB_PURGE=1` y `make clean` borran `build/live-build/cache/`: ~1,3 GB de paquetes y el chroot de bootstrap. El siguiente build vuelve a hacer debootstrap y a descargar todos los paquetes, lo que anade del orden de 5 a 15 minutos. Uselo solo cuando sospeche que el estado del archivo de paquetes esta corrupto, no como limpieza rutinaria.
 
 ## Probar la ISO en local
 

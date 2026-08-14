@@ -1,4 +1,7 @@
 dist/
+# Caches de descarga (cargo, bun, electron) que scripts/build-iso.sh redirige
+# aqui para que sobrevivan al contenedor --rm entre builds.
+.cache/
 components/ui/dist/
 components/ui/build/
 components/ui/node_modules/
