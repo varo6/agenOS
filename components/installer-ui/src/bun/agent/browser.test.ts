@@ -101,7 +101,7 @@ describe("browser tool", () => {
     expect(spawned[0]?.[1]).toContain("--ozone-platform=wayland");
     expect(spawned[0]?.[1]).not.toContain("--ozone-platform-hint=auto");
     expect(spawned[0]?.[1]).not.toContain("--no-sandbox");
-    expect(swayCommands).toEqual(['[con_id=51] move to workspace "3:web", fullscreen enable, focus']);
+    expect(swayCommands).toEqual(['[con_id=51] move to workspace "3:web", focus']);
   });
 
   test("uses the X11 backend for an XWayland-only session", async () => {

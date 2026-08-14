@@ -35,7 +35,7 @@ describe("file launcher", () => {
 
     await expect(tool.openPath(path)).resolves.toMatchObject({ ok: true, status: "mapped", path });
     expect(spawned).toEqual([["xdg-open", [path]]]);
-    expect(swayCommands).toEqual(['[con_id=77] move to workspace "4:media", fullscreen enable, focus']);
+    expect(swayCommands).toEqual(['[con_id=77] move to workspace "4:media", focus']);
   });
 
   test("reports a missing desktop opener instead of failing silently", async () => {

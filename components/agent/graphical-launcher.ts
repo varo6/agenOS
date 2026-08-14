@@ -551,8 +551,10 @@ export async function launchGraphicalApplication(
     if (window?.id) {
       const workspaceName = workspaceNameFor(request.workspace);
       const focusSuffix = request.focus ? ", focus" : "";
-      const shouldFullscreen = request.fullscreen ?? workspaceName !== "1:home";
-      const fullscreenSuffix = shouldFullscreen ? ", fullscreen enable" : "";
+      // Sin fullscreen salvo peticion explicita: en tiling la ventana ya ocupa
+      // todo el workspace, y el fullscreen de Sway ademas tapa la swaybar, que
+      // es donde el usuario ve en que escritorio esta.
+      const fullscreenSuffix = request.fullscreen === true ? ", fullscreen enable" : "";
       const swayCommand = `[con_id=${window.id}] move to workspace "${workspaceName}"${fullscreenSuffix}${focusSuffix}`;
       const moveResult = await runCommand("swaymsg", [swayCommand], {
         env: request.env,

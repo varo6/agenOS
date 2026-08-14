@@ -153,12 +153,15 @@ def decide_actions(event: Mapping[str, Any], snapshot: WorkspaceSnapshot) -> tup
 
 
 def workspace_status_text(workspace: str | None) -> str:
+    # Textos cortos a proposito: la barra va con tipografia grande para que se
+    # lea de lejos, y una frase larga empujaria a los botones de escritorio
+    # fuera de la pantalla en paneles pequenos.
     labels = {
         "1:home": "Home · voz y agente",
-        "2:app": "Apps · vacio hasta que abras una aplicacion · Ctrl+Alt+1: Home",
-        "3:web": "Web · vacio hasta que abras el navegador · Ctrl+Alt+1: Home",
-        "4:media": "Media · vacio hasta que abras contenido · Ctrl+Alt+1: Home",
-        "5:work": "Work · vacio hasta que abras una herramienta · Ctrl+Alt+1: Home",
+        "2:app": "Apps · vacio · Ctrl+Alt+1 vuelve a Home",
+        "3:web": "Web · vacio · Ctrl+Alt+1 vuelve a Home",
+        "4:media": "Media · vacio · Ctrl+Alt+1 vuelve a Home",
+        "5:work": "Work · vacio · Ctrl+Alt+1 vuelve a Home",
     }
     return labels.get(workspace, f"{workspace or 'AgenOS'} · Ctrl+Alt+1: Home")
 

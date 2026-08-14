@@ -84,7 +84,44 @@ describe("graphical launcher", () => {
       "tree-1",
       "spawn",
       "tree-2",
-      '[con_id=42] move to workspace "2:app", fullscreen enable, focus',
+      '[con_id=42] move to workspace "2:app", focus',
+    ]);
+  });
+
+  // El fullscreen tapa la swaybar, que es el unico sitio donde el usuario ve en
+  // que escritorio esta. Por eso ya no se aplica por defecto fuera de 1:home:
+  // solo cuando alguien lo pide explicitamente.
+  test("only requests fullscreen when the caller asks for it", async () => {
+    const swayCommands: string[] = [];
+    let treeReads = 0;
+    const { child } = fakeChild(321);
+    const result = await launchGraphicalApplication({
+      command: "demo-app",
+      env: { SWAYSOCK: "/run/user/1000/sway.sock" },
+      label: "Demo",
+      workspace: 3,
+      focus: true,
+      fullscreen: true,
+      windowTokens: ["demo"],
+      commandExists: (command) => command === "swaymsg",
+      spawnCommand: () => child,
+      runCommand: async (_command, args) => {
+        if (args[0] === "-t") {
+          treeReads += 1;
+          return commandResult({
+            stdout: treeReads === 1
+              ? JSON.stringify({ nodes: [] })
+              : JSON.stringify({ nodes: [{ id: 42, app_id: "demo", pid: 321 }] }),
+          });
+        }
+        swayCommands.push(args[0] ?? "");
+        return commandResult();
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, status: "mapped" });
+    expect(swayCommands).toEqual([
+      '[con_id=42] move to workspace "3:web", fullscreen enable, focus',
     ]);
   });
 

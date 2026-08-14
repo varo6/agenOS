@@ -20,25 +20,40 @@ input type:touchpad {
   scroll_method two_finger
 }
 
+# Tema y tamaño explícitos: una instalación mínima no debe depender del cursor
+# implícito que el toolkit o el visor de la VM decidan proporcionar.
+seat * xcursor_theme Adwaita 24
+
 output * bg #14100d solid_color
 
 # Swaybar es una superficie nativa y sigue visible cuando un workspace esta
 # vacio. Asi el fondo solido nunca se puede confundir con un bloqueo del sistema.
+#
+# Es tambien el unico indicador permanente de "donde estoy" para un usuario que
+# no conoce el gestor de ventanas: va deliberadamente grande (altura fija y
+# tipografia de interfaz, no monospace de 11) para que la diferencia entre el
+# escritorio activo y el resto se lea de un vistazo desde lejos.
 bar {
   position top
   mode dock
   workspace_buttons yes
   binding_mode_indicator no
   status_command /usr/local/bin/agenos-workspace-watch --status
-  font pango:monospace 11
+  font pango:Sans Bold 15
+  height 46
+  status_padding 6
+  separator_symbol " "
 
+  # El escritorio activo va en el naranja de marca sobre fondo oscuro; los
+  # demas quedan apagados y con borde propio, de forma que se vean como fichas
+  # separadas y no como una sola linea de texto continua.
   colors {
     background #0d0b0a
     statusline #f5eee8
     separator #6f625b
-    focused_workspace #d68c45 #d68c45 #14100d
-    active_workspace #51443d #51443d #f5eee8
-    inactive_workspace #241e1a #241e1a #a99b92
+    focused_workspace #f0a464 #d68c45 #14100d
+    active_workspace #6f625b #3a302a #f5eee8
+    inactive_workspace #3a302a #1a1512 #b9aaa0
     urgent_workspace #b91c1c #b91c1c #ffffff
   }
 }
@@ -48,10 +63,11 @@ bar {
 # un workspace vacio (color solido). Solo fijamos el inicial.
 workspace 1:home
 
-for_window [workspace="2:app"] fullscreen enable
-for_window [workspace="3:web"] fullscreen enable
-for_window [workspace="4:media"] fullscreen enable
-for_window [workspace="5:work"] fullscreen enable
+# Las apps van maximizadas pero NO en fullscreen: el fullscreen de Sway tapa la
+# swaybar y con ella el unico indicador de escritorio que tiene el usuario. Una
+# ventana en tiling ya ocupa todo el area util del workspace (borde 0), asi que
+# se ve igual de grande y la numeracion de arriba sigue presente.
+#
 # El routing de las apps que abre Pi lo decide agenos-graphical-launcher, que
 # espera a que la ventana mapee y despues la mueve y enfoca. Aqui ya no hay
 # reglas de Chromium: dos autoridades compitiendo por el mismo foco era una de

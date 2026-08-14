@@ -132,7 +132,7 @@ describe("app tool", () => {
     });
 
     await expect(tool.openApp("terminal")).resolves.toMatchObject({ ok: true, status: "mapped" });
-    expect(calls.at(-1)).toEqual(["swaymsg", ['[con_id=12] move to workspace "5:work", fullscreen enable, focus']]);
+    expect(calls.at(-1)).toEqual(["swaymsg", ['[con_id=12] move to workspace "5:work", focus']]);
   });
 
   test("reports the process diagnostic when a mapped app cannot be queried", async () => {
@@ -219,7 +219,7 @@ describe("app tool", () => {
     ]);
     expect(swayCommands.at(-1)).toEqual([
       "swaymsg",
-      ['[con_id=42] move to workspace "3:web", fullscreen enable, focus'],
+      ['[con_id=42] move to workspace "3:web", focus'],
     ]);
   });
 

@@ -230,7 +230,16 @@ fn command_as_original_user(command: &[&str], wait: bool) -> i32 {
 }
 
 fn terminal() -> i32 {
-    command_as_original_user(&["/usr/bin/foot"], false)
+    // El routing declarativo coloca foot en 5:work. Cambia primero al workspace
+    // para que el terminal de mantenimiento nunca se abra fuera de la vista.
+    command_as_original_user(
+        &[
+            "/usr/bin/sh",
+            "-c",
+            "swaymsg workspace '5:work' && exec /usr/bin/foot",
+        ],
+        false,
+    )
 }
 
 fn reload_shell() -> ! {
