@@ -39,12 +39,23 @@ const PHASE_ICON: Record<VoicePhase, typeof Mic> = {
   unavailable: MicOff,
 };
 
+/**
+ * `full` es el orbe protagonista de la pantalla de reposo. `compact` lo reduce a
+ * un botón que cabe al lado del campo de escribir: el sitio que deja se lo queda
+ * la respuesta de Pi, que sin voz de vuelta hay que leer sin tener que
+ * desplazarse. En `compact` el orbe va solo, así que quien lo use tiene que
+ * pintar `status.title` al lado: la fase nunca puede quedarse dicha solo con el
+ * color del orbe.
+ */
+export type VoiceConsoleSize = "full" | "compact";
+
 export type VoiceConsoleProps = {
   status: VoiceStatus;
   /** Etiqueta accesible del botón, dependiente de la fase. */
   buttonLabel: string;
   onActivate: () => void;
   onCancel: () => void;
+  size?: VoiceConsoleSize;
   className?: string;
 };
 
@@ -53,6 +64,7 @@ function VoiceConsoleComponent({
   buttonLabel,
   onActivate,
   onCancel,
+  size = "full",
   className,
 }: VoiceConsoleProps) {
   const skin = ORB_SKIN[status.tone];
@@ -60,9 +72,10 @@ function VoiceConsoleComponent({
   const isCapturing = status.phase === "listening" || status.phase === "transcribing";
   const isSpinning = status.phase === "thinking" || status.phase === "working";
   const isInteractive = status.canListen || status.phase === "listening";
+  const compact = size === "compact";
 
   return (
-    <div className={cx("flex flex-col items-center gap-7", className)}>
+    <div className={cx("flex flex-col items-center", compact ? "gap-0" : "gap-7", className)}>
       <button
         /*
          * Nunca se deshabilita del todo: así quien navega con teclado o lector
@@ -77,7 +90,12 @@ function VoiceConsoleComponent({
          * puntería, incluso con la mano temblorosa.
          */
         className={cx(
-          "relative grid h-40 w-40 place-items-center rounded-pill border-2 bg-surface transition-colors duration-300 sm:h-52 sm:w-52",
+          "relative grid place-items-center rounded-pill border-2 bg-surface transition-colors duration-300",
+          /*
+           * Incluso encogido se queda muy por encima de los 44px de objetivo
+           * táctil: sigue siendo el botón más grande de la fila.
+           */
+          compact ? "h-20 w-20 sm:h-24 sm:w-24" : "h-40 w-40 sm:h-52 sm:w-52",
           skin.ring,
           isInteractive ? "hover:bg-surface-strong" : "cursor-not-allowed opacity-60",
         )}
@@ -111,7 +129,8 @@ function VoiceConsoleComponent({
         <Icon
           aria-hidden="true"
           className={cx(
-            "relative h-12 w-12 transition-colors sm:h-16 sm:w-16",
+            "relative transition-colors",
+            compact ? "h-9 w-9 sm:h-11 sm:w-11" : "h-12 w-12 sm:h-16 sm:w-16",
             skin.icon,
             isSpinning && "animate-spin",
           )}
@@ -121,12 +140,14 @@ function VoiceConsoleComponent({
 
       {/* Estas dos líneas son la etiqueta visible del orbe: dicen en qué fase
           está y qué se espera de la persona, y nunca desaparecen. */}
-      <div className="max-w-md text-center">
-        <p className="font-display text-2xl font-medium tracking-tight text-ink sm:text-3xl">
-          {status.title}
-        </p>
-        <p className="mt-2 text-base text-ink-muted">{status.hint}</p>
-      </div>
+      {compact ? null : (
+        <div className="max-w-md text-center">
+          <p className="font-display text-2xl font-medium tracking-tight text-ink sm:text-3xl">
+            {status.title}
+          </p>
+          <p className="mt-2 text-base text-ink-muted">{status.hint}</p>
+        </div>
+      )}
 
       {/*
        * Anuncio para lectores de pantalla. En una interfaz por voz el cambio de

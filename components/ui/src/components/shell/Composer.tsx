@@ -1,6 +1,7 @@
 import { memo, useId, type FormEvent } from "react";
 import { SendHorizontal } from "lucide-react";
 
+import { cx } from "../../lib/cx";
 import { Button } from "../ui";
 
 export type ComposerProps = {
@@ -12,6 +13,8 @@ export type ComposerProps = {
   busy: boolean;
   /** Por qué no se puede escribir ahora mismo, si es que no se puede. */
   disabledReason?: string | null;
+  /** Ancho y sitio los pone quien lo coloca: solo o en la fila del orbe. */
+  className?: string;
 };
 
 /**
@@ -26,6 +29,7 @@ function ComposerComponent({
   disabled,
   busy,
   disabledReason = null,
+  className,
 }: ComposerProps) {
   const inputId = useId();
   const hintId = `${inputId}-hint`;
@@ -41,7 +45,7 @@ function ComposerComponent({
   }
 
   return (
-    <form className="w-full max-w-2xl" onSubmit={handleSubmit}>
+    <form className={cx("w-full", className)} onSubmit={handleSubmit}>
       <label className="sr-only" htmlFor={inputId}>
         Escribe a Pi
       </label>

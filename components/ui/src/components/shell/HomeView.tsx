@@ -11,6 +11,7 @@ import { VoiceConsole } from "../voice/VoiceConsole";
 import { Composer } from "./Composer";
 import { ConnectionPanel } from "./ConnectionPanel";
 import { ConversationPanel } from "./ConversationPanel";
+import { LatestReply } from "./LatestReply";
 
 export type HomeViewProps = {
   voice: VoiceController;
@@ -96,42 +97,104 @@ export function HomeView({
 
   const isFirstUse = conversation.turns.length === 0;
   const composerDisabled = !session.ready || blockedReason !== null;
+  const composerHint = composerDisabled
+    ? describeComposerBlock(blockedReason, session.ready)
+    : null;
 
   return (
     <main
       className={cx(
-        "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col items-center gap-10 px-4 pb-16 pt-28",
+        "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col items-center px-4 pb-16",
         // Sin conversación, el orbe se queda en el centro de la pantalla.
-        isFirstUse && "justify-center",
+        /*
+         * Con conversación, la franja bajo la barra se recorta, y más todavía
+         * en una pantalla baja (la VM arranca en 600px de alto): cada píxel de
+         * arriba es una línea más de respuesta que se lee sin desplazarse. La
+         * condición es de altura, no de anchura, porque lo que falta es alto.
+         */
+        isFirstUse ? "justify-center gap-10 pt-28" : "gap-6 pt-24 [@media(max-height:720px)]:pt-20",
       )}
       id="contenido"
     >
       {isFirstUse ? (
-        <h1 className="font-display text-4xl font-medium tracking-tight text-ink sm:text-5xl">
-          Hola, soy Pi
-        </h1>
+        <>
+          <h1 className="font-display text-4xl font-medium tracking-tight text-ink sm:text-5xl">
+            Hola, soy Pi
+          </h1>
+
+          <VoiceConsole
+            buttonLabel={voice.buttonLabel}
+            onActivate={voice.start}
+            onCancel={voice.cancel}
+            status={voice.status}
+          />
+
+          <Composer
+            busy={busy}
+            className="max-w-2xl"
+            disabled={composerDisabled}
+            disabledReason={composerHint}
+            onChange={conversation.setDraft}
+            onSubmit={actions.sendDraft}
+            value={conversation.draft}
+          />
+        </>
       ) : (
-        <h1 className="sr-only">Conversación con Pi</h1>
+        <>
+          <h1 className="sr-only">Conversación con Pi</h1>
+
+          {/*
+           * Con conversación abierta, hablar y escribir comparten fila. El orbe
+           * grande vale la pantalla entera cuando no hay nada que leer, pero en
+           * cuanto Pi contesta esos 300px de alto son la diferencia entre leer
+           * la respuesta o tener que buscarla con la rueda del ratón. Encogido
+           * sigue siendo el elemento con más peso de la fila.
+           */}
+          <div className="flex w-full max-w-2xl flex-col gap-2">
+            <div className="flex items-center gap-3 sm:gap-4">
+              <VoiceConsole
+                buttonLabel={voice.buttonLabel}
+                className="shrink-0"
+                onActivate={voice.start}
+                onCancel={voice.cancel}
+                size="compact"
+                status={voice.status}
+              />
+
+              <Composer
+                busy={busy}
+                className="min-w-0 flex-1"
+                disabled={composerDisabled}
+                disabledReason={composerHint}
+                onChange={conversation.setDraft}
+                onSubmit={actions.sendDraft}
+                value={conversation.draft}
+              />
+            </div>
+
+            {/*
+             * El orbe compacto se queda sin sus dos líneas, pero la fase no
+             * puede contarse solo con el color: aquí va, en una sola línea.
+             * Cuando el campo está apagado, su propio motivo dice ya lo mismo y
+             * además va asociado al input, así que esta línea se aparta en vez
+             * de repetirlo; lo que Pi esté haciendo se ve igualmente en el
+             * bloque de respuesta, que muestra el turno en curso.
+             */}
+            {composerHint ? null : (
+              <p className="text-center text-base text-ink-muted">{voice.status.title}</p>
+            )}
+          </div>
+
+          {/*
+           * Lo último que ha dicho Pi va justo bajo el campo de escribir, donde
+           * ya está mirando la persona, y el historial completo debajo. El orden
+           * es deliberado: primero lo que acaba de pasar, después lo que hay que
+           * buscar.
+           */}
+          <LatestReply turns={conversation.turns} />
+          <ConversationPanel turns={conversation.turns} />
+        </>
       )}
-
-      <VoiceConsole
-        buttonLabel={voice.buttonLabel}
-        onActivate={voice.start}
-        onCancel={voice.cancel}
-        status={voice.status}
-      />
-
-      <Composer
-        busy={busy}
-        disabled={composerDisabled}
-        disabledReason={composerDisabled ? describeComposerBlock(blockedReason, session.ready) : null}
-        onChange={conversation.setDraft}
-        onSubmit={actions.sendDraft}
-        value={conversation.draft}
-      />
-
-      {/* El historial aparece cuando hay historial: un panel vacío es ruido. */}
-      {isFirstUse ? null : <ConversationPanel turns={conversation.turns} />}
     </main>
   );
 }

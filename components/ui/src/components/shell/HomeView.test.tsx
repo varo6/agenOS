@@ -236,7 +236,54 @@ describe("HomeView", () => {
 
     expect(screen.queryByText("Hola, soy Pi")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Conversación con Pi");
-    expect(screen.getByText("Abriendo Chrome.")).toBeInTheDocument();
+    expect(screen.getAllByText("Abriendo Chrome.").length).toBeGreaterThan(0);
+  });
+
+  // Sin conversación el orbe manda: es el gesto principal del sistema.
+  test("en reposo el orbe conserva sus dos líneas", () => {
+    renderHome();
+
+    expect(screen.getByText("Pulsa para hablar")).toBeInTheDocument();
+    expect(screen.getByText("O escríbele aquí abajo.")).toBeInTheDocument();
+  });
+
+  // En cuanto hay algo que leer, esos 300px de orbe son la diferencia entre ver
+  // la respuesta o tener que buscarla desplazando la página.
+  test("con conversación el orbe encoge y suelta la segunda línea", () => {
+    renderHome({ conversation: conversation({ turns: [succeededTurn] }) });
+
+    // La fase se sigue diciendo con palabras, no solo con el color del orbe.
+    expect(screen.getByText("Pulsa para hablar")).toBeInTheDocument();
+    expect(screen.queryByText("O escríbele aquí abajo.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hablar con Pi" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Escribe a Pi")).toBeEnabled();
+  });
+
+  // Dos líneas seguidas diciendo lo mismo bajo el campo eran ruido, y la del
+  // campo es la que un lector de pantalla asocia al input.
+  test("con el campo apagado la fase no repite el mismo aviso", () => {
+    renderHome({
+      blockedReason: "busy",
+      busy: true,
+      conversation: conversation({ turns: [succeededTurn] }),
+    });
+
+    expect(screen.getByText("Pi está respondiendo, espera un momento.")).toBeInTheDocument();
+    expect(screen.queryByText("Pi está trabajando")).not.toBeInTheDocument();
+  });
+
+  // Sin voz de vuelta hay que leer la respuesta: la última va destacada bajo el
+  // campo de escribir, y el historial completo debajo.
+  test("la última respuesta se destaca antes del historial", () => {
+    renderHome({ conversation: conversation({ turns: [succeededTurn] }) });
+
+    const destacado = screen.getByLabelText("Lo último que ha dicho Pi");
+    const historial = screen.getByRole("log");
+
+    expect(destacado).toHaveTextContent("Abriendo Chrome.");
+    expect(destacado.compareDocumentPosition(historial)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   // Un panel "Conversación" con un hueco dentro es ruido en la primera pantalla

@@ -4,7 +4,10 @@ import { describe, expect, test, vi } from "vitest";
 import { VoiceConsole } from "./VoiceConsole";
 import { resolveVoiceStatus, voiceButtonLabel, type VoiceStatusInput } from "../../lib/voice-status";
 
-function renderConsole(input: VoiceStatusInput, handlers: { onActivate?: () => void; onCancel?: () => void } = {}) {
+function renderConsole(
+  input: VoiceStatusInput,
+  handlers: { onActivate?: () => void; onCancel?: () => void; size?: "full" | "compact" } = {},
+) {
   const status = resolveVoiceStatus(input);
   const onActivate = handlers.onActivate ?? vi.fn();
   const onCancel = handlers.onCancel ?? vi.fn();
@@ -14,6 +17,7 @@ function renderConsole(input: VoiceStatusInput, handlers: { onActivate?: () => v
       buttonLabel={voiceButtonLabel(status)}
       onActivate={onActivate}
       onCancel={onCancel}
+      size={handlers.size}
       status={status}
     />,
   );
@@ -72,6 +76,23 @@ describe("VoiceConsole", () => {
     fireEvent.click(button);
     expect(onActivate).not.toHaveBeenCalled();
     expect(screen.getByText("Sin internet")).toBeInTheDocument();
+  });
+
+  // Encogido cede las dos líneas al texto de la respuesta, pero no la fase: esa
+  // la sigue anunciando, y quien lo coloca la pinta a su lado.
+  test("encogido sigue siendo el mismo botón y sigue anunciando la fase", () => {
+    const onActivate = vi.fn();
+    const { status } = renderConsole(
+      { capture: "idle", turn: "idle" },
+      { onActivate, size: "compact" },
+    );
+
+    const button = screen.getByRole("button", { name: "Hablar con Pi" });
+    fireEvent.click(button);
+    expect(onActivate).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByRole("status")).toHaveTextContent(status.announcement);
+    expect(screen.queryByText("O escríbele aquí abajo.")).not.toBeInTheDocument();
   });
 
   test("mientras Pi trabaja explica la acción en lenguaje llano", () => {

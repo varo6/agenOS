@@ -332,7 +332,8 @@ describe("App chat recovery", () => {
       expect(mocks.piClient.getTurn).toHaveBeenCalledWith("turn_1");
     });
     expect(mocks.agentClient.openApp).not.toHaveBeenCalled();
-    expect(await screen.findByText("Abriendo Chrome.")).toBeInTheDocument();
+    // Sale dos veces a propósito: destacada bajo el campo y en el historial.
+    expect(await screen.findAllByText("Abriendo Chrome.")).not.toHaveLength(0);
   });
 
   test("resumes a processing turn after the renderer reloads", async () => {
@@ -363,7 +364,7 @@ describe("App chat recovery", () => {
     await waitFor(() => {
       expect(mocks.piClient.getTurn).toHaveBeenCalledWith("turn_resume");
     });
-    expect(await screen.findByText("Voy a configurar OpenClaw.")).toBeInTheDocument();
+    expect(await screen.findAllByText("Voy a configurar OpenClaw.")).not.toHaveLength(0);
     expect(screen.getByText("configura openclaw")).toBeInTheDocument();
   });
 
