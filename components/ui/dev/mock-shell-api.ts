@@ -220,6 +220,16 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  if (url.pathname === "/api/pi/conversation/new" && method === "POST") {
+    try {
+      piHarness.startNewConversation();
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/pi/turns" && method === "GET") {
     try {
       const limit = Number(url.searchParams.get("limit") ?? "20");

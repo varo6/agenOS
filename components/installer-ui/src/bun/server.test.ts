@@ -120,6 +120,9 @@ function createAuthenticatedHandler(overrides: Parameters<typeof createInstaller
   });
 }
 
+/** Veces que la API ha pedido al harness empezar una conversación nueva. */
+let newConversations = 0;
+
 function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0] = {}) {
   const piHarness = {
     getStatus: () => ({
@@ -149,6 +152,9 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       expiresAt: "2026-04-21T00:10:00.000Z",
     }),
     logout: () => undefined,
+    startNewConversation: () => {
+      newConversations += 1;
+    },
     chat: async () => ({
       ok: true,
       reply: "hola",
@@ -567,6 +573,29 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(400);
+  });
+
+  // Empezar de nuevo no es borrar el historial: el harness tambien tira la
+  // sesion del modelo, y por eso la ruta habla de la conversacion.
+  test("starts a new conversation through the packaged API", async () => {
+    const handler = createHandler();
+    newConversations = 0;
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/conversation/new", {
+      method: "POST",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({ ok: true });
+    expect(newConversations).toBe(1);
+  });
+
+  test("rejects reading the new conversation route", async () => {
+    const handler = createHandler();
+
+    const response = await handler.fetch(new Request("http://localhost/api/pi/conversation/new"));
+
+    expect(response.status).toBe(405);
   });
 
   test("lists pi turn history through the packaged API", async () => {

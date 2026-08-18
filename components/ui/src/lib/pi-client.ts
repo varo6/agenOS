@@ -131,6 +131,10 @@ export function createPiClient() {
         return bridgeRequest(() => bridge.logout());
       },
 
+      startNewConversation(): Promise<void> {
+        return bridgeRequest(() => bridge.startNewConversation());
+      },
+
       sendMessage(message: string, source: PiChatRequest["source"]): Promise<PiChatResponse> {
         return bridgeRequest(() => bridge.sendMessage(message, source), CHAT_TIMEOUT_MS);
       },
@@ -196,6 +200,12 @@ export function createPiClient() {
 
     async logout(): Promise<void> {
       await requestJson<{ ok: true }>("/api/pi/auth/logout", {
+        method: "POST",
+      });
+    },
+
+    async startNewConversation(): Promise<void> {
+      await requestJson<{ ok: true }>("/api/pi/conversation/new", {
         method: "POST",
       });
     },

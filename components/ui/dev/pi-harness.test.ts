@@ -762,6 +762,72 @@ describe("PiHarness", () => {
     expect(second.harness.getLatestTurn()?.input).toBe("hola");
   });
 
+  // Una conversacion nueva tiene que serlo tambien para Pi: si solo se vaciara
+  // la lista, el modelo seguiria contestando al hilo anterior.
+  test("starting a new conversation clears the turns, their file and the model thread", async () => {
+    let saved: unknown[] = [];
+    const turnStore: PiTurnStoreLike = {
+      load: () => saved as never,
+      save: (turns) => {
+        saved = turns;
+      },
+    };
+
+    const { harness, authData, getCreateSessionOptions } = createHarnessFixture({ turnStore });
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    await harness.chat({ message: "hola", source: "text" });
+    expect(harness.listTurns().length).toBe(1);
+    const firstManager = (getCreateSessionOptions() as { sessionManager: unknown }).sessionManager;
+
+    harness.startNewConversation();
+
+    expect(harness.listTurns()).toEqual([]);
+    expect(harness.getLatestTurn()).toBeNull();
+    expect(saved).toEqual([]);
+
+    await harness.chat({ message: "otra cosa", source: "text" });
+    const secondManager = (getCreateSessionOptions() as { sessionManager: unknown }).sessionManager;
+    expect(secondManager).not.toBe(firstManager);
+  });
+
+  test("refuses to start a new conversation while a turn is running", async () => {
+    const { harness, authData, emitAssistantReply, setPromptImpl } = createHarnessFixture();
+    const promptDeferred = createDeferred<void>();
+
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    setPromptImpl(async (text) => {
+      await promptDeferred.promise;
+      emitAssistantReply(`respuesta:${text}`);
+    });
+
+    const running = harness.chat({ message: "uno", source: "text" });
+
+    expect(() => harness.startNewConversation()).toThrow(
+      "Pi esta terminando una respuesta, espera un momento.",
+    );
+
+    promptDeferred.resolve();
+    await running;
+
+    // Terminado el turno, ya se puede cortar.
+    harness.startNewConversation();
+    expect(harness.listTurns()).toEqual([]);
+  });
+
   test("marks turns persisted as processing as failed after a restart", () => {
     const turnStore: PiTurnStoreLike = {
       load: () => [

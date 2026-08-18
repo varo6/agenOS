@@ -77,6 +77,7 @@ type PiHarnessApi = {
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
+  startNewConversation(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
   startChat(request: PiChatRequest): PiTurnState;
   getTurn(turnId: string): PiTurnState;
@@ -348,6 +349,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     },
     logout() {
       return getHarness().logout();
+    },
+    startNewConversation() {
+      return getHarness().startNewConversation();
     },
     chat(request: PiChatRequest) {
       return getHarness().chat(request);
@@ -1032,6 +1036,24 @@ export function createInstallerApiHandler(
               message: typeof payload.message === "string" ? payload.message : "",
               source,
             }));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        /*
+         * Conversacion nueva. No es un borrado del historial: ademas de vaciar
+         * los turnos, el harness tira la sesion del modelo, y por eso el
+         * endpoint habla de la conversacion y no de /turns.
+         */
+        if (url.pathname === "/api/pi/conversation/new") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            deps.piHarness.startNewConversation();
+            return json({ ok: true });
           } catch (error) {
             return piErrorResponse(error);
           }

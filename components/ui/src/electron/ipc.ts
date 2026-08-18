@@ -12,6 +12,7 @@ export const PI_IPC_CHANNELS = {
   getAuthAttempt: "agenos-pi:get-auth-attempt",
   submitManualCode: "agenos-pi:submit-manual-code",
   logout: "agenos-pi:logout",
+  newConversation: "agenos-pi:new-conversation",
   sendMessage: "agenos-pi:send-message",
   startTurn: "agenos-pi:start-turn",
   getTurn: "agenos-pi:get-turn",

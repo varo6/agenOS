@@ -87,6 +87,7 @@ function renderSystem(overrides: Partial<SystemViewProps> = {}) {
     checkNetwork: vi.fn(),
     openSystem: vi.fn(),
     sendDraft: vi.fn(),
+    newConversation: vi.fn(),
     focusWorkspace: vi.fn(),
   };
 

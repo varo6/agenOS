@@ -12,6 +12,7 @@ import { Composer } from "./Composer";
 import { ConnectionPanel } from "./ConnectionPanel";
 import { ConversationPanel } from "./ConversationPanel";
 import { LatestReply } from "./LatestReply";
+import { NewConversationButton } from "./NewConversationButton";
 
 export type HomeViewProps = {
   voice: VoiceController;
@@ -204,6 +205,12 @@ export function HomeView({
            */}
           <LatestReply turns={conversation.turns} />
           <ConversationPanel turns={conversation.turns} />
+
+          {/*
+           * Solo con conversación empezada: en una pantalla vacía, empezar de
+           * cero no significaría nada y sería un botón más que descifrar.
+           */}
+          <NewConversationButton busy={busy} onStart={actions.newConversation} />
         </>
       )}
     </main>

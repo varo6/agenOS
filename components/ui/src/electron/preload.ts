@@ -127,6 +127,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
   async logout(): Promise<void> {
     await invokePi<void>(PI_IPC_CHANNELS.logout);
   },
+  async startNewConversation(): Promise<void> {
+    await invokePi<void>(PI_IPC_CHANNELS.newConversation);
+  },
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse> {
     return invokePi<PiChatResponse>(PI_IPC_CHANNELS.sendMessage, { message, source });
   },

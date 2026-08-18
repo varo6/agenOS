@@ -86,6 +86,9 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
     async logout(): Promise<void> {
       await request("/api/pi/auth/logout", { method: "POST" });
     },
+    async startNewConversation(): Promise<void> {
+      await request("/api/pi/conversation/new", { method: "POST" });
+    },
     chat(chatRequest: PiChatRequest): Promise<PiChatResponse> {
       return request("/api/pi/chat", { method: "POST", body: JSON.stringify(chatRequest) });
     },

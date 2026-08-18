@@ -19,6 +19,8 @@ export type ShellActions = {
   checkNetwork: () => void;
   openSystem: () => void;
   sendDraft: () => void;
+  /** Cierra el hilo y deja la pantalla como recién arrancada. */
+  newConversation: () => void;
   focusWorkspace: (workspace: AgentWorkspaceNumber) => void;
 };
 
@@ -60,7 +62,7 @@ export function useShellActions({
   const { online, refresh: refreshNetwork } = network;
   const { refresh: refreshHealth } = health;
   const { refresh: refreshWorkspaces, focus: focusWorkspaceRequest } = workspaces;
-  const { state: conversationState, draft, send, resetError } = conversation;
+  const { state: conversationState, draft, send, resetError, startNew } = conversation;
   const { reset: resetVoice } = voice;
 
   const refresh = useCallback(() => {
@@ -100,6 +102,21 @@ export function useShellActions({
     void send(draft, "text");
   }, [draft, send]);
 
+  /*
+   * En mitad de un turno no se empieza otra conversación: el servicio la
+   * rechazaría igualmente, y Pi se quedaría escribiendo una respuesta a un hilo
+   * que ya no está en pantalla. El micrófono vuelve a reposo con ella, porque
+   * la fase que estuviera contando ya no se refiere a nada.
+   */
+  const newConversation = useCallback(() => {
+    if (conversationState === "processing") {
+      return;
+    }
+
+    void startNew();
+    resetVoice();
+  }, [conversationState, resetVoice, startNew]);
+
   const focusWorkspace = useCallback(
     (workspace: AgentWorkspaceNumber) => {
       void focusWorkspaceRequest(workspace);
@@ -108,7 +125,25 @@ export function useShellActions({
   );
 
   return useMemo(
-    () => ({ connect, logout, refresh, checkNetwork, openSystem, sendDraft, focusWorkspace }),
-    [checkNetwork, connect, focusWorkspace, logout, openSystem, refresh, sendDraft],
+    () => ({
+      connect,
+      logout,
+      refresh,
+      checkNetwork,
+      openSystem,
+      sendDraft,
+      newConversation,
+      focusWorkspace,
+    }),
+    [
+      checkNetwork,
+      connect,
+      focusWorkspace,
+      logout,
+      newConversation,
+      openSystem,
+      refresh,
+      sendDraft,
+    ],
   );
 }

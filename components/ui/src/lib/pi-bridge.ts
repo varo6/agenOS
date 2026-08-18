@@ -14,6 +14,7 @@ export type AgenosPiBridge = {
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse>;
   submitManualCode(attemptId: string, input: string): Promise<PiAuthAttemptResponse>;
   logout(): Promise<void>;
+  startNewConversation(): Promise<void>;
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse>;
   startTurn(message: string, source: "text" | "voice"): Promise<PiTurnState>;
   getTurn(turnId: string): Promise<PiTurnState>;

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { HomeView, type HomeViewProps } from "./HomeView";
@@ -111,6 +111,7 @@ function renderHome(overrides: Partial<HomeViewProps> = {}) {
     checkNetwork: vi.fn(),
     openSystem: vi.fn(),
     sendDraft: vi.fn(),
+    newConversation: vi.fn(),
     focusWorkspace: vi.fn(),
   };
 
@@ -293,6 +294,21 @@ describe("HomeView", () => {
 
     expect(screen.queryByRole("heading", { name: "Conversación" })).not.toBeInTheDocument();
     expect(screen.queryByText("Todavía no habéis hablado")).not.toBeInTheDocument();
+  });
+
+  // Empezar de cero solo significa algo cuando hay algo que dejar atrás.
+  test("el botón de conversación nueva aparece solo con conversación empezada", () => {
+    renderHome();
+    expect(
+      screen.queryByRole("button", { name: "Empezar una conversación nueva" }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("con conversación se puede empezar otra desde la esquina", () => {
+    const props = renderHome({ conversation: conversation({ turns: [succeededTurn] }) });
+
+    fireEvent.click(screen.getByRole("button", { name: "Empezar una conversación nueva" }));
+    expect(props.actions.newConversation).toHaveBeenCalledTimes(1);
   });
 
   test("el contenido principal es un landmark al que se puede saltar", () => {
