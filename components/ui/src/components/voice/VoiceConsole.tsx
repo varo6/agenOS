@@ -75,7 +75,7 @@ function VoiceConsoleComponent({
   const compact = size === "compact";
 
   return (
-    <div className={cx("flex flex-col items-center", compact ? "gap-0" : "gap-7", className)}>
+    <div className={cx("flex flex-col items-center", compact ? "gap-0" : "gap-6", className)}>
       <button
         /*
          * Nunca se deshabilita del todo: así quien navega con teclado o lector
@@ -92,10 +92,12 @@ function VoiceConsoleComponent({
         className={cx(
           "relative grid place-items-center rounded-pill border-2 bg-surface transition-colors duration-300",
           /*
-           * Incluso encogido se queda muy por encima de los 44px de objetivo
-           * táctil: sigue siendo el botón más grande de la fila.
+           * Encogido sigue siendo el elemento con más peso visual de su fila, y
+           * con diferencia: al lado tiene un campo de 64px de alto. El tamaño de
+           * reposo bajó porque a pantalla completa el orbe se comía la vista;
+           * este no, porque aquí es el ancla de la fila.
            */
-          compact ? "h-20 w-20 sm:h-24 sm:w-24" : "h-40 w-40 sm:h-52 sm:w-52",
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "h-36 w-36 sm:h-44 sm:w-44",
           skin.ring,
           isInteractive ? "hover:bg-surface-strong" : "cursor-not-allowed opacity-60",
         )}
@@ -130,7 +132,7 @@ function VoiceConsoleComponent({
           aria-hidden="true"
           className={cx(
             "relative transition-colors",
-            compact ? "h-9 w-9 sm:h-11 sm:w-11" : "h-12 w-12 sm:h-16 sm:w-16",
+            compact ? "h-10 w-10 sm:h-12 sm:w-12" : "h-11 w-11 sm:h-14 sm:w-14",
             skin.icon,
             isSpinning && "animate-spin",
           )}
@@ -141,8 +143,13 @@ function VoiceConsoleComponent({
       {/* Estas dos líneas son la etiqueta visible del orbe: dicen en qué fase
           está y qué se espera de la persona, y nunca desaparecen. */}
       {compact ? null : (
+        /*
+         * El titular baja un peldaño de la escala con el orbe; la segunda línea
+         * no, porque es texto que se lee y el suelo cómodo a distancia de sofá
+         * son 19px. El aire de la pantalla sale del display, nunca del cuerpo.
+         */
         <div className="max-w-md text-center">
-          <p className="font-display text-2xl font-medium tracking-tight text-ink sm:text-3xl">
+          <p className="font-display text-xl font-medium tracking-tight text-ink sm:text-2xl">
             {status.title}
           </p>
           <p className="mt-2 text-base text-ink-muted">{status.hint}</p>

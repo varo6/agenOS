@@ -104,21 +104,27 @@ export function HomeView({
   return (
     <main
       className={cx(
-        "relative z-10 mx-auto flex min-h-[100dvh] w-full max-w-3xl flex-col items-center px-4 pb-16",
+        "relative z-10 mx-auto flex min-h-[100dvh] w-full flex-col items-center px-4 pb-16 sm:px-6",
         // Sin conversación, el orbe se queda en el centro de la pantalla.
         /*
-         * Con conversación, la franja bajo la barra se recorta, y más todavía
-         * en una pantalla baja (la VM arranca en 600px de alto): cada píxel de
-         * arriba es una línea más de respuesta que se lee sin desplazarse. La
-         * condición es de altura, no de anchura, porque lo que falta es alto.
+         * Con conversación la pantalla se ensancha: el bloque de respuesta es
+         * el que más texto tiene que enseñar y quien manda en el ancho. La
+         * franja de arriba, en cambio, se mide en `vh` y no en píxeles fijos:
+         * en un monitor grande baja el grupo de hablar hacia el centro óptico,
+         * y en una pantalla baja (la VM arranca en 600px de alto) encoge sola
+         * hasta el suelo de 5rem, que es lo justo para no pegarse a la barra.
+         * El aire entre bloques sigue la misma regla, y por eso la condición es
+         * de altura y no de anchura: lo que escasea es el alto.
          */
-        isFirstUse ? "justify-center gap-10 pt-28" : "gap-6 pt-24 [@media(max-height:720px)]:pt-20",
+        isFirstUse
+          ? "max-w-3xl justify-center gap-8 pt-24"
+          : "max-w-4xl gap-5 pt-[max(5rem,16vh)] [@media(min-height:800px)]:gap-8",
       )}
       id="contenido"
     >
       {isFirstUse ? (
         <>
-          <h1 className="font-display text-4xl font-medium tracking-tight text-ink sm:text-5xl">
+          <h1 className="font-display text-3xl font-medium tracking-tight text-ink sm:text-4xl">
             Hola, soy Pi
           </h1>
 
@@ -131,7 +137,7 @@ export function HomeView({
 
           <Composer
             busy={busy}
-            className="max-w-2xl"
+            className="max-w-xl"
             disabled={composerDisabled}
             disabledReason={composerHint}
             onChange={conversation.setDraft}
@@ -149,6 +155,11 @@ export function HomeView({
            * cuanto Pi contesta esos 300px de alto son la diferencia entre leer
            * la respuesta o tener que buscarla con la rueda del ratón. Encogido
            * sigue siendo el elemento con más peso de la fila.
+           *
+           * La fila se queda estrecha a propósito, más que el bloque de abajo:
+           * centrada y con menos ancho que la respuesta, se lee como el mando
+           * de la pantalla y no como una barra más. El ancho sobrante es para
+           * el texto, que es lo único que crece.
            */}
           <div className="flex w-full max-w-2xl flex-col gap-2">
             <div className="flex items-center gap-3 sm:gap-4">

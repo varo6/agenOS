@@ -41,7 +41,13 @@ function LatestReplyComponent({ turns }: LatestReplyProps) {
   }
 
   return (
-    <section aria-label="Lo último que ha dicho Pi" className="panel w-full max-w-2xl p-5 sm:p-7">
+    /*
+     * Ocupa todo el ancho que le deje la pantalla, que es más del que ocupan el
+     * micrófono y el campo de escribir. No es capricho: cada línea cabe casi el
+     * doble de texto que antes, así que a igualdad de alto se lee bastante más
+     * respuesta sin desplazarse.
+     */
+    <section aria-label="Lo último que ha dicho Pi" className="panel w-full p-6 sm:p-8">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <p className="eyebrow">Pi</p>
         {latest.status === "processing" ? (
@@ -56,21 +62,30 @@ function LatestReplyComponent({ turns }: LatestReplyProps) {
        * Una respuesta larga no puede empujar el historial fuera de la pantalla:
        * a partir de cierta altura se desplaza dentro del bloque, y con tabIndex
        * para poder hacerlo también con el teclado. El tope va en `vh` porque lo
-       * que manda es la pantalla que hay, no un número de líneas fijo.
+       * que manda es la pantalla que hay, no un número de líneas fijo, y baja
+       * de 52 a 40 para que asome el historial: un bloque que llega justo al
+       * borde no cuenta que debajo hay más.
        */}
-      <div className="mt-3 max-h-[52vh] overflow-y-auto pr-1" tabIndex={0}>
+      <div className="mt-4 max-h-[40vh] overflow-y-auto pr-1" tabIndex={0}>
+        {/*
+         * El texto baja un peldaño (de 30px a 26px) y gana el ancho del panel.
+         * A 30px en una columna estrecha las frases se partían cada cinco
+         * palabras y el bloque parecía apretado; así entran unos 60 caracteres
+         * por línea, que es la medida en la que se lee de corrido, y sigue
+         * siendo el cuerpo de texto más grande del shell.
+         */}
         {latest.status === "processing" ? (
-          <p className="whitespace-pre-wrap text-xl leading-relaxed text-ink sm:text-2xl">
+          <p className="whitespace-pre-wrap text-lg leading-relaxed text-ink sm:text-xl">
             {latest.progress.streamedText || (
               <span className="text-ink-muted">Pi está preparando lo que va a decir…</span>
             )}
           </p>
         ) : latest.status === "failed" ? (
-          <p className="whitespace-pre-wrap text-xl leading-relaxed text-danger sm:text-2xl">
+          <p className="whitespace-pre-wrap text-lg leading-relaxed text-danger sm:text-xl">
             {latest.error ?? "Pi no pudo terminar esta respuesta."}
           </p>
         ) : (
-          <p className="whitespace-pre-wrap text-xl leading-relaxed text-ink sm:text-2xl">
+          <p className="whitespace-pre-wrap text-lg leading-relaxed text-ink sm:text-xl">
             {latest.reply || (
               <span className="text-ink-muted">Pi ha terminado sin decir nada.</span>
             )}
