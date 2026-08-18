@@ -126,13 +126,21 @@ export function resolveBrowserPlatform(env: NodeJS.ProcessEnv): BrowserPlatform 
   return env.WAYLAND_DISPLAY ? "wayland" : "x11";
 }
 
+// El agente maneja la web por CDP, asi que el puerto de depuracion tiene que
+// estar abierto siempre: si la primera ventana arranca sin el, el proceso dueno
+// del perfil ya no lo expone y web_control se queda ciego el resto de la sesion.
+// Queda atado a 127.0.0.1 por el propio Chromium.
+export const CHROMIUM_DEBUG_PORT = 18800;
+
 export function buildChromiumArgs(input: {
   url: string;
   profileDir: string;
   platform: BrowserPlatform;
   disableSandbox: boolean;
   disableGpu?: boolean;
+  debugPort?: number;
 }): string[] {
+  const debugPort = input.debugPort ?? CHROMIUM_DEBUG_PORT;
   return [
     "--new-window",
     "--no-first-run",
@@ -140,6 +148,10 @@ export function buildChromiumArgs(input: {
     "--password-store=basic",
     `--ozone-platform=${input.platform}`,
     `--user-data-dir=${input.profileDir}`,
+    `--remote-debugging-port=${debugPort}`,
+    // Sin esto Chromium rechaza con 403 los WebSocket que lleguen con cabecera
+    // Origin; el puerto sigue escuchando solo en loopback.
+    "--remote-allow-origins=*",
     ...(input.disableSandbox ? ["--no-sandbox"] : []),
     ...(input.disableGpu ? ["--disable-gpu"] : []),
     input.url,

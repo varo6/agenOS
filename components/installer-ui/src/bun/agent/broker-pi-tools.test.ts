@@ -10,10 +10,19 @@ function unavailablePackageService() {
   };
 }
 
+function stubGoogleSend() {
+  return {
+    request: async () => ({ ok: true, status: "completed" as const, message: "ok" }),
+    confirm: async () => ({ ok: true, status: "completed" as const, message: "ok" }),
+    deny: () => ({ ok: true, status: "cancelled" as const, message: "cancelado" }),
+  } as never;
+}
+
 describe("broker-mediated Pi tools", () => {
-  test("exposes typed package installation but no native shell, edit, or write capabilities", () => {
+  test("exposes the full set of broker-mediated computer tools", () => {
     const tools = createBrokerPiTools({
       toolRunner: { run: async () => ({ ok: false, decision: "deny" as const }) } as never,
+      googleSend: stubGoogleSend(),
       packageService: unavailablePackageService(),
       captureTrace: async () => undefined,
     });
@@ -23,14 +32,20 @@ describe("broker-mediated Pi tools", () => {
       "apps_open",
       "apps_install",
       "files_open",
+      "files_manage",
+      "computer_run",
+      "web_control",
+      "desktop_control",
+      "google_workspace",
       "openclaw_setup",
       "agent_task",
       "learning_memory",
     ]);
+    // Las capacidades nativas del harness siguen fuera: todo efecto pasa por el
+    // broker, incluida la shell, que se expone como computer_run y no como bash.
     expect(tools.modelTools).not.toContain("bash");
     expect(tools.modelTools).not.toContain("edit");
     expect(tools.modelTools).not.toContain("write");
-    expect(tools.modelTools).toContain("apps_install");
   });
 
   test("routes app opening through the broker runner with a fixed UI identity", async () => {
@@ -46,6 +61,7 @@ describe("broker-mediated Pi tools", () => {
           };
         },
       } as never,
+      googleSend: stubGoogleSend(),
       packageService: unavailablePackageService(),
       captureTrace: async () => undefined,
     });
@@ -71,6 +87,7 @@ describe("broker-mediated Pi tools", () => {
           message: "Tool no permitida.",
         }),
       } as never,
+      googleSend: stubGoogleSend(),
       packageService: unavailablePackageService(),
       captureTrace: async () => undefined,
     });
@@ -83,6 +100,7 @@ describe("broker-mediated Pi tools", () => {
     const calls: string[] = [];
     const tools = createBrokerPiTools({
       toolRunner: { run: async () => ({ ok: false, decision: "deny" as const }) } as never,
+      googleSend: stubGoogleSend(),
       packageService: {
         ...unavailablePackageService(),
         async requestInstall(query: string) {

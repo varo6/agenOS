@@ -45,3 +45,6 @@ __pycache__/
 
 # Andamiaje de orquestacion: briefs de trabajo, no fuente del proyecto.
 .orchestration/
+
+# Credencial OAuth real de Google: no se versiona, solo el .example
+build/live-build/config/includes.chroot/etc/agenos/google-client.json
