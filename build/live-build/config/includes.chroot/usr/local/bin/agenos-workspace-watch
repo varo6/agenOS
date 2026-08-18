@@ -118,17 +118,34 @@ def decide_actions(event: Mapping[str, Any], snapshot: WorkspaceSnapshot) -> tup
             )
 
     if isinstance(container, Mapping):
-        if change in ("new", "move"):
+        container_id = container.get("id")
+        tracked_workspace = (
+            snapshot.window_workspaces.get(container_id)
+            if isinstance(container_id, int)
+            else None
+        )
+
+        if change == "new":
             return ({"type": ACTION_REFRESH_TREE},)
 
+        if change == "move":
+            # Sacar una ventana de un escritorio deja al usuario igual de
+            # atrapado que cerrarla: si era la ultima, se queda mirando un
+            # escritorio vacio. Pi mueve ventanas sin seguirlas cuando abre algo
+            # en otro escritorio, asi que este caso ocurre de verdad.
+            actions: list[dict[str, str]] = [{"type": ACTION_REFRESH_TREE}]
+            if tracked_workspace in APP_WORKSPACES and tracked_workspace == snapshot.focused_workspace:
+                actions.append({"type": ACTION_SCHEDULE_EMPTY_CHECK, "workspace": tracked_workspace})
+            return tuple(actions)
+
         if change == "close":
-            container_id = container.get("id")
-            closed_workspace = (
-                snapshot.window_workspaces.get(container_id)
-                if isinstance(container_id, int)
-                else None
-            )
-            if closed_workspace is None and container.get("focused") is True:
+            closed_workspace = tracked_workspace
+            if closed_workspace is None and snapshot.focused_workspace in snapshot.workspaces_with_views:
+                # Sway no siempre deja rastro de donde vivia la ventana: pudo
+                # nacer y morir entre dos lecturas del arbol. Dar por hecho el
+                # escritorio visible solo es seguro si ese escritorio tenia
+                # ventanas, porque entonces el cierre solo puede haberlo vaciado
+                # a el; si ya estaba vacio, el usuario esta ahi a proposito.
                 closed_workspace = snapshot.focused_workspace
 
             if (
