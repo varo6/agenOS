@@ -82,4 +82,44 @@ describe("agent policy", () => {
       ruleId: "agent.default.deny",
     });
   });
+
+  test("lets the user drive keyboard and mouse but never a background agent", () => {
+    expect(decidePolicy({ tool: "desktop.input", source: "ui" })).toMatchObject({
+      decision: "allow",
+      ruleId: "agent.desktop.input.ui.allow",
+    });
+    expect(decidePolicy({ tool: "desktop.input", source: "openclaw" })).toMatchObject({
+      decision: "deny",
+      ruleId: "agent.desktop.input.agent.deny",
+    });
+    expect(decidePolicy({ tool: "desktop.inspect", source: "ui" }).decision).toBe("allow");
+    expect(decidePolicy({ tool: "desktop.screenshot", source: "ui" }).decision).toBe("allow");
+  });
+
+  test("allows writing inside the user's home and confirms writing outside it", () => {
+    expect(decidePolicy({ tool: "files.write", source: "ui", input: { path: "~/Documentos/carta.txt" } })).toMatchObject({
+      decision: "allow",
+      ruleId: "agent.files.write.home.allow",
+    });
+    expect(decidePolicy({ tool: "files.write", source: "ui", input: { path: "notas.txt" } }).decision).toBe("allow");
+    expect(decidePolicy({ tool: "files.write", source: "ui", input: { path: "/etc/passwd" } })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.files.write.outside-home.confirm",
+    });
+    expect(decidePolicy({ tool: "files.write", source: "ui", input: { path: "../../etc/hosts" } }).decision).toBe("confirm");
+  });
+
+  test("reads Google data freely but confirms anything sent on the user's behalf", () => {
+    expect(decidePolicy({ tool: "google.read", source: "ui" }).decision).toBe("allow");
+    expect(decidePolicy({ tool: "google.auth", source: "ui" }).decision).toBe("allow");
+    expect(decidePolicy({ tool: "google.send", source: "ui" })).toMatchObject({
+      decision: "confirm",
+      ruleId: "agent.google.send.confirm",
+    });
+    expect(decidePolicy({ tool: "google.send", source: "openclaw" }).decision).toBe("confirm");
+  });
+
+  test("allows web control from the user session", () => {
+    expect(decidePolicy({ tool: "web.control", source: "ui" }).decision).toBe("allow");
+  });
 });

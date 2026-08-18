@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { LoaderCircle, MessagesSquare } from "lucide-react";
 
 import { describeTurnActivity } from "../../lib/agent-activity";
@@ -43,20 +43,10 @@ function TurnCard({ turn }: { turn: PiTurnState }) {
  *
  * La lista no es una región en vivo: el texto en streaming la volvería
  * insoportable con lector de pantalla, porque cada fragmento interrumpiría al
- * anterior. En su lugar se anuncia una sola vez la respuesta final del turno.
+ * anterior. Quien anuncia la respuesta terminada, una sola vez, es
+ * `LatestReply`; aquí solo se navega lo que ya ha pasado.
  */
 function ConversationPanelComponent({ turns }: ConversationPanelProps) {
-  const lastReply = useMemo(() => {
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const turn = turns[index];
-      if (turn.status === "succeeded" && turn.reply) {
-        return turn.reply;
-      }
-    }
-
-    return "";
-  }, [turns]);
-
   return (
     <Panel className="w-full" title="Conversación">
       {turns.length === 0 ? (
@@ -77,10 +67,6 @@ function ConversationPanelComponent({ turns }: ConversationPanelProps) {
           ))}
         </div>
       )}
-
-      <p aria-live="polite" className="sr-only" role="status">
-        {lastReply ? `Pi responde: ${lastReply}` : ""}
-      </p>
     </Panel>
   );
 }

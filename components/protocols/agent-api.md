@@ -40,6 +40,7 @@ POST /api/pi/auth/attempt/:attemptId/manual-code entrega manual del código
 POST /api/pi/auth/cancel
 POST /api/pi/auth/logout
 POST /api/pi/chat                                encola un turno de chat
+POST /api/pi/conversation/new                    hilo nuevo: vacía turnos y sesión del modelo (409 si hay turno en curso)
 GET  /api/pi/turns                               historial de turnos
 GET  /api/pi/turns/latest                        turno activo (la UI hace polling)
 GET  /api/pi/turns/:turnId

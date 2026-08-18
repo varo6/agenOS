@@ -39,12 +39,23 @@ const PHASE_ICON: Record<VoicePhase, typeof Mic> = {
   unavailable: MicOff,
 };
 
+/**
+ * `full` es el orbe protagonista de la pantalla de reposo. `compact` lo reduce a
+ * un botón que cabe al lado del campo de escribir: el sitio que deja se lo queda
+ * la respuesta de Pi, que sin voz de vuelta hay que leer sin tener que
+ * desplazarse. En `compact` el orbe va solo, así que quien lo use tiene que
+ * pintar `status.title` al lado: la fase nunca puede quedarse dicha solo con el
+ * color del orbe.
+ */
+export type VoiceConsoleSize = "full" | "compact";
+
 export type VoiceConsoleProps = {
   status: VoiceStatus;
   /** Etiqueta accesible del botón, dependiente de la fase. */
   buttonLabel: string;
   onActivate: () => void;
   onCancel: () => void;
+  size?: VoiceConsoleSize;
   className?: string;
 };
 
@@ -53,6 +64,7 @@ function VoiceConsoleComponent({
   buttonLabel,
   onActivate,
   onCancel,
+  size = "full",
   className,
 }: VoiceConsoleProps) {
   const skin = ORB_SKIN[status.tone];
@@ -60,9 +72,10 @@ function VoiceConsoleComponent({
   const isCapturing = status.phase === "listening" || status.phase === "transcribing";
   const isSpinning = status.phase === "thinking" || status.phase === "working";
   const isInteractive = status.canListen || status.phase === "listening";
+  const compact = size === "compact";
 
   return (
-    <div className={cx("flex flex-col items-center gap-7", className)}>
+    <div className={cx("flex flex-col items-center", compact ? "gap-0" : "gap-6", className)}>
       <button
         /*
          * Nunca se deshabilita del todo: así quien navega con teclado o lector
@@ -77,7 +90,14 @@ function VoiceConsoleComponent({
          * puntería, incluso con la mano temblorosa.
          */
         className={cx(
-          "relative grid h-40 w-40 place-items-center rounded-pill border-2 bg-surface transition-colors duration-300 sm:h-52 sm:w-52",
+          "relative grid place-items-center rounded-pill border-2 bg-surface transition-colors duration-300",
+          /*
+           * Encogido sigue siendo el elemento con más peso visual de su fila, y
+           * con diferencia: al lado tiene un campo de 64px de alto. El tamaño de
+           * reposo bajó porque a pantalla completa el orbe se comía la vista;
+           * este no, porque aquí es el ancla de la fila.
+           */
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "h-36 w-36 sm:h-44 sm:w-44",
           skin.ring,
           isInteractive ? "hover:bg-surface-strong" : "cursor-not-allowed opacity-60",
         )}
@@ -111,7 +131,8 @@ function VoiceConsoleComponent({
         <Icon
           aria-hidden="true"
           className={cx(
-            "relative h-12 w-12 transition-colors sm:h-16 sm:w-16",
+            "relative transition-colors",
+            compact ? "h-10 w-10 sm:h-12 sm:w-12" : "h-11 w-11 sm:h-14 sm:w-14",
             skin.icon,
             isSpinning && "animate-spin",
           )}
@@ -121,12 +142,19 @@ function VoiceConsoleComponent({
 
       {/* Estas dos líneas son la etiqueta visible del orbe: dicen en qué fase
           está y qué se espera de la persona, y nunca desaparecen. */}
-      <div className="max-w-md text-center">
-        <p className="font-display text-2xl font-medium tracking-tight text-ink sm:text-3xl">
-          {status.title}
-        </p>
-        <p className="mt-2 text-base text-ink-muted">{status.hint}</p>
-      </div>
+      {compact ? null : (
+        /*
+         * El titular baja un peldaño de la escala con el orbe; la segunda línea
+         * no, porque es texto que se lee y el suelo cómodo a distancia de sofá
+         * son 19px. El aire de la pantalla sale del display, nunca del cuerpo.
+         */
+        <div className="max-w-md text-center">
+          <p className="font-display text-xl font-medium tracking-tight text-ink sm:text-2xl">
+            {status.title}
+          </p>
+          <p className="mt-2 text-base text-ink-muted">{status.hint}</p>
+        </div>
+      )}
 
       {/*
        * Anuncio para lectores de pantalla. En una interfaz por voz el cambio de

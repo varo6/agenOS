@@ -27,6 +27,8 @@ export type Conversation = {
   setDraft: (value: string) => void;
   send: (message: string, source: PiChatSource) => Promise<void>;
   restore: () => Promise<void>;
+  /** Cierra el hilo actual y empieza uno nuevo, también para Pi. */
+  startNew: () => Promise<void>;
   resetError: () => void;
 };
 
@@ -294,6 +296,30 @@ export function useConversation({
     }
   }, [piClient]);
 
+  /**
+   * Empieza una conversación nueva.
+   *
+   * Vaciar los turnos de aquí no bastaría: el historial vive en el equipo y
+   * `restore` lo traería de vuelta al siguiente arranque, y sobre todo Pi
+   * seguiría con el hilo cargado. Por eso el corte lo da el servicio y la
+   * pantalla solo se limpia si ese corte ha salido bien; si falla, más vale
+   * conservar la conversación y decirlo que fingir que ha pasado algo.
+   */
+  const startNew = useCallback(async () => {
+    try {
+      await piClient.startNewConversation();
+    } catch (error) {
+      alert.raise(error);
+      return;
+    }
+
+    setTurns([]);
+    setActiveTurnId(null);
+    setState("idle");
+    setDraft("");
+    alert.clear();
+  }, [alert, piClient]);
+
   const resetError = useCallback(() => {
     setState((current) => (current === "error" ? "idle" : current));
   }, []);
@@ -303,5 +329,5 @@ export function useConversation({
     [activeTurnId, turns],
   );
 
-  return { turns, activeTurn, state, draft, setDraft, send, restore, resetError };
+  return { turns, activeTurn, state, draft, setDraft, send, restore, startNew, resetError };
 }

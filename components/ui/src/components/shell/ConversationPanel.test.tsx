@@ -73,17 +73,18 @@ describe("ConversationPanel", () => {
     expect(screen.getByText("El servicio no respondió.")).toBeInTheDocument();
   });
 
-  test("solo se anuncia la última respuesta terminada, no el streaming", () => {
+  // El anuncio para lectores de pantalla lo hace `LatestReply`: dos regiones en
+  // vivo con el mismo texto lo dirían todo dos veces.
+  test("el historial no anuncia nada por su cuenta", () => {
     render(
       <ConversationPanel
         turns={[
           turn({ turnId: "t1", status: "succeeded", reply: "Primera." }),
           turn({ turnId: "t2", status: "succeeded", reply: "Segunda." }),
-          turn({ turnId: "t3", status: "processing" }),
         ]}
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent("Pi responde: Segunda.");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

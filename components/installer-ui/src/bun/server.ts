@@ -23,6 +23,14 @@ import { createBrowserTool } from "./agent/browser";
 import { createWorkspaceService } from "./agent/workspaces";
 import { runShellCommand } from "../../../agent/shell";
 import { createFileTool } from "../../../agent/files";
+import { createFilesContentService } from "../../../agent/files-content";
+import { createWebController } from "../../../agent/web-control";
+import { createDesktopController } from "../../../agent/desktop-control";
+import { createGoogleAuth } from "../../../agent/google-auth";
+import { createGoogleApi } from "../../../agent/google-api";
+import { createComputerRunService } from "./agent/computer-run-service";
+import { createGoogleSendService } from "./agent/google-send-service";
+import { launchBrowserUrl } from "../../../agent/browser-launcher";
 import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
@@ -69,6 +77,7 @@ type PiHarnessApi = {
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
   submitManualCode(attemptId: string, input: string): PiAuthAttemptResponse;
   logout(): void;
+  startNewConversation(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
   startChat(request: PiChatRequest): PiTurnState;
   getTurn(turnId: string): PiTurnState;
@@ -95,6 +104,11 @@ export type InstallerApiDependencies = {
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
   fileTool: ReturnType<typeof createFileTool>;
+  webController: ReturnType<typeof createWebController>;
+  desktopController: ReturnType<typeof createDesktopController>;
+  googleAuth: ReturnType<typeof createGoogleAuth>;
+  googleApi: ReturnType<typeof createGoogleApi>;
+  filesContent: ReturnType<typeof createFilesContentService>;
   workspaceService: ReturnType<typeof createWorkspaceService>;
   shellTool: typeof runShellCommand;
   toolRunner: ReturnType<typeof createToolRunner>;
@@ -336,6 +350,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     logout() {
       return getHarness().logout();
     },
+    startNewConversation() {
+      return getHarness().startNewConversation();
+    },
     chat(request: PiChatRequest) {
       return getHarness().chat(request);
     },
@@ -354,6 +371,122 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
   };
 }
 
+// Los handlers reciben el input crudo del modelo; estos dos ayudantes evitan
+// repetir la misma comprobacion defensiva en cada uno.
+function asRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === "object" ? input as Record<string, unknown> : {};
+}
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+type WebControllerLike = ReturnType<typeof createWebController>;
+type DesktopControllerLike = ReturnType<typeof createDesktopController>;
+
+function runWebControl(controller: WebControllerLike, record: Record<string, unknown>) {
+  switch (asText(record.action)) {
+    case "open":
+      return controller.open(asText(record.url));
+    case "click":
+      return controller.click(asText(record.ref));
+    case "type":
+      return controller.type(asText(record.ref), asText(record.text), {
+        ...(typeof record.submit === "boolean" ? { submit: record.submit } : {}),
+        ...(typeof record.clear === "boolean" ? { clear: record.clear } : {}),
+      });
+    case "pressKey":
+      return controller.pressKey(asText(record.key), Array.isArray(record.modifiers)
+        ? record.modifiers.filter((item): item is string => typeof item === "string")
+        : undefined);
+    case "waitFor":
+      return controller.waitFor({
+        ...(asText(record.text) ? { text: asText(record.text) } : {}),
+        ...(asText(record.ref) ? { ref: asText(record.ref) } : {}),
+        ...(typeof record.timeoutMs === "number" ? { timeoutMs: record.timeoutMs } : {}),
+      });
+    case "extract":
+      return controller.extract(asText(record.selector), {
+        ...(asText(record.attribute) ? { attribute: asText(record.attribute) } : {}),
+        ...(typeof record.limit === "number" ? { limit: record.limit } : {}),
+      });
+    case "screenshot":
+      return controller.screenshot(asText(record.path));
+    case "back":
+      return controller.back();
+    case "reload":
+      return controller.reload();
+    case "status":
+      return controller.status();
+    default:
+      return controller.snapshot(typeof record.maxChars === "number" ? { maxChars: record.maxChars } : undefined);
+  }
+}
+
+function runDesktopInput(controller: DesktopControllerLike, record: Record<string, unknown>) {
+  switch (asText(record.action)) {
+    case "focus":
+      return controller.focusWindow(record.id);
+    case "close":
+      return controller.closeWindow(record.id);
+    case "type":
+      return controller.typeText(record.text);
+    case "keys":
+      return controller.pressKeys(record.combo);
+    case "moveMouse":
+      return controller.moveMouse(record.x, record.y);
+    case "click":
+      return controller.click(record.button as never, {
+        x: record.x,
+        y: record.y,
+        ...(typeof record.double === "boolean" ? { double: record.double } : {}),
+      });
+    case "scroll":
+      return controller.scroll(record.direction as never, record.amount);
+    default:
+      return Promise.resolve({ ok: false, message: `No conozco la accion de escritorio ${asText(record.action)}.` });
+  }
+}
+
+function runGoogleAuth(auth: ReturnType<typeof createGoogleAuth>, record: Record<string, unknown>) {
+  switch (asText(record.action)) {
+    case "startLogin":
+      return auth.startLogin();
+    case "waitForLogin":
+      return auth.waitForLogin();
+    case "logout":
+      return auth.logout();
+    default:
+      return auth.status();
+  }
+}
+
+function runGoogleRead(api: ReturnType<typeof createGoogleApi>, record: Record<string, unknown>) {
+  switch (asText(record.action)) {
+    case "readMessage":
+      return api.readMessage(asText(record.id));
+    case "listEvents":
+      return api.listEvents(asRecord(record.input) as never);
+    case "markAsRead":
+      return api.markAsRead(asText(record.id));
+    default:
+      return api.listMessages(asRecord(record.input) as never);
+  }
+}
+
+function runGoogleSend(api: ReturnType<typeof createGoogleApi>, record: Record<string, unknown>) {
+  switch (asText(record.action)) {
+    case "replyToMessage":
+      return api.replyToMessage(asRecord(record.input) as never);
+    case "createEvent":
+      return api.createEvent(asRecord(record.input) as never);
+    case "deleteEvent":
+      return api.deleteEvent(asText(record.id));
+    default:
+      return api.sendMessage(asRecord(record.input) as never);
+  }
+}
+
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
 ): { fetch: (request: Request) => Promise<Response> } {
@@ -365,6 +498,19 @@ export function createInstallerApiHandler(
   const appTool = dependencies.appTool ?? createAppTool();
   const browserTool = dependencies.browserTool ?? createBrowserTool();
   const fileTool = dependencies.fileTool ?? createFileTool();
+  const filesContent = dependencies.filesContent ?? createFilesContentService();
+  // El controlador web se engancha al Chromium del usuario; si no hay ninguno
+  // escuchando, lo arranca con el mismo lanzador que browser_open, de modo que
+  // el agente reutiliza el perfil y las sesiones ya iniciadas.
+  const webController = dependencies.webController ?? createWebController({
+    ensureBrowser: async (url) => {
+      const launch = await launchBrowserUrl(url ?? "about:blank", { focus: true });
+      return { ok: Boolean(launch.ok), message: launch.message };
+    },
+  });
+  const desktopController = dependencies.desktopController ?? createDesktopController();
+  const googleAuth = dependencies.googleAuth ?? createGoogleAuth();
+  const googleApi = dependencies.googleApi ?? createGoogleApi({ auth: googleAuth });
   const workspaceService = dependencies.workspaceService ?? createWorkspaceService();
   const aptCatalog = createAptCatalog();
   const packageResolver = dependencies.packageResolver ?? createPackageResolver({ catalog: aptCatalog });
@@ -378,6 +524,33 @@ export function createInstallerApiHandler(
         : "",
     ),
     "files.open": (input) => fileTool.openPath(input as never),
+    "files.read": (input) => {
+      const record = asRecord(input);
+      return filesContent.read(asText(record.path), {
+        ...(typeof record.maxBytes === "number" ? { maxBytes: record.maxBytes } : {}),
+      });
+    },
+    // La escritura y el append comparten tool de politica a proposito: los dos
+    // modifican el fichero y el broker los juzga por la ruta, no por el modo.
+    "files.write": (input) => {
+      const record = asRecord(input);
+      return record.mode === "append"
+        ? filesContent.append(asText(record.path), asText(record.content))
+        : filesContent.write(asText(record.path), asText(record.content));
+    },
+    "web.control": (input) => runWebControl(webController, asRecord(input)),
+    "desktop.inspect": () => desktopController.inspect(),
+    "desktop.capabilities": () => desktopController.capabilities(),
+    "desktop.screenshot": (input) => desktopController.screenshot(asText(asRecord(input).path) || undefined),
+    "desktop.input": (input) => runDesktopInput(desktopController, asRecord(input)),
+    "google.auth": (input) => runGoogleAuth(googleAuth, asRecord(input)),
+    "google.read": (input) => runGoogleRead(googleApi, asRecord(input)),
+    "google.send": (input) => runGoogleSend(googleApi, asRecord(input)),
+    "files.list": (input) => filesContent.list(asText(asRecord(input).path)),
+    "files.search": (input) => {
+      const record = asRecord(input);
+      return filesContent.search(asText(record.path), asText(record.query));
+    },
     "workspaces.focus": (input) => workspaceService.focusWorkspace(input as never),
     "packages.install": (input, context) => packageInstaller.install(input, context.onProgress),
     "setup.status": () => setup.status(),
@@ -407,6 +580,23 @@ export function createInstallerApiHandler(
     ),
   };
   const toolRunner = dependencies.toolRunner ?? createToolRunner({ confirmations, memoryStore, learnedMemory, shellTool, handlers: effectHandlers });
+  const computerRunService = createComputerRunService({ toolRunner, confirmations });
+  const googleSend = createGoogleSendService({ toolRunner, confirmations });
+  effectHandlers["computer.run"] = (input, context) => {
+    const record = asRecord(input);
+    const action = asText(record.action) || "request";
+    if (action === "confirm") {
+      return computerRunService.confirm(asText(record.confirmationId), context.onProgress);
+    }
+    if (action === "deny") {
+      return computerRunService.deny(asText(record.confirmationId));
+    }
+    return computerRunService.request({
+      command: asText(record.command),
+      ...(asText(record.cwd) ? { cwd: asText(record.cwd) } : {}),
+      ...(typeof record.timeoutMs === "number" ? { timeoutMs: record.timeoutMs } : {}),
+    });
+  };
   const selfImprovement = dependencies.selfImprovement ?? createSelfImprovementLoop({
     memory: learnedMemory,
     listConfirmations: (limit) => confirmations.list(limit),
@@ -464,6 +654,7 @@ export function createInstallerApiHandler(
   });
   const brokerPiTools = createBrokerPiTools({
     toolRunner,
+    googleSend,
     packageService,
     captureTrace: async (trace) => {
       await selfImprovement.captureHarnessTrace(trace);
@@ -502,6 +693,11 @@ export function createInstallerApiHandler(
     appTool,
     browserTool,
     fileTool,
+    filesContent,
+    webController,
+    desktopController,
+    googleAuth,
+    googleApi,
     workspaceService,
     shellTool,
     confirmations,
@@ -840,6 +1036,24 @@ export function createInstallerApiHandler(
               message: typeof payload.message === "string" ? payload.message : "",
               source,
             }));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        /*
+         * Conversacion nueva. No es un borrado del historial: ademas de vaciar
+         * los turnos, el harness tira la sesion del modelo, y por eso el
+         * endpoint habla de la conversacion y no de /turns.
+         */
+        if (url.pathname === "/api/pi/conversation/new") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            deps.piHarness.startNewConversation();
+            return json({ ok: true });
           } catch (error) {
             return piErrorResponse(error);
           }

@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { AgentSource, PolicyDecision, PolicyRequest } from "./policy";
 
 export type PolicyRule = {
@@ -45,6 +47,64 @@ export const POLICY_RULES: PolicyRule[] = [
     decision: "allow",
     reason: "Comando shell solicitado explicitamente por la UI autenticada de AgenOS.",
     matches: (request) => request.tool === "shell.exec" && request.source === "ui" && request.explicitUserIntent === true,
+  },
+  {
+    ruleId: "agent.computer.run.agent.deny",
+    tool: "computer.run",
+    source: "openclaw|system",
+    decision: "deny",
+    reason: "Los agentes en segundo plano no reciben shell; deben usar tools tipadas del broker.",
+    matches: (request) => request.tool === "computer.run" && request.source !== "ui",
+  },
+  {
+    // El comando concreto lo vuelve a juzgar la regla de shell.exec cuando el
+    // servicio lo ejecuta; aqui solo se abre la puerta a la sesion del usuario.
+    ruleId: "agent.computer.run.ui.allow",
+    tool: "computer.run",
+    source: "ui",
+    decision: "allow",
+    reason: "Peticion de shell hecha desde la sesion autenticada del usuario.",
+    matches: (request) => request.tool === "computer.run" && request.source === "ui",
+  },
+  {
+    ruleId: "agent.desktop.input.agent.deny",
+    tool: "desktop.input",
+    source: "openclaw|system",
+    decision: "deny",
+    reason: "Solo el usuario presente puede mover el raton y el teclado; un agente en segundo plano no sintetiza entrada.",
+    matches: (request) => request.tool === "desktop.input" && request.source !== "ui",
+  },
+  {
+    ruleId: "agent.desktop.input.ui.allow",
+    tool: "desktop.input",
+    source: "ui",
+    decision: "allow",
+    reason: "Control de teclado y raton pedido desde la sesion del usuario.",
+    matches: (request) => request.tool === "desktop.input" && request.source === "ui",
+  },
+  {
+    ruleId: "agent.files.write.outside-home.confirm",
+    tool: "files.write",
+    source: "*",
+    decision: "confirm",
+    reason: "Escribir fuera de la carpeta personal puede tocar ficheros del sistema y requiere confirmacion.",
+    matches: (request) => request.tool === "files.write" && !isInsideHome(request.input),
+  },
+  {
+    ruleId: "agent.files.write.home.allow",
+    tool: "files.write",
+    source: "*",
+    decision: "allow",
+    reason: "Escribir en la carpeta personal del usuario es una accion ordinaria del agente.",
+    matches: (request) => request.tool === "files.write" && isInsideHome(request.input),
+  },
+  {
+    ruleId: "agent.google.send.confirm",
+    tool: "google.send",
+    source: "*",
+    decision: "confirm",
+    reason: "Enviar correo o cambiar el calendario en nombre del usuario requiere su confirmacion.",
+    matches: toolIs("google.send"),
   },
   {
     ruleId: "agent.memory.background.confirm",
@@ -138,6 +198,15 @@ const LOW_RISK_TOOLS = new Set([
   "apps.open",
   "browser.open_url",
   "files.open",
+  "files.read",
+  "files.list",
+  "files.search",
+  "desktop.inspect",
+  "desktop.capabilities",
+  "desktop.screenshot",
+  "web.control",
+  "google.auth",
+  "google.read",
   "workspaces.focus",
   "memory.read",
   "contacts.lookup",
@@ -150,6 +219,29 @@ const LOW_RISK_TOOLS = new Set([
   "telegram.test",
   "telegram.enable",
 ]);
+
+// Las escrituras dentro de la carpeta personal son trabajo normal del agente;
+// fuera de ella pueden tocar el sistema, asi que pasan por confirmacion.
+function isInsideHome(input: unknown): boolean {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+  const path = (input as { path?: unknown }).path;
+  if (typeof path !== "string" || !path.trim()) {
+    return false;
+  }
+  const raw = path.trim();
+  if (raw.startsWith("~")) {
+    return !raw.startsWith("~/..");
+  }
+  const home = homedir();
+  if (!raw.startsWith("/")) {
+    // Las rutas relativas se resuelven contra el home del usuario.
+    return !raw.split("/").includes("..");
+  }
+  const normalized = resolve(raw);
+  return normalized === home || normalized.startsWith(`${home}/`);
+}
 
 function isDestructiveShellInput(input: unknown): boolean {
   if (!input || typeof input !== "object") {

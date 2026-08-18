@@ -57,6 +57,68 @@ class WorkspaceWatcherDecisionTests(unittest.TestCase):
 
         self.assertEqual(actions, ())
 
+    def test_closing_an_untracked_window_still_returns_home(self):
+        # El arbol puede no tener aun la ventana mapeada (nacio y murio entre dos
+        # lecturas). Sin esta red, el usuario se queda mirando un escritorio
+        # vacio sin saber como volver.
+        actions = WATCHER.decide_actions(
+            {"change": "close", "container": {"id": 99, "focused": False}},
+            snapshot(focused="4:media", views={"4:media"}, windows={}),
+        )
+
+        self.assertEqual(
+            actions,
+            ({"type": WATCHER.ACTION_SCHEDULE_EMPTY_CHECK, "workspace": "4:media"},),
+        )
+
+    def test_closing_an_untracked_window_does_not_eject_an_empty_workspace(self):
+        actions = WATCHER.decide_actions(
+            {"change": "close", "container": {"id": 99, "focused": False}},
+            snapshot(focused="2:app", views={"3:web"}, windows={}),
+        )
+
+        self.assertEqual(actions, ())
+
+    def test_moving_the_last_window_out_of_the_visible_workspace_schedules_a_check(self):
+        actions = WATCHER.decide_actions(
+            {"change": "move", "container": {"id": 42}},
+            snapshot(focused="3:web", views={"3:web"}, windows={42: "3:web"}),
+        )
+
+        self.assertEqual(
+            actions,
+            (
+                {"type": WATCHER.ACTION_REFRESH_TREE},
+                {"type": WATCHER.ACTION_SCHEDULE_EMPTY_CHECK, "workspace": "3:web"},
+            ),
+        )
+
+    def test_moving_a_window_that_was_not_here_only_refreshes_the_tree(self):
+        actions = WATCHER.decide_actions(
+            {"change": "move", "container": {"id": 42}},
+            snapshot(focused="3:web", views={"1:home"}, windows={42: "1:home"}),
+        )
+
+        self.assertEqual(actions, ({"type": WATCHER.ACTION_REFRESH_TREE},))
+
+    def test_another_open_app_in_the_same_workspace_keeps_the_user_there(self):
+        # Caso que NO debe disparar el retorno: se cierra una ventana pero el
+        # escritorio sigue teniendo otra aplicacion abierta.
+        scheduled = WATCHER.decide_actions(
+            {"change": "close", "container": {"id": 42, "focused": True}},
+            snapshot(focused="4:media", views={"4:media"}, windows={42: "4:media", 43: "4:media"}),
+        )
+        self.assertEqual(
+            scheduled,
+            ({"type": WATCHER.ACTION_SCHEDULE_EMPTY_CHECK, "workspace": "4:media"},),
+        )
+
+        settled = WATCHER.decide_actions(
+            {"change": "empty-check", "workspace": "4:media"},
+            snapshot(focused="4:media", views={"4:media"}, windows={43: "4:media"}),
+        )
+        self.assertEqual(settled, ())
+
     def test_empty_check_returns_home_only_if_target_is_still_focused_and_empty(self):
         event = {"change": "empty-check", "workspace": "4:media"}
 

@@ -918,6 +918,28 @@ export class PiHarness {
     this.resetSession();
   }
 
+  /**
+   * Empieza una conversacion nueva.
+   *
+   * "Nueva" tiene que valer tambien para Pi, no solo para la pantalla: ademas
+   * de vaciar los turnos y su fichero, tira la sesion del modelo, que es donde
+   * vive el hilo. Sin eso la pantalla se queda limpia pero Pi sigue contestando
+   * a lo anterior, que es peor que no tener boton.
+   *
+   * Con una respuesta en curso no se puede: el turno seguiria vivo escribiendo
+   * en una conversacion que ya no existe.
+   */
+  startNewConversation(): void {
+    if (this.busy) {
+      throw new PiHarnessError(409, "Pi esta terminando una respuesta, espera un momento.");
+    }
+
+    this.turns.clear();
+    this.activeTurnId = undefined;
+    this.persistTurns();
+    this.resetSession();
+  }
+
   startChat(request: PiChatRequest): PiTurnState {
     const message = request.message.trim();
     if (!message) {

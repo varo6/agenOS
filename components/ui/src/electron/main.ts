@@ -508,6 +508,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(() => {
     return getPiClient().logout();
   }));
+  ipcMain.handle(PI_IPC_CHANNELS.newConversation, () => wrapPi(() => {
+    return getPiClient().startNewConversation();
+  }));
   ipcMain.handle(PI_IPC_CHANNELS.sendMessage, (_event, payload: { message?: unknown; source?: unknown }) => wrapPi(async () => {
     const source = String(payload.source ?? "");
     if (source !== "text" && source !== "voice") {
