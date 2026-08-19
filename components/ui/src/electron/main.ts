@@ -31,7 +31,8 @@ type IpcEnvelope<T> =
 type SpeechTranscriptionResponse = {
   transcript: string;
   engine: "whisper.cpp";
-  language: "es";
+  /** Siempre "es" salvo que AGENOS_STT_LANGUAGE lo cambie; nunca autodetectado. */
+  language: string;
   model: string;
 };
 
@@ -307,12 +308,11 @@ function normalizeTranscript(output: string): string {
 }
 
 function isNonSpeechTranscript(line: string): boolean {
-  const normalized = line
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-
-  return /^\[(musica|music|silencio|silence|aplausos|applause|ruido|noise|sonido)\]$/.test(normalized);
+  // Whisper marca lo que no es habla entre corchetes o parentesis y la lista de
+  // etiquetas posibles no es cerrada: sobre ruido puro llega a emitir [Pausa],
+  // [BLANK_AUDIO] o [Ruido de fondo]. Una orden de voz real nunca es solo eso,
+  // asi que descartamos cualquier linea que sea unicamente un marcador.
+  return /^[[(][^\])]*[\])]$/.test(line.trim());
 }
 
 function resolveWhisperBinary(): string | null {
@@ -360,12 +360,47 @@ function cpuSupportsPackagedWhisperSimd(): boolean {
   }
 }
 
+/**
+ * AgenOS es un sistema en espanol: el idioma no se autodetecta nunca. Whisper
+ * por si solo asume ingles cuando no se le pasa `-l`, y `auto` sobre frases
+ * cortas se equivoca a menudo, asi que aqui todo camino acaba en un idioma fijo.
+ */
+function resolveSpeechLanguage(): string {
+  const configured = process.env.AGENOS_STT_LANGUAGE?.trim().toLowerCase();
+  if (!configured || configured === "auto") {
+    return "es";
+  }
+
+  return configured.split(/[-_]/)[0] || "es";
+}
+
+/**
+ * Whisper codifica siempre una ventana de 30 s, aunque la frase dure cuatro. En
+ * un portatil modesto eso multiplica por cinco el tiempo del encoder para
+ * analizar silencio de relleno. Recortando el contexto de audio a lo que de
+ * verdad hemos grabado, mas holgura, `small` sale mas rapido que el `base`
+ * anterior a ventana completa. Devuelve 0 (= todo) si no hay nada que recortar.
+ */
+function resolveAudioContext(seconds: number): number {
+  const FULL_WINDOW_TOKENS = 1500;
+  const TOKENS_PER_SECOND = FULL_WINDOW_TOKENS / 30;
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 0;
+  }
+
+  const needed = seconds * TOKENS_PER_SECOND * 1.5 + 64;
+  const rounded = Math.ceil(needed / 64) * 64;
+
+  return rounded >= FULL_WINDOW_TOKENS ? 0 : Math.max(256, rounded);
+}
+
 function resolveWhisperModel(): string | null {
   const configuredPath = process.env.AGENOS_WHISPER_MODEL?.trim();
   return firstExistingPath([
     configuredPath ? resolve(configuredPath) : null,
-    ...appPathCandidates("../whisper.cpp/models/ggml-base.bin"),
-    "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+    ...appPathCandidates("../whisper.cpp/models/ggml-small.bin"),
+    "/opt/agenos/system/whisper.cpp/models/ggml-small.bin",
   ]);
 }
 
@@ -391,7 +426,7 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
   const recorderBinary = resolveRecorderBinary();
 
   if (!whisperBinary || !modelPath || !recorderBinary) {
-    throw new Error("STT local no esta instalado. Falta whisper.cpp, el modelo base multilingue o arecord.");
+    throw new Error("STT local no esta instalado. Falta whisper.cpp, el modelo small multilingue o arecord.");
   }
 
   const seconds = parsePositiveInteger(process.env.AGENOS_STT_RECORD_SECONDS, 4, { min: 2, max: 30 });
@@ -399,6 +434,7 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
   const runtimeDir = await mkdtemp(join(tmpdir(), "agenos-stt-"));
   const wavPath = join(runtimeDir, "utterance.wav");
   const device = process.env.AGENOS_STT_ALSA_DEVICE?.trim() || "default";
+  const language = resolveSpeechLanguage();
 
   try {
     emitSpeechPhase("listening");
@@ -420,15 +456,17 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
     ], { timeoutMs: (seconds + 3) * 1000 });
 
     emitSpeechPhase("transcribing");
+    const audioContext = resolveAudioContext(seconds);
     const transcription = await runCommand(whisperBinary, [
       "-m",
       modelPath,
       "-f",
       wavPath,
       "-l",
-      "es",
+      language,
       "-t",
       String(threads),
+      ...(audioContext > 0 ? ["-ac", String(audioContext)] : []),
       "-nt",
       "-np",
     ], {
@@ -449,7 +487,7 @@ async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
     return {
       transcript,
       engine: "whisper.cpp",
-      language: "es",
+      language,
       model: modelPath,
     };
   } finally {

@@ -56,7 +56,7 @@ POST /api/speech/transcribe  audio crudo en el body -> transcripción
 `POST /api/speech/transcribe`:
 
 - Body: bytes de audio; `Content-Type: audio/webm`, `audio/ogg` o `audio/wav`.
-- Query opcional: `?lang=es` (por defecto `es`).
+- Query opcional: `?lang=es` (por defecto `es`). Un valor ausente, vacío o `auto` cae en español: el idioma nunca se autodetecta. Una etiqueta regional (`es-ES`) se reduce a su idioma base.
 - Éxito: `200 { ok: true, text, durationMs, engine: "whisper.cpp", model }`
 - Motor no disponible: `503 { ok: false, message }` — la UI degrada a Web Speech API o a la demo simulada.
 - Audio vacío o formato no soportado: `400`.

@@ -136,7 +136,7 @@ const NO_SPEECH_ERROR: SpeechRecognitionError = {
 
 const UNAVAILABLE_ERROR: SpeechRecognitionError = {
   code: "local-stt-unavailable",
-  message: "STT local no disponible. Revisa whisper.cpp y el modelo base multilingue.",
+  message: "STT local no disponible. Revisa whisper.cpp y el modelo small multilingue.",
   disableVoice: true,
 };
 

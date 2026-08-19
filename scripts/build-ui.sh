@@ -11,8 +11,12 @@ ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 WHISPER_OUTPUT_DIR="${PACKAGE_OUTPUT_DIR}/whisper.cpp"
 WHISPER_CPP_REF="${AGENOS_WHISPER_CPP_REF:-v1.7.6}"
-WHISPER_BASE_MODEL_URL="${AGENOS_WHISPER_BASE_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin}"
-WHISPER_BASE_MODEL_SHA1="465707469ff3a37a2b9b8d8f89f2f99de7299dac"
+# Talla del modelo Whisper que viaja en la ISO. `base` transcribia lo bastante mal
+# en espanol como para arruinar la experiencia voice-first; `small` es el salto
+# util sin irse a `medium`, que en un portatil modesto ya no da latencia usable.
+WHISPER_MODEL_FILE="${AGENOS_WHISPER_MODEL_FILE:-ggml-small.bin}"
+WHISPER_MODEL_URL="${AGENOS_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL_FILE}}"
+WHISPER_MODEL_SHA1="${AGENOS_WHISPER_MODEL_SHA1:-55356645c2b361a969dfd0ef2c5a50d530afd8d5}"
 WHISPER_BUILD_PROFILE="static-simd-plus-baseline-x86_64-v1"
 CODEX_BIN_PATH=""
 STAMP_FILE="${PACKAGE_OUTPUT_DIR}/.build-stamp"
@@ -56,12 +60,18 @@ network_source_hash() {
 install_whisper_cpp() {
   local cli_path="${WHISPER_OUTPUT_DIR}/whisper-cli"
   local baseline_cli_path="${WHISPER_OUTPUT_DIR}/whisper-cli-baseline"
-  local model_path="${WHISPER_OUTPUT_DIR}/models/ggml-base.bin"
+  local model_path="${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}"
   local metadata_path="${WHISPER_OUTPUT_DIR}/stt.env"
 
-  if [[ -x "${cli_path}" && -x "${baseline_cli_path}" && -f "${model_path}" ]] \
-    && grep -q "^build_profile=${WHISPER_BUILD_PROFILE}$" "${metadata_path}" 2>/dev/null \
-    && printf '%s  %s\n' "${WHISPER_BASE_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
+  local binaries_ready=0
+  if [[ -x "${cli_path}" && -x "${baseline_cli_path}" ]] \
+    && grep -q "^build_profile=${WHISPER_BUILD_PROFILE}$" "${metadata_path}" 2>/dev/null; then
+    binaries_ready=1
+  fi
+
+  if [[ "${binaries_ready}" == "1" && -f "${model_path}" ]] \
+    && grep -q "^model=${WHISPER_MODEL_FILE}$" "${metadata_path}" 2>/dev/null \
+    && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
     return 0
   fi
 
@@ -69,68 +79,80 @@ install_whisper_cpp() {
   work_dir="$(mktemp -d)"
   trap 'rm -rf "${work_dir:-}"' EXIT
 
-  echo "Building whisper.cpp ${WHISPER_CPP_REF} and installing multilingual base model..."
   mkdir -p "${WHISPER_OUTPUT_DIR}/models" "${WHISPER_OUTPUT_DIR}/lib"
 
-  curl -fsSL --retry 3 "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_REF}.tar.gz" \
-    -o "${work_dir}/whisper.cpp.tar.gz"
-  tar -xzf "${work_dir}/whisper.cpp.tar.gz" -C "${work_dir}"
+  # Cambiar de talla de modelo no obliga a recompilar: los binarios no dependen
+  # del modelo. Solo se reconstruyen si faltan o si cambia el perfil de build.
+  if [[ "${binaries_ready}" == "1" ]]; then
+    echo "Reusing whisper.cpp ${WHISPER_CPP_REF} binaries; installing ${WHISPER_MODEL_FILE} (multilingual)..."
+  else
+    echo "Building whisper.cpp ${WHISPER_CPP_REF} and installing ${WHISPER_MODEL_FILE} (multilingual)..."
 
-  local source_dir
-  source_dir="$(find "${work_dir}" -maxdepth 1 -type d -name 'whisper.cpp-*' -print -quit)"
-  if [[ -z "${source_dir}" ]]; then
-    echo "No se pudo localizar el source extraido de whisper.cpp." >&2
-    exit 1
+    curl -fsSL --retry 3 "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_REF}.tar.gz" \
+      -o "${work_dir}/whisper.cpp.tar.gz"
+    tar -xzf "${work_dir}/whisper.cpp.tar.gz" -C "${work_dir}"
+
+    local source_dir
+    source_dir="$(find "${work_dir}" -maxdepth 1 -type d -name 'whisper.cpp-*' -print -quit)"
+    if [[ -z "${source_dir}" ]]; then
+      echo "No se pudo localizar el source extraido de whisper.cpp." >&2
+      exit 1
+    fi
+
+    cmake -S "${source_dir}" -B "${work_dir}/build-simd" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DGGML_NATIVE=OFF \
+      -DGGML_OPENMP=OFF \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_SDL2=OFF
+    cmake --build "${work_dir}/build-simd" --target whisper-cli -j"$(nproc)"
+    install -m 0755 "${work_dir}/build-simd/bin/whisper-cli" "${cli_path}"
+
+    cmake -S "${source_dir}" -B "${work_dir}/build-baseline" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DGGML_NATIVE=OFF \
+      -DGGML_OPENMP=OFF \
+      -DGGML_SSE42=OFF \
+      -DGGML_AVX=OFF \
+      -DGGML_AVX2=OFF \
+      -DGGML_AVX_VNNI=OFF \
+      -DGGML_FMA=OFF \
+      -DGGML_F16C=OFF \
+      -DGGML_BMI2=OFF \
+      -DGGML_AVX512=OFF \
+      -DGGML_AVX512_VBMI=OFF \
+      -DGGML_AVX512_VNNI=OFF \
+      -DGGML_AVX512_BF16=OFF \
+      -DWHISPER_BUILD_TESTS=OFF \
+      -DWHISPER_SDL2=OFF
+    cmake --build "${work_dir}/build-baseline" --target whisper-cli -j"$(nproc)"
+    install -m 0755 "${work_dir}/build-baseline/bin/whisper-cli" "${baseline_cli_path}"
   fi
 
-  cmake -S "${source_dir}" -B "${work_dir}/build-simd" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_NATIVE=OFF \
-    -DGGML_OPENMP=OFF \
-    -DWHISPER_BUILD_TESTS=OFF \
-    -DWHISPER_SDL2=OFF
-  cmake --build "${work_dir}/build-simd" --target whisper-cli -j"$(nproc)"
-  install -m 0755 "${work_dir}/build-simd/bin/whisper-cli" "${cli_path}"
-
-  cmake -S "${source_dir}" -B "${work_dir}/build-baseline" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DGGML_NATIVE=OFF \
-    -DGGML_OPENMP=OFF \
-    -DGGML_SSE42=OFF \
-    -DGGML_AVX=OFF \
-    -DGGML_AVX2=OFF \
-    -DGGML_AVX_VNNI=OFF \
-    -DGGML_FMA=OFF \
-    -DGGML_F16C=OFF \
-    -DGGML_BMI2=OFF \
-    -DGGML_AVX512=OFF \
-    -DGGML_AVX512_VBMI=OFF \
-    -DGGML_AVX512_VNNI=OFF \
-    -DGGML_AVX512_BF16=OFF \
-    -DWHISPER_BUILD_TESTS=OFF \
-    -DWHISPER_SDL2=OFF
-  cmake --build "${work_dir}/build-baseline" --target whisper-cli -j"$(nproc)"
-  install -m 0755 "${work_dir}/build-baseline/bin/whisper-cli" "${baseline_cli_path}"
-
-  if ! printf '%s  %s\n' "${WHISPER_BASE_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
-    curl -fL --retry 3 "${WHISPER_BASE_MODEL_URL}" -o "${model_path}.tmp"
-    if ! printf '%s  %s\n' "${WHISPER_BASE_MODEL_SHA1}" "${model_path}.tmp" | sha1sum -c - >/dev/null; then
-      echo "La suma SHA1 del modelo ggml-base.bin no coincide." >&2
+  if ! printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
+    curl -fL --retry 3 "${WHISPER_MODEL_URL}" -o "${model_path}.tmp"
+    if ! printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}.tmp" | sha1sum -c - >/dev/null; then
+      echo "La suma SHA1 del modelo ${WHISPER_MODEL_FILE} no coincide." >&2
       rm -f "${model_path}.tmp"
       exit 1
     fi
     mv "${model_path}.tmp" "${model_path}"
   fi
 
+  # Un cambio de talla dejaria el modelo viejo en includes.chroot y la ISO
+  # cargaria con los dos. Aqui no hay rsync --delete que lo limpie por nosotros.
+  find "${WHISPER_OUTPUT_DIR}/models" -maxdepth 1 -type f -name 'ggml-*.bin' \
+    ! -name "${WHISPER_MODEL_FILE}" -delete
+
   printf '%s\n' \
     "engine=whisper.cpp" \
     "ref=${WHISPER_CPP_REF}" \
     "build_profile=${WHISPER_BUILD_PROFILE}" \
-    "model=ggml-base.bin" \
+    "model=${WHISPER_MODEL_FILE}" \
     "language=es" \
-    "note=ggml-base.bin is multilingual; base.en is intentionally not installed." \
+    "note=${WHISPER_MODEL_FILE} is multilingual; the .en variants are intentionally not installed." \
     > "${WHISPER_OUTPUT_DIR}/stt.env"
 
   rm -rf "${work_dir}"
@@ -153,9 +175,10 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" && -f "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli-baseline" && -f "${WHISPER_OUTPUT_DIR}/models/ggml-base.bin" ]] \
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" && -f "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli-baseline" && -f "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" ]] \
   && grep -q "^build_profile=${WHISPER_BUILD_PROFILE}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
-  && printf '%s  %s\n' "${WHISPER_BASE_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/ggml-base.bin" | sha1sum -c - >/dev/null 2>&1; then
+  && grep -q "^model=${WHISPER_MODEL_FILE}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
+  && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1; then
   echo "components/ui sin cambios; se reutiliza el build empaquetado."
   exit 0
 fi
@@ -240,7 +263,7 @@ printf '%s\n' \
   'export AGENOS_ELECTRON_GPU_MODE="${AGENOS_ELECTRON_GPU_MODE:-auto}"' \
   'export AGENOS_CODEX_BIN="${SCRIPT_DIR}/codex-bin/codex"' \
   'export AGENOS_WHISPER_CPP_BIN="${AGENOS_WHISPER_CPP_BIN:-${SCRIPT_DIR}/whisper.cpp/whisper-cli}"' \
-  'export AGENOS_WHISPER_MODEL="${AGENOS_WHISPER_MODEL:-${SCRIPT_DIR}/whisper.cpp/models/ggml-base.bin}"' \
+  "export AGENOS_WHISPER_MODEL=\"\${AGENOS_WHISPER_MODEL:-\${SCRIPT_DIR}/whisper.cpp/models/${WHISPER_MODEL_FILE}}\"" \
   'export AGENOS_STT_RECORD_SECONDS="${AGENOS_STT_RECORD_SECONDS:-4}"' \
   'export AGENOS_PI_AGENT_DIR="${AGENOS_PI_AGENT_DIR:-${HOME:-/tmp}/.agenos/ui-dev/pi}"' \
   'export AGENOS_OPENCLAW_SYSTEM_CONFIG="${AGENOS_OPENCLAW_SYSTEM_CONFIG:-/etc/agenos/openclaw.json}"' \

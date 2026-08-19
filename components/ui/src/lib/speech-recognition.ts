@@ -135,7 +135,7 @@ function normalizeNativeSpeechError(error: unknown): SpeechRecognitionError {
   ) {
     return {
       code: "native-unavailable",
-      message: "STT local no disponible. Revisa whisper.cpp, el modelo base multilingue y el microfono.",
+      message: "STT local no disponible. Revisa whisper.cpp, el modelo small multilingue y el microfono.",
       disableVoice: true,
     };
   }

@@ -93,7 +93,7 @@ describe("speech-recognition", () => {
           transcript: "enciende las luces",
           engine: "whisper.cpp",
           language: "es",
-          model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+          model: "/opt/agenos/system/whisper.cpp/models/ggml-small.bin",
         }),
       },
     } as Window & typeof globalThis;

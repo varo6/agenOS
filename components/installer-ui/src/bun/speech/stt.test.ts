@@ -1,15 +1,55 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 
-import { createSttService, normalizeWhisperTranscript, type SttCommandRunner } from "./stt";
+import {
+  createSttService,
+  normalizeWhisperTranscript,
+  readWavDurationSeconds,
+  resolveAudioContext,
+  type SttCommandRunner,
+} from "./stt";
 
 const WHISPER_BIN = "/opt/agenos/system/whisper.cpp/whisper-cli";
-const WHISPER_MODEL = "/opt/agenos/system/whisper.cpp/models/ggml-base.bin";
+const WHISPER_MODEL = "/opt/agenos/system/whisper.cpp/models/ggml-small.bin";
 const FFMPEG_BIN = "/usr/bin/ffmpeg";
 
 const SIMD_CPUINFO = "flags\t\t: fpu sse4_2 avx avx2 fma f16c bmi2\n";
 
 type RecordedCall = { command: string; args: string[] };
+
+/** WAV real de 16 kHz mono s16, para que el servicio pueda medir su duracion. */
+function wavOfSeconds(seconds: number): Uint8Array {
+  const sampleRate = 16_000;
+  const dataBytes = Math.round(seconds * sampleRate) * 2;
+  const buffer = new ArrayBuffer(44 + dataBytes);
+  const view = new DataView(buffer);
+  const ascii = (offset: number, text: string) => {
+    for (let index = 0; index < text.length; index += 1) {
+      view.setUint8(offset + index, text.charCodeAt(index));
+    }
+  };
+
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  return new Uint8Array(buffer);
+}
+
+function flagValue(args: string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index === -1 ? undefined : args[index + 1];
+}
 
 function recordingRunner(calls: RecordedCall[], stdoutByCommand: Record<string, string> = {}): SttCommandRunner {
   return async (command, args) => {
@@ -36,7 +76,7 @@ describe("createSttService.status", () => {
     expect(status.available).toBe(false);
     expect(status.engine).toBeNull();
     expect(status.reason).toContain("whisper-cli");
-    expect(status.reason).toContain("ggml-base.bin");
+    expect(status.reason).toContain("ggml-small.bin");
   });
 
   test("reports available when binary and model exist", () => {
@@ -163,6 +203,86 @@ describe("createSttService.transcribe", () => {
   });
 });
 
+describe("createSttService.transcribe idioma y ventana", () => {
+  function transcribeWith(input: { lang?: string; seconds?: number }, env: Record<string, string> = {}) {
+    const calls: RecordedCall[] = [];
+    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL], {
+      env,
+      runCommand: recordingRunner(calls),
+    });
+
+    return service
+      .transcribe({
+        audio: wavOfSeconds(input.seconds ?? 4),
+        contentType: "audio/wav",
+        lang: input.lang,
+      })
+      .then(() => calls.find((call) => call.command === WHISPER_BIN)?.args ?? []);
+  }
+
+  test("transcribe en espanol cuando no se pide idioma", async () => {
+    expect(flagValue(await transcribeWith({}), "-l")).toBe("es");
+  });
+
+  test("ignora la autodeteccion y vuelve a espanol", async () => {
+    expect(flagValue(await transcribeWith({ lang: "auto" }), "-l")).toBe("es");
+    expect(flagValue(await transcribeWith({ lang: "   " }), "-l")).toBe("es");
+  });
+
+  test("reduce una etiqueta regional a su idioma base", async () => {
+    expect(flagValue(await transcribeWith({ lang: "es-ES" }), "-l")).toBe("es");
+  });
+
+  test("respeta un idioma explicito distinto", async () => {
+    expect(flagValue(await transcribeWith({ lang: "en" }), "-l")).toBe("en");
+  });
+
+  test("AGENOS_STT_LANGUAGE cambia el idioma por defecto", async () => {
+    expect(flagValue(await transcribeWith({}, { AGENOS_STT_LANGUAGE: "gl" }), "-l")).toBe("gl");
+  });
+
+  test("recorta la ventana de audio a la duracion grabada", async () => {
+    expect(flagValue(await transcribeWith({ seconds: 4 }), "-ac")).toBe("384");
+  });
+
+  test("no recorta cuando el audio ocupa casi la ventana entera", async () => {
+    expect(await transcribeWith({ seconds: 25 })).not.toContain("-ac");
+  });
+});
+
+describe("resolveAudioContext", () => {
+  test("recorta la ventana para las frases cortas que graba AgenOS", () => {
+    // 4 s de audio necesitan 200 tokens; con holgura caben en 384 en vez de 1500.
+    expect(resolveAudioContext(4)).toBe(384);
+    expect(resolveAudioContext(5)).toBe(448);
+  });
+
+  test("nunca baja de un suelo prudente", () => {
+    expect(resolveAudioContext(0.5)).toBe(256);
+  });
+
+  test("usa la ventana entera cuando el audio ya no cabe recortado", () => {
+    expect(resolveAudioContext(30)).toBe(0);
+    expect(resolveAudioContext(20)).toBe(0);
+  });
+
+  test("una duracion desconocida cae en ventana entera", () => {
+    expect(resolveAudioContext(0)).toBe(0);
+    expect(resolveAudioContext(Number.NaN)).toBe(0);
+  });
+});
+
+describe("readWavDurationSeconds", () => {
+  test("lee la duracion de una cabecera WAV", () => {
+    expect(readWavDurationSeconds(wavOfSeconds(4))).toBeCloseTo(4, 3);
+  });
+
+  test("devuelve 0 ante datos que no son WAV", () => {
+    expect(readWavDurationSeconds(new Uint8Array(64))).toBe(0);
+    expect(readWavDurationSeconds(new Uint8Array([1, 2, 3]))).toBe(0);
+  });
+});
+
 describe("normalizeWhisperTranscript", () => {
   test("strips timestamps, whisper noise lines, and non-speech markers", () => {
     const output = [
@@ -174,5 +294,13 @@ describe("normalizeWhisperTranscript", () => {
     ].join("\n");
 
     expect(normalizeWhisperTranscript(output)).toBe("abre la terminal de mantenimiento");
+  });
+
+  test("descarta marcadores no verbales fuera de la lista conocida", () => {
+    // Sobre ruido puro `small` emite cosas como [Pausa], que antes se colaban
+    // en el transcript como si fueran una orden del usuario.
+    expect(normalizeWhisperTranscript("[Pausa]")).toBe("");
+    expect(normalizeWhisperTranscript("[BLANK_AUDIO]")).toBe("");
+    expect(normalizeWhisperTranscript("(ruido de fondo)")).toBe("");
   });
 });

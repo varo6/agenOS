@@ -30,7 +30,8 @@ type IpcEnvelope<T> =
 type SpeechTranscriptionResponse = {
   transcript: string;
   engine: "whisper.cpp";
-  language: "es";
+  /** Siempre "es" salvo que AGENOS_STT_LANGUAGE lo cambie; nunca autodetectado. */
+  language: string;
   model: string;
 };
 

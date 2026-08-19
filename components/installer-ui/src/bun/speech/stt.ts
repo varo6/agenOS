@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -62,8 +62,11 @@ const WHISPER_BASELINE_CANDIDATES = [
 ];
 
 const WHISPER_MODEL_CANDIDATES = [
-  "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+  "/opt/agenos/system/whisper.cpp/models/ggml-small.bin",
 ];
+
+/** AgenOS transcribe en espanol; el idioma nunca se autodetecta. */
+const DEFAULT_STT_LANGUAGE = "es";
 
 const FFMPEG_CANDIDATES = [
   "/usr/bin/ffmpeg",
@@ -145,12 +148,78 @@ export function normalizeWhisperTranscript(output: string): string {
 }
 
 function isNonSpeechTranscript(line: string): boolean {
-  const normalized = line
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  // Whisper marca lo que no es habla entre corchetes o parentesis y la lista de
+  // etiquetas posibles no es cerrada: sobre ruido puro llega a emitir [Pausa],
+  // [BLANK_AUDIO] o [Ruido de fondo]. Una orden de voz real nunca es solo eso,
+  // asi que descartamos cualquier linea que sea unicamente un marcador.
+  return /^[[(][^\])]*[\])]$/.test(line.trim());
+}
 
-  return /^\[(musica|music|silencio|silence|aplausos|applause|ruido|noise|sonido)\]$/.test(normalized);
+/**
+ * Whisper codifica siempre una ventana de 30 s, aunque la frase dure cuatro. En
+ * un portatil modesto eso multiplica por cinco el tiempo del encoder para
+ * analizar silencio de relleno. Recortando el contexto de audio a lo grabado,
+ * mas holgura, `small` sale mas rapido que el `base` anterior a ventana
+ * completa. Devuelve 0 (= ventana entera) cuando no hay nada que recortar.
+ */
+export function resolveAudioContext(seconds: number): number {
+  const FULL_WINDOW_TOKENS = 1500;
+  const TOKENS_PER_SECOND = FULL_WINDOW_TOKENS / 30;
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 0;
+  }
+
+  const needed = seconds * TOKENS_PER_SECOND * 1.5 + 64;
+  const rounded = Math.ceil(needed / 64) * 64;
+
+  return rounded >= FULL_WINDOW_TOKENS ? 0 : Math.max(256, rounded);
+}
+
+/**
+ * Duracion real de un WAV a partir de su cabecera. El audio llega del navegador
+ * y no siempre pasa por ffmpeg, asi que no se puede asumir 16 kHz mono. Devuelve
+ * 0 si la cabecera no se entiende, que se traduce en ventana completa: preferimos
+ * transcribir lento a recortar audio de mas y perder el final de la frase.
+ */
+export function readWavDurationSeconds(header: Uint8Array): number {
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  const ascii = (offset: number) =>
+    String.fromCharCode(...header.subarray(offset, offset + 4));
+
+  if (header.byteLength < 44 || ascii(0) !== "RIFF" || ascii(8) !== "WAVE") {
+    return 0;
+  }
+
+  let sampleRate = 0;
+  let channels = 0;
+  let bitsPerSample = 0;
+  let offset = 12;
+
+  while (offset + 8 <= header.byteLength) {
+    const chunkId = ascii(offset);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const body = offset + 8;
+
+    if (chunkId === "fmt " && body + 16 <= header.byteLength) {
+      channels = view.getUint16(body + 2, true);
+      sampleRate = view.getUint32(body + 4, true);
+      bitsPerSample = view.getUint16(body + 14, true);
+    } else if (chunkId === "data") {
+      const bytesPerFrame = channels * Math.ceil(bitsPerSample / 8);
+      if (bytesPerFrame <= 0 || sampleRate <= 0) {
+        return 0;
+      }
+      // El tamano declarado puede mentir en streams truncados; el real manda.
+      const dataBytes = Math.min(chunkSize, Math.max(0, header.byteLength - body));
+      return dataBytes / (sampleRate * bytesPerFrame);
+    }
+
+    // Los chunks impares llevan un byte de relleno que no cuenta en chunkSize.
+    offset = body + chunkSize + (chunkSize % 2);
+  }
+
+  return 0;
 }
 
 type AudioFormat = "wav" | "webm" | "ogg";
@@ -230,6 +299,30 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
     return firstExistingPath(WHISPER_MODEL_CANDIDATES);
   }
 
+  /**
+   * El default de whisper-cli es ingles y `auto` se equivoca a menudo en frases
+   * cortas, asi que un `lang` ausente, vacio o "auto" cae siempre en espanol.
+   * Una etiqueta regional ("es-ES") se reduce a su idioma base.
+   */
+  function resolveLanguage(requested: string | undefined): string {
+    const fallback = env.AGENOS_STT_LANGUAGE?.trim().toLowerCase() || DEFAULT_STT_LANGUAGE;
+    const normalized = requested?.trim().toLowerCase();
+    if (!normalized || normalized === "auto") {
+      return fallback;
+    }
+
+    return normalized.split(/[-_]/)[0] || fallback;
+  }
+
+  /** Un wav ilegible no debe tumbar la transcripcion: 0 significa ventana entera. */
+  async function readWavDuration(path: string): Promise<number> {
+    try {
+      return readWavDurationSeconds(await readFile(path));
+    } catch {
+      return 0;
+    }
+  }
+
   function resolveFfmpeg(): string | null {
     const configured = env.AGENOS_FFMPEG_BIN?.trim();
     if (configured) {
@@ -247,7 +340,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
       missing.push("whisper-cli");
     }
     if (!model) {
-      missing.push("modelo ggml-base.bin");
+      missing.push("modelo ggml-small.bin");
     }
 
     return {
@@ -288,7 +381,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
       };
     }
 
-    const lang = input.lang?.trim() || "es";
+    const lang = resolveLanguage(input.lang);
     const threads = Math.max(1, Math.min(4, cpus().length || 4));
     const startedAt = now();
     const workDir = await mkdtemp(join(tempDir, "agenos-stt-http-"));
@@ -316,6 +409,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
         ], { timeoutMs: 15_000 });
       }
 
+      const audioContext = resolveAudioContext(await readWavDuration(wavPath));
       const transcription = await runCommand(binary, [
         "-m",
         model,
@@ -325,6 +419,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
         lang,
         "-t",
         String(threads),
+        ...(audioContext > 0 ? ["-ac", String(audioContext)] : []),
         "-nt",
         "-np",
       ], {
