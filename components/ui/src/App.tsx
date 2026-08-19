@@ -4,9 +4,9 @@ import { VideoBackground } from "./components/VideoBackground";
 import {
   BootScreen,
   HomeView,
+  SectionSwitch,
   SystemAlertBanner,
   SystemView,
-  TopBar,
   type ShellSection,
 } from "./components/shell";
 import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPanel";
@@ -115,7 +115,7 @@ export default function App() {
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-canvas text-ink">
       <VideoBackground />
-      {/* Primer tabulador de la pantalla: saltarse la barra fija. */}
+      {/* Primer tabulador de la pantalla: derecho al contenido. */}
       <a
         className="sr-only z-50 focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:inline-flex focus:min-h-12 focus:items-center focus:rounded-control focus:bg-surface-strong focus:px-5 focus:text-base"
         href="#contenido"
@@ -123,7 +123,7 @@ export default function App() {
         Saltar al contenido
       </a>
 
-      <TopBar
+      <SectionSwitch
         needsAttention={needsSystemAttention({
           harnessAvailable: session.ready,
           backendError: health.error,

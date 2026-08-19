@@ -395,7 +395,7 @@ describe("App chat recovery", () => {
   });
 
   // Los escritorios son cosa del gestor de ventanas, así que ya no ocupan la
-  // barra fija: se cambian desde Sistema (o hablando con Pi).
+  // esquina de la pantalla: se cambian desde Sistema (o hablando con Pi).
   test("shows the workspace switcher in Sistema and focuses workspace clicks", async () => {
     mocks.piClient.getStatus.mockResolvedValue(disconnectedStatus);
     mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);

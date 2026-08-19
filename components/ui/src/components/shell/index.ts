@@ -8,7 +8,7 @@ export {
   NewConversationButton,
   type NewConversationButtonProps,
 } from "./NewConversationButton";
+export { SectionSwitch, type SectionSwitchProps, type ShellSection } from "./SectionSwitch";
 export { SystemAlertBanner, type SystemAlertBannerProps } from "./SystemAlertBanner";
 export { SystemView, type SystemViewProps } from "./SystemView";
-export { TopBar, type ShellSection, type TopBarProps } from "./TopBar";
 export { WorkspaceSwitcher, type WorkspaceSwitcherProps } from "./WorkspaceSwitcher";

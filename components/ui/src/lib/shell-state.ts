@@ -109,7 +109,7 @@ export type ReadinessSignals = {
  * un segundo después.
  */
 /**
- * Si merece la pena mirar Sistema. Sirve para marcar la pestaña cuando algo va
+ * Si merece la pena mirar Sistema. Sirve para marcar el botón cuando algo va
  * mal sin llegar a impedir la conversación: sin esta señal, un fallo que no
  * bloquea sería invisible hasta que alguien entrase por casualidad.
  */

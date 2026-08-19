@@ -136,7 +136,7 @@ describe("needsSystemAttention", () => {
     authState: "connected" as const,
   };
 
-  test("con todo en orden la pestaña de Sistema no avisa de nada", () => {
+  test("con todo en orden el botón de Sistema no avisa de nada", () => {
     expect(needsSystemAttention(ready)).toBe(false);
   });
 
