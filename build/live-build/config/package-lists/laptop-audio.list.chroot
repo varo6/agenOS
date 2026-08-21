@@ -9,3 +9,7 @@ alsa-topology-conf
 pipewire-audio
 rtkit
 bluez
+
+# TTS local sin servidor ni runtime Python. Electron invoca este binario
+# directamente cuando Pi termina una respuesta.
+espeak-ng

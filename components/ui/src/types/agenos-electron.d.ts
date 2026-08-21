@@ -1,6 +1,7 @@
 import type { AgenosSystemBridge } from "../lib/system-bridge";
 import type { AgenosPiBridge } from "../lib/pi-bridge";
 import type { AgenosSpeechBridge } from "../lib/speech-bridge";
+import type { AgenosTtsBridge } from "../lib/tts-bridge";
 import type { AgenosNetworkBridge } from "../../../network/types";
 
 declare global {
@@ -8,6 +9,7 @@ declare global {
     agenosSystem?: AgenosSystemBridge;
     agenosPi?: AgenosPiBridge;
     agenosSpeech?: AgenosSpeechBridge;
+    agenosTts?: AgenosTtsBridge;
     agenosNetwork?: AgenosNetworkBridge;
   }
 }
