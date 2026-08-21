@@ -1,0 +1,60 @@
+#!/bin/sh
+# Arranque del Whisper residente de AgenOS.
+#
+# Lee el manifiesto stt.env que deja el build en vez de llevar los nombres de
+# los modelos escritos dentro: si el build cambia de modelo, el servicio arranca
+# con el nuevo sin que haya que tocar la unidad de systemd. Si el modelo
+# declarado no esta, falla en voz alta en vez de escuchar sin poder transcribir.
+set -eu
+
+DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+MANIFEST="${DIR}/stt.env"
+
+if [ ! -f "${MANIFEST}" ]; then
+  echo "No se encontro ${MANIFEST}; el build no dejo manifiesto de STT." >&2
+  exit 1
+fi
+
+model_file="$(sed -n 's/^model=//p' "${MANIFEST}" | head -1)"
+vad_file="$(sed -n 's/^vad_model=//p' "${MANIFEST}" | head -1)"
+MODEL="${AGENOS_WHISPER_MODEL:-${DIR}/models/${model_file}}"
+VAD_MODEL="${AGENOS_STT_VAD_MODEL:-${DIR}/models/${vad_file}}"
+
+for path in "${MODEL}" "${VAD_MODEL}"; do
+  if [ ! -f "${path}" ]; then
+    echo "Falta el modelo declarado por el build: ${path}" >&2
+    exit 1
+  fi
+done
+
+# El binario SIMD asume AVX2 y compania; en un equipo sin ellas revienta con
+# SIGILL, asi que se comprueba antes de elegir.
+BIN="${DIR}/whisper-server"
+if [ "${AGENOS_STT_FORCE_BASELINE:-0}" = "1" ]; then
+  BIN="${DIR}/whisper-server-baseline"
+else
+  for flag in sse4_2 avx avx2 fma f16c bmi2; do
+    if ! grep -qm1 "^flags.*[[:space:]]${flag}\([[:space:]]\|$\)" /proc/cpuinfo; then
+      BIN="${DIR}/whisper-server-baseline"
+      break
+    fi
+  done
+fi
+
+export LD_LIBRARY_PATH="${DIR}/lib:${LD_LIBRARY_PATH:-}"
+
+# Los parametros del VAD no van aqui: en whisper.cpp v1.7.6
+# --vad-min-silence-duration-ms escribe por error sobre la duracion minima de
+# voz. Cada peticion los manda en el multipart, donde el mapeo si es correcto.
+exec "${BIN}" \
+  -m "${MODEL}" \
+  --host "${AGENOS_STT_SERVER_HOST:-127.0.0.1}" \
+  --port "${AGENOS_STT_SERVER_PORT:-8178}" \
+  -t "${AGENOS_STT_THREADS:-4}" \
+  -l "${AGENOS_STT_LANGUAGE:-es}" \
+  -bs "${AGENOS_STT_BEAM_SIZE:-5}" \
+  -bo "${AGENOS_STT_BEST_OF:-5}" \
+  --suppress-nst \
+  --vad \
+  -vm "${VAD_MODEL}" \
+  --no-gpu

@@ -1,8 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { cpus, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { app, BrowserWindow, ipcMain } from "electron";
 
@@ -18,6 +15,8 @@ import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from ".
 import { createNetworkManagerService } from "../../../network/node/network-manager";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import { createSystemIpcServices } from "./system-ipc-services";
+import { createLocalSpeechService, createSttRuntime } from "../../../stt";
+import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
@@ -27,19 +26,6 @@ const BROKER_BASE_URL = process.env.AGENOS_AGENT_API_BASE?.trim() || DEFAULT_BRO
 type IpcEnvelope<T> =
   | { ok: true; value: T }
   | { ok: false; status?: number; message: string };
-
-type SpeechTranscriptionResponse = {
-  transcript: string;
-  engine: "whisper.cpp";
-  /** Siempre "es" salvo que AGENOS_STT_LANGUAGE lo cambie; nunca autodetectado. */
-  language: string;
-  model: string;
-};
-
-type CommandResult = {
-  stdout: string;
-  stderr: string;
-};
 
 let mainWindow: BrowserWindow | null = null;
 const networkService = createNetworkManagerService();
@@ -87,20 +73,6 @@ function firstExistingPath(candidates: Array<string | null | undefined>): string
   }
 
   return null;
-}
-
-function resolveCommand(commandName: string, configuredPath: string | undefined, candidates: string[]): string | null {
-  const trimmed = configuredPath?.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-
-  const existing = firstExistingPath(candidates);
-  if (existing) {
-    return existing;
-  }
-
-  return commandName;
 }
 
 function resolveIndexPath(): string | null {
@@ -227,189 +199,19 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
   };
 }
 
-function parsePositiveInteger(value: string | undefined, fallback: number, options: { min: number; max: number }): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.min(options.max, Math.max(options.min, parsed));
-}
-
-function runCommand(
-  command: string,
-  args: string[],
-  options: { timeoutMs: number; env?: NodeJS.ProcessEnv },
-): Promise<CommandResult> {
-  return new Promise((resolveCommandResult, reject) => {
-    const child = spawn(command, args, {
-      env: {
-        ...process.env,
-        ...options.env,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let settled = false;
-
-    const finish = (error: Error | null, result?: CommandResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeoutId);
-      if (error) {
-        reject(error);
-      } else {
-        resolveCommandResult(result ?? { stdout: "", stderr: "" });
-      }
-    };
-
-    const timeoutId = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error(`El comando ${command} excedio el tiempo limite.`));
-    }, options.timeoutMs);
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr.push(chunk);
-    });
-    child.on("error", (error) => {
-      finish(error);
-    });
-    child.on("close", (code) => {
-      const result = {
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      };
-
-      if (code === 0) {
-        finish(null, result);
-        return;
-      }
-
-      const detail = result.stderr.trim() || result.stdout.trim();
-      finish(new Error(`${command} termino con codigo ${code ?? 1}${detail ? `: ${detail}` : "."}`));
-    });
-  });
-}
-
-function normalizeTranscript(output: string): string {
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*\[[^\]]+\]\s*/, "").trim())
-    .filter((line) => line && !line.startsWith("whisper_") && !line.startsWith("main:") && !isNonSpeechTranscript(line))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isNonSpeechTranscript(line: string): boolean {
-  // Whisper marca lo que no es habla entre corchetes o parentesis y la lista de
-  // etiquetas posibles no es cerrada: sobre ruido puro llega a emitir [Pausa],
-  // [BLANK_AUDIO] o [Ruido de fondo]. Una orden de voz real nunca es solo eso,
-  // asi que descartamos cualquier linea que sea unicamente un marcador.
-  return /^[[(][^\])]*[\])]$/.test(line.trim());
-}
-
-function resolveWhisperBinary(): string | null {
-  const configuredPath = process.env.AGENOS_WHISPER_CPP_BIN?.trim();
-  if (configuredPath) {
-    return configuredPath;
-  }
-
-  const simdCandidates = [
-    ...appPathCandidates("../whisper.cpp/whisper-cli"),
-    "/opt/agenos/system/whisper.cpp/whisper-cli",
-    "/usr/local/bin/whisper-cli",
-    "/usr/bin/whisper-cli",
-  ];
-  const baselineCandidates = [
-    ...appPathCandidates("../whisper.cpp/whisper-cli-baseline"),
-    "/opt/agenos/system/whisper.cpp/whisper-cli-baseline",
-  ];
-  const packagedCandidates = cpuSupportsPackagedWhisperSimd()
-    ? [...simdCandidates, ...baselineCandidates]
-    : [...baselineCandidates, ...simdCandidates];
-
-  return firstExistingPath(packagedCandidates) ?? "whisper-cli";
-}
-
-function cpuSupportsPackagedWhisperSimd(): boolean {
-  if (process.env.AGENOS_STT_FORCE_BASELINE?.trim() === "1") {
-    return false;
-  }
-
-  if (process.platform !== "linux" || process.arch !== "x64") {
-    return true;
-  }
-
-  try {
-    const flagsLine = readFileSync("/proc/cpuinfo", "utf8")
-      .toLowerCase()
-      .split(/\r?\n/)
-      .find((line) => line.startsWith("flags"));
-    const flags = new Set((flagsLine?.split(":")[1] ?? "").trim().split(/\s+/));
-
-    return ["sse4_2", "avx", "avx2", "fma", "f16c", "bmi2"].every((flag) => flags.has(flag));
-  } catch {
-    return true;
-  }
-}
-
 /**
- * AgenOS es un sistema en espanol: el idioma no se autodetecta nunca. Whisper
- * por si solo asume ingles cuando no se le pasa `-l`, y `auto` sobre frases
- * cortas se equivoca a menudo, asi que aqui todo camino acaba en un idioma fijo.
+ * Runtime del STT local, compartido con la ruta HTTP.
+ *
+ * Todo lo que antes vivia suelto en este fichero (rutas de binarios, deteccion
+ * de SIMD, flags de Whisper, recorte de contexto) esta ahora en components/stt
+ * para que Electron y el servidor no puedan divergir. El modelo se queda
+ * cargado en whisper-server entre transcripciones.
  */
-function resolveSpeechLanguage(): string {
-  const configured = process.env.AGENOS_STT_LANGUAGE?.trim().toLowerCase();
-  if (!configured || configured === "auto") {
-    return "es";
-  }
-
-  return configured.split(/[-_]/)[0] || "es";
-}
-
-/**
- * Whisper codifica siempre una ventana de 30 s, aunque la frase dure cuatro. En
- * un portatil modesto eso multiplica por cinco el tiempo del encoder para
- * analizar silencio de relleno. Recortando el contexto de audio a lo que de
- * verdad hemos grabado, mas holgura, `small` sale mas rapido que el `base`
- * anterior a ventana completa. Devuelve 0 (= todo) si no hay nada que recortar.
- */
-function resolveAudioContext(seconds: number): number {
-  const FULL_WINDOW_TOKENS = 1500;
-  const TOKENS_PER_SECOND = FULL_WINDOW_TOKENS / 30;
-
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return 0;
-  }
-
-  const needed = seconds * TOKENS_PER_SECOND * 1.5 + 64;
-  const rounded = Math.ceil(needed / 64) * 64;
-
-  return rounded >= FULL_WINDOW_TOKENS ? 0 : Math.max(256, rounded);
-}
-
-function resolveWhisperModel(): string | null {
-  const configuredPath = process.env.AGENOS_WHISPER_MODEL?.trim();
-  return firstExistingPath([
-    configuredPath ? resolve(configuredPath) : null,
-    ...appPathCandidates("../whisper.cpp/models/ggml-small.bin"),
-    "/opt/agenos/system/whisper.cpp/models/ggml-small.bin",
-  ]);
-}
-
-function resolveRecorderBinary(): string | null {
-  return resolveCommand("arecord", process.env.AGENOS_STT_RECORDER_BIN, [
-    "/usr/bin/arecord",
-    "/bin/arecord",
-  ]);
-}
+const sttRuntime = createSttRuntime({
+  extraRoots: appPathCandidates("../whisper.cpp"),
+  logger: (message) => console.log(`[stt] ${message}`),
+});
+const localSpeech = createLocalSpeechService(sttRuntime);
 
 /** Avisa al renderer de en qué punto de la captura estamos. */
 function emitSpeechPhase(phase: SpeechCapturePhase): void {
@@ -420,79 +222,24 @@ function emitSpeechPhase(phase: SpeechCapturePhase): void {
   mainWindow.webContents.send(SPEECH_IPC_CHANNELS.phase, phase);
 }
 
-async function transcribeOnce(): Promise<SpeechTranscriptionResponse> {
-  const whisperBinary = resolveWhisperBinary();
-  const modelPath = resolveWhisperModel();
-  const recorderBinary = resolveRecorderBinary();
+async function transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
+  const result = await localSpeech.transcribeOnce((phase) => {
+    emitSpeechPhase(phase);
+  });
 
-  if (!whisperBinary || !modelPath || !recorderBinary) {
-    throw new Error("STT local no esta instalado. Falta whisper.cpp, el modelo small multilingue o arecord.");
+  // `=== false` y no `!result.ok`: tsconfig.node.json compila sin
+  // strictNullChecks y ahi la forma corta no estrecha la union.
+  if (result.ok === false) {
+    return { ok: false, code: result.code, message: result.message };
   }
 
-  const seconds = parsePositiveInteger(process.env.AGENOS_STT_RECORD_SECONDS, 4, { min: 2, max: 30 });
-  const threads = parsePositiveInteger(process.env.AGENOS_STT_THREADS, Math.max(1, Math.min(4, cpus().length || 4)), { min: 1, max: 16 });
-  const runtimeDir = await mkdtemp(join(tmpdir(), "agenos-stt-"));
-  const wavPath = join(runtimeDir, "utterance.wav");
-  const device = process.env.AGENOS_STT_ALSA_DEVICE?.trim() || "default";
-  const language = resolveSpeechLanguage();
-
-  try {
-    emitSpeechPhase("listening");
-    await runCommand(recorderBinary, [
-      "-q",
-      "-D",
-      device,
-      "-t",
-      "wav",
-      "-f",
-      "S16_LE",
-      "-r",
-      "16000",
-      "-c",
-      "1",
-      "-d",
-      String(seconds),
-      wavPath,
-    ], { timeoutMs: (seconds + 3) * 1000 });
-
-    emitSpeechPhase("transcribing");
-    const audioContext = resolveAudioContext(seconds);
-    const transcription = await runCommand(whisperBinary, [
-      "-m",
-      modelPath,
-      "-f",
-      wavPath,
-      "-l",
-      language,
-      "-t",
-      String(threads),
-      ...(audioContext > 0 ? ["-ac", String(audioContext)] : []),
-      "-nt",
-      "-np",
-    ], {
-      timeoutMs: Math.max(20000, seconds * 12000),
-      env: {
-        LD_LIBRARY_PATH: [
-          resolve(whisperBinary, "..", "lib"),
-          process.env.LD_LIBRARY_PATH,
-        ].filter(Boolean).join(":"),
-      },
-    });
-    const transcript = normalizeTranscript(transcription.stdout);
-
-    if (!transcript) {
-      throw new Error("No se detecto voz. Intentalo otra vez o usa texto.");
-    }
-
-    return {
-      transcript,
-      engine: "whisper.cpp",
-      language,
-      model: modelPath,
-    };
-  } finally {
-    await rm(runtimeDir, { recursive: true, force: true });
-  }
+  return {
+    ok: true,
+    transcript: result.transcript,
+    engine: result.engine,
+    language: result.language,
+    model: result.model,
+  };
 }
 
 function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
@@ -580,6 +327,9 @@ function registerIpcHandlers(): void {
   )));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
+  ipcMain.handle(SPEECH_IPC_CHANNELS.cancel, () => wrapPi(() => {
+    localSpeech.cancel();
+  }));
 
   ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
   ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());
@@ -684,6 +434,17 @@ function createMainWindow(): void {
 
 app.on("window-all-closed", () => {
   app.quit();
+});
+
+/*
+ * Al salir hay que soltar el micrófono y, si fue esta app quien levantó el
+ * Whisper residente, cerrarlo también: si no, se queda un proceso de unos
+ * 300 MB huérfano cada vez que se reinicia la shell durante el desarrollo.
+ * Cuando el motor lo gestiona systemd, `dispose()` no toca nada.
+ */
+app.on("will-quit", () => {
+  localSpeech.cancel();
+  sttRuntime.engine.dispose();
 });
 
 app.whenReady().then(() => {

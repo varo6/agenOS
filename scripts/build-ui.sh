@@ -5,21 +5,74 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UI_DIR="${ROOT_DIR}/components/ui"
 AGENT_DIR="${ROOT_DIR}/components/agent"
 NETWORK_DIR="${ROOT_DIR}/components/network"
+STT_DIR="${ROOT_DIR}/components/stt"
 STATIC_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/share/agenos-ui"
 PACKAGE_OUTPUT_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/system"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 WHISPER_OUTPUT_DIR="${PACKAGE_OUTPUT_DIR}/whisper.cpp"
+VAD_CAPTURE_SRC_DIR="${ROOT_DIR}/tools/whisper-vad-capture"
 WHISPER_CPP_REF="${AGENOS_WHISPER_CPP_REF:-v1.7.6}"
-# Talla del modelo Whisper que viaja en la ISO. `base` transcribia lo bastante mal
-# en espanol como para arruinar la experiencia voice-first; `small` es el salto
-# util sin irse a `medium`, que en un portatil modesto ya no da latencia usable.
-WHISPER_MODEL_FILE="${AGENOS_WHISPER_MODEL_FILE:-ggml-small.bin}"
+# `base` multilingue Q5_1 mantiene la calidad util para ordenes cortas en
+# espanol, pero reduce el modelo de 466 MiB a 57 MiB. En el N100 de referencia
+# tambien bajo el pico de RAM de unos 734 MiB a 133 MiB y la inferencia de una
+# frase de cinco segundos de 4,9 s a 0,7 s.
+WHISPER_MODEL_FILE="${AGENOS_WHISPER_MODEL_FILE:-ggml-base-q5_1.bin}"
 WHISPER_MODEL_URL="${AGENOS_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL_FILE}}"
-WHISPER_MODEL_SHA1="${AGENOS_WHISPER_MODEL_SHA1:-55356645c2b361a969dfd0ef2c5a50d530afd8d5}"
-WHISPER_BUILD_PROFILE="static-simd-plus-baseline-x86_64-v1"
+WHISPER_MODEL_SHA1="${AGENOS_WHISPER_MODEL_SHA1:-a3733eda680ef76256db5fc5dd9de8629e62c5e7}"
+# Silero VAD en formato ggml. Viaja en la ISO porque el STT tiene que funcionar
+# sin Internet: sin este fichero no hay forma de saber cuando termina la frase
+# ni de descartar el silencio antes de que Whisper se lo invente.
+WHISPER_VAD_MODEL_FILE="${AGENOS_WHISPER_VAD_MODEL_FILE:-ggml-silero-v5.1.2.bin}"
+WHISPER_VAD_MODEL_URL="${AGENOS_WHISPER_VAD_MODEL_URL:-https://huggingface.co/ggml-org/whisper-vad/resolve/main/${WHISPER_VAD_MODEL_FILE}}"
+WHISPER_VAD_MODEL_SHA1="${AGENOS_WHISPER_VAD_MODEL_SHA1:-a372f48dcf0bd9e4330eef2802bc46e061c19634}"
+WHISPER_BUILD_PROFILE="static-simd-plus-baseline-x86_64-v2-server-vad"
 CODEX_BIN_PATH=""
 STAMP_FILE="${PACKAGE_OUTPUT_DIR}/.build-stamp"
+
+# Huella de todo lo que define la instalacion de whisper.cpp. Si cambia la
+# version, el perfil de compilacion, cualquiera de los dos modelos o el fuente
+# del helper de VAD, el valor cambia y la cache deja de valer.
+whisper_fingerprint() {
+  {
+    printf '%s\n' \
+      "ref=${WHISPER_CPP_REF}" \
+      "build_profile=${WHISPER_BUILD_PROFILE}" \
+      "model=${WHISPER_MODEL_FILE}" \
+      "model_sha1=${WHISPER_MODEL_SHA1}" \
+      "vad_model=${WHISPER_VAD_MODEL_FILE}" \
+      "vad_model_sha1=${WHISPER_VAD_MODEL_SHA1}"
+    find "${VAD_CAPTURE_SRC_DIR}" -type f -print 2>/dev/null | LC_ALL=C sort | xargs sha256sum
+  } | sha256sum | awk '{print $1}'
+}
+
+whisper_install_is_current() {
+  local fingerprint="$1"
+
+  grep -q "^fingerprint=${fingerprint}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
+    && [[ -x "${WHISPER_OUTPUT_DIR}/whisper-cli" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli-baseline" ]] \
+    && [[ -x "${WHISPER_OUTPUT_DIR}/whisper-server" && -x "${WHISPER_OUTPUT_DIR}/whisper-server-baseline" ]] \
+    && [[ -x "${WHISPER_OUTPUT_DIR}/agenos-vad-capture" && -x "${WHISPER_OUTPUT_DIR}/agenos-vad-capture-baseline" ]] \
+    && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1 \
+    && printf '%s  %s\n' "${WHISPER_VAD_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_VAD_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1
+}
+
+download_verified_model() {
+  local url="$1" path="$2" sha1="$3" label="$4"
+
+  if printf '%s  %s\n' "${sha1}" "${path}" | sha1sum -c - >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Descargando ${label}..."
+  curl -fL --retry 3 "${url}" -o "${path}.tmp"
+  if ! printf '%s  %s\n' "${sha1}" "${path}.tmp" | sha1sum -c - >/dev/null; then
+    echo "La suma SHA1 de ${label} no coincide." >&2
+    rm -f "${path}.tmp"
+    exit 1
+  fi
+  mv "${path}.tmp" "${path}"
+}
 
 source_hash() {
   (
@@ -48,6 +101,17 @@ agent_source_hash() {
   )
 }
 
+# components/stt lo importan tanto el main de Electron como el servidor HTTP,
+# asi que un cambio ahi tiene que invalidar el build empaquetado.
+stt_source_hash() {
+  (
+    cd "${STT_DIR}"
+    find . -type f -not -name '*.test.ts' -print 2>/dev/null \
+      | LC_ALL=C sort \
+      | xargs sha256sum
+  )
+}
+
 network_source_hash() {
   (
     cd "${NETWORK_DIR}"
@@ -58,20 +122,10 @@ network_source_hash() {
 }
 
 install_whisper_cpp() {
-  local cli_path="${WHISPER_OUTPUT_DIR}/whisper-cli"
-  local baseline_cli_path="${WHISPER_OUTPUT_DIR}/whisper-cli-baseline"
-  local model_path="${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}"
-  local metadata_path="${WHISPER_OUTPUT_DIR}/stt.env"
+  local fingerprint
+  fingerprint="$(whisper_fingerprint)"
 
-  local binaries_ready=0
-  if [[ -x "${cli_path}" && -x "${baseline_cli_path}" ]] \
-    && grep -q "^build_profile=${WHISPER_BUILD_PROFILE}$" "${metadata_path}" 2>/dev/null; then
-    binaries_ready=1
-  fi
-
-  if [[ "${binaries_ready}" == "1" && -f "${model_path}" ]] \
-    && grep -q "^model=${WHISPER_MODEL_FILE}$" "${metadata_path}" 2>/dev/null \
-    && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
+  if whisper_install_is_current "${fingerprint}"; then
     return 0
   fi
 
@@ -81,79 +135,98 @@ install_whisper_cpp() {
 
   mkdir -p "${WHISPER_OUTPUT_DIR}/models" "${WHISPER_OUTPUT_DIR}/lib"
 
-  # Cambiar de talla de modelo no obliga a recompilar: los binarios no dependen
-  # del modelo. Solo se reconstruyen si faltan o si cambia el perfil de build.
-  if [[ "${binaries_ready}" == "1" ]]; then
-    echo "Reusing whisper.cpp ${WHISPER_CPP_REF} binaries; installing ${WHISPER_MODEL_FILE} (multilingual)..."
-  else
-    echo "Building whisper.cpp ${WHISPER_CPP_REF} and installing ${WHISPER_MODEL_FILE} (multilingual)..."
+  echo "Building whisper.cpp ${WHISPER_CPP_REF} (cli + server + vad-capture)..."
 
-    curl -fsSL --retry 3 "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_REF}.tar.gz" \
-      -o "${work_dir}/whisper.cpp.tar.gz"
-    tar -xzf "${work_dir}/whisper.cpp.tar.gz" -C "${work_dir}"
+  curl -fsSL --retry 3 "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/${WHISPER_CPP_REF}.tar.gz" \
+    -o "${work_dir}/whisper.cpp.tar.gz"
+  tar -xzf "${work_dir}/whisper.cpp.tar.gz" -C "${work_dir}"
 
-    local source_dir
-    source_dir="$(find "${work_dir}" -maxdepth 1 -type d -name 'whisper.cpp-*' -print -quit)"
-    if [[ -z "${source_dir}" ]]; then
-      echo "No se pudo localizar el source extraido de whisper.cpp." >&2
-      exit 1
-    fi
-
-    cmake -S "${source_dir}" -B "${work_dir}/build-simd" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DGGML_NATIVE=OFF \
-      -DGGML_OPENMP=OFF \
-      -DWHISPER_BUILD_TESTS=OFF \
-      -DWHISPER_SDL2=OFF
-    cmake --build "${work_dir}/build-simd" --target whisper-cli -j"$(nproc)"
-    install -m 0755 "${work_dir}/build-simd/bin/whisper-cli" "${cli_path}"
-
-    cmake -S "${source_dir}" -B "${work_dir}/build-baseline" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_SHARED_LIBS=OFF \
-      -DGGML_NATIVE=OFF \
-      -DGGML_OPENMP=OFF \
-      -DGGML_SSE42=OFF \
-      -DGGML_AVX=OFF \
-      -DGGML_AVX2=OFF \
-      -DGGML_AVX_VNNI=OFF \
-      -DGGML_FMA=OFF \
-      -DGGML_F16C=OFF \
-      -DGGML_BMI2=OFF \
-      -DGGML_AVX512=OFF \
-      -DGGML_AVX512_VBMI=OFF \
-      -DGGML_AVX512_VNNI=OFF \
-      -DGGML_AVX512_BF16=OFF \
-      -DWHISPER_BUILD_TESTS=OFF \
-      -DWHISPER_SDL2=OFF
-    cmake --build "${work_dir}/build-baseline" --target whisper-cli -j"$(nproc)"
-    install -m 0755 "${work_dir}/build-baseline/bin/whisper-cli" "${baseline_cli_path}"
+  local source_dir
+  source_dir="$(find "${work_dir}" -maxdepth 1 -type d -name 'whisper.cpp-*' -print -quit)"
+  if [[ -z "${source_dir}" ]]; then
+    echo "No se pudo localizar el source extraido de whisper.cpp." >&2
+    exit 1
   fi
 
-  if ! printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}" | sha1sum -c - >/dev/null 2>&1; then
-    curl -fL --retry 3 "${WHISPER_MODEL_URL}" -o "${model_path}.tmp"
-    if ! printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${model_path}.tmp" | sha1sum -c - >/dev/null; then
-      echo "La suma SHA1 del modelo ${WHISPER_MODEL_FILE} no coincide." >&2
-      rm -f "${model_path}.tmp"
-      exit 1
-    fi
-    mv "${model_path}.tmp" "${model_path}"
-  fi
+  # El helper de VAD se compila dentro del arbol de whisper.cpp para enlazar
+  # contra la misma libwhisper que el resto de binarios, con el mismo perfil de
+  # instrucciones. Si no, un equipo sin AVX2 tendria un whisper baseline y un
+  # VAD que revienta con SIGILL.
+  cp -r "${VAD_CAPTURE_SRC_DIR}" "${source_dir}/examples/agenos-vad-capture"
+  echo 'add_subdirectory(agenos-vad-capture)' >> "${source_dir}/examples/CMakeLists.txt"
+
+  local targets=(whisper-cli whisper-server agenos-vad-capture)
+
+  cmake -S "${source_dir}" -B "${work_dir}/build-simd" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF \
+    -DGGML_OPENMP=OFF \
+    -DWHISPER_BUILD_TESTS=OFF \
+    -DWHISPER_SDL2=OFF
+  cmake --build "${work_dir}/build-simd" --target "${targets[@]}" -j"$(nproc)"
+
+  cmake -S "${source_dir}" -B "${work_dir}/build-baseline" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF \
+    -DGGML_OPENMP=OFF \
+    -DGGML_SSE42=OFF \
+    -DGGML_AVX=OFF \
+    -DGGML_AVX2=OFF \
+    -DGGML_AVX_VNNI=OFF \
+    -DGGML_FMA=OFF \
+    -DGGML_F16C=OFF \
+    -DGGML_BMI2=OFF \
+    -DGGML_AVX512=OFF \
+    -DGGML_AVX512_VBMI=OFF \
+    -DGGML_AVX512_VNNI=OFF \
+    -DGGML_AVX512_BF16=OFF \
+    -DWHISPER_BUILD_TESTS=OFF \
+    -DWHISPER_SDL2=OFF
+  cmake --build "${work_dir}/build-baseline" --target "${targets[@]}" -j"$(nproc)"
+
+  local target
+  for target in "${targets[@]}"; do
+    install -m 0755 "${work_dir}/build-simd/bin/${target}" "${WHISPER_OUTPUT_DIR}/${target}"
+    install -m 0755 "${work_dir}/build-baseline/bin/${target}" "${WHISPER_OUTPUT_DIR}/${target}-baseline"
+  done
+
+  download_verified_model \
+    "${WHISPER_MODEL_URL}" \
+    "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" \
+    "${WHISPER_MODEL_SHA1}" \
+    "el modelo ${WHISPER_MODEL_FILE} (multilingue)"
+
+  download_verified_model \
+    "${WHISPER_VAD_MODEL_URL}" \
+    "${WHISPER_OUTPUT_DIR}/models/${WHISPER_VAD_MODEL_FILE}" \
+    "${WHISPER_VAD_MODEL_SHA1}" \
+    "el modelo de Silero VAD ${WHISPER_VAD_MODEL_FILE}"
 
   # Un cambio de talla dejaria el modelo viejo en includes.chroot y la ISO
   # cargaria con los dos. Aqui no hay rsync --delete que lo limpie por nosotros.
   find "${WHISPER_OUTPUT_DIR}/models" -maxdepth 1 -type f -name 'ggml-*.bin' \
-    ! -name "${WHISPER_MODEL_FILE}" -delete
+    ! -name "${WHISPER_MODEL_FILE}" ! -name "${WHISPER_VAD_MODEL_FILE}" -delete
 
+  # El runtime lee este manifiesto para saber que modelo buscar, en vez de
+  # llevar su propia lista que se desincroniza en cuanto alguien toca el build.
   printf '%s\n' \
     "engine=whisper.cpp" \
     "ref=${WHISPER_CPP_REF}" \
     "build_profile=${WHISPER_BUILD_PROFILE}" \
+    "fingerprint=${fingerprint}" \
     "model=${WHISPER_MODEL_FILE}" \
+    "model_sha1=${WHISPER_MODEL_SHA1}" \
+    "vad_model=${WHISPER_VAD_MODEL_FILE}" \
+    "vad_model_sha1=${WHISPER_VAD_MODEL_SHA1}" \
     "language=es" \
     "note=${WHISPER_MODEL_FILE} is multilingual; the .en variants are intentionally not installed." \
     > "${WHISPER_OUTPUT_DIR}/stt.env"
+
+  # El servicio de systemd arranca por este lanzador: lee stt.env, asi que si el
+  # build cambia de modelo el servicio lo sigue sin tocar la unidad.
+  install -m 0755 "${ROOT_DIR}/scripts/agenos-whisper-server" "${WHISPER_OUTPUT_DIR}/agenos-whisper-server"
 
   rm -rf "${work_dir}"
   trap - EXIT
@@ -166,6 +239,7 @@ CURRENT_HASH="$(
     source_hash
     agent_source_hash
     network_source_hash
+    stt_source_hash
     sha256sum "${ROOT_DIR}/scripts/build-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -175,10 +249,8 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" && -f "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli-baseline" && -f "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" ]] \
-  && grep -q "^build_profile=${WHISPER_BUILD_PROFILE}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
-  && grep -q "^model=${WHISPER_MODEL_FILE}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
-  && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -f "${STATIC_OUTPUT_DIR}/index.html" && -x "${PACKAGE_OUTPUT_DIR}/agenos-system-ui" && -x "${PACKAGE_OUTPUT_DIR}/electron-dist/electron" && -f "${PACKAGE_OUTPUT_DIR}/electron-app/pi-system-context.md" ]] \
+  && whisper_install_is_current "$(whisper_fingerprint)"; then
   echo "components/ui sin cambios; se reutiliza el build empaquetado."
   exit 0
 fi
@@ -262,9 +334,7 @@ printf '%s\n' \
   'export AGENOS_SYSTEM_BRIDGE_MODE="${AGENOS_SYSTEM_BRIDGE_MODE:-ipc}"' \
   'export AGENOS_ELECTRON_GPU_MODE="${AGENOS_ELECTRON_GPU_MODE:-auto}"' \
   'export AGENOS_CODEX_BIN="${SCRIPT_DIR}/codex-bin/codex"' \
-  'export AGENOS_WHISPER_CPP_BIN="${AGENOS_WHISPER_CPP_BIN:-${SCRIPT_DIR}/whisper.cpp/whisper-cli}"' \
-  "export AGENOS_WHISPER_MODEL=\"\${AGENOS_WHISPER_MODEL:-\${SCRIPT_DIR}/whisper.cpp/models/${WHISPER_MODEL_FILE}}\"" \
-  'export AGENOS_STT_RECORD_SECONDS="${AGENOS_STT_RECORD_SECONDS:-4}"' \
+  'export AGENOS_WHISPER_DIR="${AGENOS_WHISPER_DIR:-${SCRIPT_DIR}/whisper.cpp}"' \
   'export AGENOS_PI_AGENT_DIR="${AGENOS_PI_AGENT_DIR:-${HOME:-/tmp}/.agenos/ui-dev/pi}"' \
   'export AGENOS_OPENCLAW_SYSTEM_CONFIG="${AGENOS_OPENCLAW_SYSTEM_CONFIG:-/etc/agenos/openclaw.json}"' \
   'export AGENOS_OPENCLAW_USER_CONFIG="${AGENOS_OPENCLAW_USER_CONFIG:-${HOME:-/tmp}/.agenos/openclaw/config.json}"' \

@@ -1,0 +1,5 @@
+set(TARGET agenos-vad-capture)
+add_executable(${TARGET} vad-capture.cpp)
+include(DefaultTargetOptions)
+target_link_libraries(${TARGET} PRIVATE whisper ${CMAKE_THREAD_LIBS_INIT})
+install(TARGETS ${TARGET} RUNTIME)

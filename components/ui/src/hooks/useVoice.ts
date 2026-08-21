@@ -88,8 +88,12 @@ export function useVoice({
         );
       },
       onPhase: (phase) => {
+        // El VAD distingue "hay micrófono abierto" de "esto ya es voz". Para
+        // quien mira la pantalla las dos cosas son "te escucho": lo que cambia
+        // el mensaje es empezar a transcribir.
+        const next = phase === "speech" ? "listening" : phase;
         setCapture((current) =>
-          current === "unsupported" || current === "error" ? current : phase,
+          current === "unsupported" || current === "error" ? current : next,
         );
       },
     }).then((next) => {

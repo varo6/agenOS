@@ -4,8 +4,26 @@ import {
   createSpeechRecognitionController,
   isSpeechRecognitionSupported,
 } from "./speech-recognition";
+import type { SpeechTranscriptionOutcome } from "./speech-bridge";
 
 const originalWindow = globalThis.window;
+
+/** Monta un puente nativo falso y cuenta las cancelaciones que recibe. */
+function setNativeBridge(transcribeOnce: () => Promise<SpeechTranscriptionOutcome>) {
+  const state = { cancels: 0 };
+
+  globalThis.window = {
+    agenosSpeech: {
+      isAvailable: () => true,
+      transcribeOnce,
+      cancel: async () => {
+        state.cancels += 1;
+      },
+    },
+  } as unknown as Window & typeof globalThis;
+
+  return state;
+}
 
 class FakeSpeechRecognition {
   static instances: FakeSpeechRecognition[] = [];
@@ -86,17 +104,13 @@ describe("speech-recognition", () => {
   });
 
   test("prefers the native AgenOS speech bridge", async () => {
-    globalThis.window = {
-      agenosSpeech: {
-        isAvailable: () => true,
-        transcribeOnce: async () => ({
-          transcript: "enciende las luces",
-          engine: "whisper.cpp",
-          language: "es",
-          model: "/opt/agenos/system/whisper.cpp/models/ggml-small.bin",
-        }),
-      },
-    } as Window & typeof globalThis;
+    setNativeBridge(async () => ({
+      ok: true,
+      transcript: "enciende las luces",
+      engine: "whisper.cpp",
+      language: "es",
+      model: "/opt/agenos/system/whisper.cpp/models/ggml-base-q5_1.bin",
+    }));
 
     const transcripts: string[] = [];
     let ended = 0;
@@ -119,6 +133,77 @@ describe("speech-recognition", () => {
 
     expect(transcripts).toEqual(["enciende las luces"]);
     expect(ended).toBe(1);
+  });
+
+  test("cancelar aborta la captura del proceso principal y no transcribe", async () => {
+    let resolveCapture: ((outcome: SpeechTranscriptionOutcome) => void) | null = null;
+    const bridge = setNativeBridge(
+      () => new Promise<SpeechTranscriptionOutcome>((resolve) => {
+        resolveCapture = resolve;
+      }),
+    );
+
+    const transcripts: string[] = [];
+    const errors: string[] = [];
+
+    const controller = createSpeechRecognitionController({
+      onResult: (transcript) => transcripts.push(transcript),
+      onError: (error) => errors.push(error.code),
+      onEnd: () => {},
+    });
+
+    controller.start();
+    controller.stop();
+
+    // Cancelar tiene que llegar al proceso principal, no quedarse en el renderer.
+    expect(bridge.cancels).toBe(1);
+
+    resolveCapture?.({ ok: false, code: "cancelled", message: "Captura cancelada." });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(transcripts).toEqual([]);
+    // Cancelar es una decisión de la persona: no se pinta ningún error.
+    expect(errors).toEqual([]);
+  });
+
+  test("una captura sin voz avisa sin desactivar el micrófono", async () => {
+    setNativeBridge(async () => ({
+      ok: false,
+      code: "no-speech",
+      message: "No se detecto voz. Intentalo otra vez o usa texto.",
+    }));
+
+    const errors: Array<{ code: string; disableVoice: boolean }> = [];
+    const controller = createSpeechRecognitionController({
+      onResult: () => {},
+      onError: (error) => errors.push({ code: error.code, disableVoice: error.disableVoice }),
+      onEnd: () => {},
+    });
+
+    controller.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(errors).toEqual([{ code: "no-speech", disableVoice: false }]);
+  });
+
+  test("un STT que no está instalado sí desactiva la voz", async () => {
+    setNativeBridge(async () => ({
+      ok: false,
+      code: "unavailable",
+      message: "STT local no disponible: falta whisper-server.",
+    }));
+
+    const errors: Array<{ code: string; disableVoice: boolean }> = [];
+    const controller = createSpeechRecognitionController({
+      onResult: () => {},
+      onError: (error) => errors.push({ code: error.code, disableVoice: error.disableVoice }),
+      onEnd: () => {},
+    });
+
+    controller.start();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(errors).toEqual([{ code: "native-unavailable", disableVoice: true }]);
   });
 
   test("maps result, error and end events", () => {

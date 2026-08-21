@@ -94,15 +94,16 @@ function fakeSpeech() {
       ok: true as const,
       available: true,
       engine: "whisper.cpp" as const,
-      model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+      model: "/opt/agenos/system/whisper.cpp/models/ggml-base-q5_1.bin",
       reason: null,
+      maxDurationMs: 15_000,
     }),
     transcribe: async () => ({
       ok: true as const,
       text: "abre fotos",
       durationMs: 850,
       engine: "whisper.cpp" as const,
-      model: "/opt/agenos/system/whisper.cpp/models/ggml-base.bin",
+      model: "/opt/agenos/system/whisper.cpp/models/ggml-base-q5_1.bin",
     }),
   };
 }
@@ -1533,11 +1534,43 @@ describe("createInstallerApiHandler", () => {
     expect(response.status).toBe(400);
   });
 
+  test("maps a captura sin voz to 422 so the UI can tell it apart from a failure", async () => {
+    const handler = createHandler({
+      speech: {
+        status: () => ({
+          ok: true,
+          available: true,
+          engine: "whisper.cpp",
+          model: "/opt/agenos/system/whisper.cpp/models/ggml-base-q5_1.bin",
+          reason: null,
+          maxDurationMs: 15_000,
+        }),
+        transcribe: async () => ({ ok: false, code: "no-speech", message: "No se detecto voz." }),
+      },
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe", {
+      method: "POST",
+      headers: { "content-type": "audio/webm" },
+      body: new Uint8Array([1, 2, 3]),
+    }));
+
+    expect(response.status).toBe(422);
+    expect(await jsonPayload(response)).toMatchObject({ ok: false, code: "no-speech" });
+  });
+
   test("maps speech engine unavailability to 503", async () => {
     const handler = createHandler({
       speech: {
-        status: () => ({ ok: true, available: false, engine: null, model: null, reason: "falta whisper-cli" }),
-        transcribe: async () => ({ ok: false, code: "unavailable", message: "falta whisper-cli" }),
+        status: () => ({
+          ok: true,
+          available: false,
+          engine: null,
+          model: null,
+          reason: "falta whisper-server",
+          maxDurationMs: 15_000,
+        }),
+        transcribe: async () => ({ ok: false, code: "unavailable", message: "falta whisper-server" }),
       },
     });
 
@@ -1548,6 +1581,6 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(503);
-    expect(await jsonPayload(response)).toMatchObject({ ok: false, message: "falta whisper-cli" });
+    expect(await jsonPayload(response)).toMatchObject({ ok: false, message: "falta whisper-server" });
   });
 });

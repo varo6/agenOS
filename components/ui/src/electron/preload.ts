@@ -14,6 +14,7 @@ import type {
   ShellMode,
   SystemRuntimeInfo,
 } from "../lib/system-types";
+import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
 import type {
   PiAuthAttemptResponse,
   PiChatResponse,
@@ -26,14 +27,6 @@ import type {
 type IpcEnvelope<T> =
   | { ok: true; value: T }
   | { ok: false; status?: number; message: string };
-
-type SpeechTranscriptionResponse = {
-  transcript: string;
-  engine: "whisper.cpp";
-  /** Siempre "es" salvo que AGENOS_STT_LANGUAGE lo cambie; nunca autodetectado. */
-  language: string;
-  model: string;
-};
 
 function normalizeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -150,8 +143,11 @@ contextBridge.exposeInMainWorld("agenosPi", {
 });
 
 contextBridge.exposeInMainWorld("agenosSpeech", {
-  transcribeOnce(): Promise<SpeechTranscriptionResponse> {
-    return invokePi<SpeechTranscriptionResponse>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
+    return invokePi<SpeechTranscriptionOutcome>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  },
+  async cancel(): Promise<void> {
+    await invokePi<void>(SPEECH_IPC_CHANNELS.cancel);
   },
   onPhase(listener: (phase: SpeechCapturePhase) => void): () => void {
     const handler = (_event: unknown, phase: SpeechCapturePhase) => {

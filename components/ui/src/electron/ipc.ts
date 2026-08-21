@@ -23,6 +23,12 @@ export const PI_IPC_CHANNELS = {
 export const SPEECH_IPC_CHANNELS = {
   transcribeOnce: "agenos-speech:transcribe-once",
   /**
+   * Aborta la captura viva: mata grabador y VAD, suelta el micrófono y hace que
+   * la transcripción en curso no llegue nunca. Sin esto, cancelar desde la
+   * interfaz solo dejaba de escuchar la respuesta mientras arecord seguía.
+   */
+  cancel: "agenos-speech:cancel",
+  /**
    * Evento del proceso principal al renderer con la fase de la captura. Sin
    * esto la interfaz no puede distinguir "te escucho" de "estoy entendiendo lo
    * que has dicho", que es la señal más importante de una interfaz por voz.
@@ -30,5 +36,10 @@ export const SPEECH_IPC_CHANNELS = {
   phase: "agenos-speech:phase",
 } as const;
 
-/** Fases observables de una captura de voz local. */
-export type SpeechCapturePhase = "listening" | "transcribing";
+/**
+ * Fases observables de una captura de voz local.
+ *
+ * `speech` es nueva y la empuja el VAD: es el instante en el que Silero
+ * confirma que lo que entra por el micrófono es voz y no ruido de sala.
+ */
+export type SpeechCapturePhase = "listening" | "speech" | "transcribing";

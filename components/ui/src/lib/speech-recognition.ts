@@ -7,6 +7,7 @@ import {
   getSpeechBridge,
   type AgenosSpeechBridge,
   type SpeechCapturePhase,
+  type SpeechTranscriptionOutcome,
 } from "./speech-bridge";
 
 type BrowserSpeechRecognitionAlternative = {
@@ -115,30 +116,39 @@ function normalizeSpeechError(code: string | undefined): SpeechRecognitionError 
   }
 }
 
+/**
+ * Traduce el fallo tipado del puente a lo que la interfaz sabe pintar. Que sea
+ * un codigo y no una cadena importa: antes esto adivinaba el motivo buscando
+ * subcadenas en el mensaje de error de arecord.
+ */
+function nativeFailureToSpeechError(
+  failure: Extract<SpeechTranscriptionOutcome, { ok: false }>,
+): SpeechRecognitionError {
+  switch (failure.code) {
+    case "unavailable":
+      return {
+        code: "native-unavailable",
+        message: "STT local no disponible. Revisa whisper.cpp, el modelo base Q5_1 multilingue y el microfono.",
+        disableVoice: true,
+      };
+    case "no-speech":
+      return {
+        code: "no-speech",
+        message: failure.message || "No se detecto voz. Intentalo otra vez o usa texto.",
+        disableVoice: false,
+      };
+    default:
+      return {
+        code: "native-error",
+        message: failure.message || "No se pudo transcribir con STT local. Usa texto.",
+        disableVoice: false,
+      };
+  }
+}
+
+/** Un fallo del propio canal IPC: el puente ni siquiera llego a contestar. */
 function normalizeNativeSpeechError(error: unknown): SpeechRecognitionError {
   const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-
-  if (normalized.includes("no se detecto voz")) {
-    return {
-      code: "no-speech",
-      message,
-      disableVoice: false,
-    };
-  }
-
-  if (
-    normalized.includes("no esta instalado")
-    || normalized.includes("enoent")
-    || normalized.includes("arecord")
-    || normalized.includes("whisper")
-  ) {
-    return {
-      code: "native-unavailable",
-      message: "STT local no disponible. Revisa whisper.cpp, el modelo small multilingue y el microfono.",
-      disableVoice: true,
-    };
-  }
 
   return {
     code: "native-error",
@@ -188,6 +198,18 @@ function createNativeSpeechRecognitionController(
     }
   });
 
+  /**
+   * Cancelar es matar la captura en el proceso principal, no solo dejar de
+   * mirar. Antes `stop()` se limitaba a bajar una bandera aqui y arecord seguia
+   * con el microfono abierto hasta agotar sus segundos.
+   */
+  const abort = () => {
+    listening = false;
+    void bridge.cancel().catch(() => {
+      // Si el puente ya no esta, la captura ha muerto con el de todos modos.
+    });
+  };
+
   return {
     supported: true,
     engine: "native",
@@ -200,8 +222,21 @@ function createNativeSpeechRecognitionController(
       callbacks.onPhase?.("listening");
       void bridge.transcribeOnce()
         .then((result) => {
-          if (!disposed && result.transcript.trim()) {
-            callbacks.onResult(result.transcript);
+          if (disposed) {
+            return;
+          }
+
+          if (result.ok) {
+            const transcript = result.transcript.trim();
+            if (transcript) {
+              callbacks.onResult(transcript);
+            }
+            return;
+          }
+
+          // Cancelar es una decision de la persona: se termina en silencio.
+          if (result.code !== "cancelled") {
+            callbacks.onError(nativeFailureToSpeechError(result));
           }
         })
         .catch((error) => {
@@ -219,11 +254,11 @@ function createNativeSpeechRecognitionController(
       return true;
     },
     stop() {
-      listening = false;
+      abort();
     },
     dispose() {
       disposed = true;
-      listening = false;
+      abort();
       unsubscribePhase?.();
     },
   };

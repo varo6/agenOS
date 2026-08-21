@@ -1149,7 +1149,15 @@ export function createInstallerApiHandler(
           });
 
           if (result.ok === false) {
-            const speechStatus = result.code === "unavailable" ? 503 : result.code === "unsupported-media" ? 400 : 500;
+            const speechStatus = result.code === "unavailable"
+              ? 503
+              : result.code === "unsupported-media"
+                ? 400
+                // Silencio o ruido no son un fallo del servidor: la peticion era
+                // valida y el audio simplemente no traia voz.
+                : result.code === "no-speech"
+                  ? 422
+                  : 500;
             return json(result, { status: speechStatus });
           }
 

@@ -215,15 +215,25 @@ describe("createLocalHttpSpeechController", () => {
     expect(callbacks.errors[0]?.disableVoice).toBe(true);
   });
 
-  test("stop() finishes the recording early and still transcribes", async () => {
+  /*
+   * stop() es cancelar, no "termina ya". El final normal de una frase lo decide
+   * el VAD; lo que la persona pide al pulsar de nuevo es abortar, y abortar no
+   * puede acabar mandandole texto a Pi.
+   */
+  test("stop() cancela: corta el grabador, suelta el micrófono y no transcribe", async () => {
     const callbacks = capture();
     const recorder = new FakeRecorder();
+    const stream = fakeStream();
+    let transcribeCalls = 0;
 
     const controller = createLocalHttpSpeechController(callbacks, {
-      requestStream: async () => fakeStream(),
+      requestStream: async () => stream,
       createRecorder: () => recorder,
       maxDurationMs: 60_000,
-      fetchFn: (async () => jsonResponse({ ok: true, text: "hola", durationMs: 10, engine: "whisper.cpp", model: "m" })) as typeof fetch,
+      fetchFn: (async () => {
+        transcribeCalls += 1;
+        return jsonResponse({ ok: true, text: "hola", durationMs: 10, engine: "whisper.cpp", model: "m" });
+      }) as typeof fetch,
     });
 
     controller.start();
@@ -231,6 +241,53 @@ describe("createLocalHttpSpeechController", () => {
     controller.stop();
     await waitFor(() => callbacks.ends === 1);
 
+    expect(callbacks.results).toEqual([]);
+    expect(transcribeCalls).toBe(0);
+    expect(recorder.state).toBe("inactive");
+    expect(stream.stoppedTracks).toBeGreaterThan(0);
+  });
+
+  test("tras cancelar se puede volver a grabar", async () => {
+    const callbacks = capture();
+    const recorders = [new FakeRecorder(), new FakeRecorder()];
+    let index = 0;
+
+    const controller = createLocalHttpSpeechController(callbacks, {
+      requestStream: async () => fakeStream(),
+      createRecorder: () => recorders[index++],
+      maxDurationMs: 5,
+      fetchFn: (async () => jsonResponse({ ok: true, text: "hola", durationMs: 10, engine: "whisper.cpp", model: "m" })) as typeof fetch,
+    });
+
+    controller.start();
+    await waitFor(() => recorders[0].state === "recording");
+    controller.stop();
+    await waitFor(() => callbacks.ends === 1);
+
+    expect(controller.start()).toBe(true);
+    await waitFor(() => callbacks.results.length === 1);
     expect(callbacks.results).toEqual(["hola"]);
+  });
+
+  test("un 422 del servidor es falta de voz, no un fallo técnico", async () => {
+    const callbacks = capture();
+    const recorder = new FakeRecorder();
+
+    const controller = createLocalHttpSpeechController(callbacks, {
+      requestStream: async () => fakeStream(),
+      createRecorder: () => recorder,
+      maxDurationMs: 5,
+      fetchFn: (async () => new Response(
+        JSON.stringify({ ok: false, code: "no-speech", message: "No se detecto voz." }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      )) as typeof fetch,
+    });
+
+    controller.start();
+    await waitFor(() => callbacks.ends === 1);
+
+    expect(callbacks.results).toEqual([]);
+    expect(callbacks.errors[0]?.code).toBe("no-speech");
+    expect(callbacks.errors[0]?.disableVoice).toBe(false);
   });
 });

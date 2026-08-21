@@ -27,6 +27,7 @@ test:
 	cd components/ui && bun run test
 	cd components/installer-ui && bun run test
 	cd components/installer-ui && bun test ../agent
+	cd components/installer-ui && bun test ../stt
 	python3 -m unittest discover -s tests -p 'test_*.py' -t tests
 
 release:

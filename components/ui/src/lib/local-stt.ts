@@ -7,7 +7,12 @@ import type {
 export const LOCAL_STT_STATUS_PATH = "/api/speech/status";
 export const LOCAL_STT_TRANSCRIBE_PATH = "/api/speech/transcribe";
 
-const DEFAULT_MAX_DURATION_MS = 5_000;
+/**
+ * Tope de captura del camino web. Es el mismo que aplica el VAD en Electron;
+ * el servidor lo publica en /api/speech/status y aqui solo se usa si la sonda
+ * no llego a contestar.
+ */
+const DEFAULT_MAX_DURATION_MS = 15_000;
 const STATUS_PROBE_TIMEOUT_MS = 1_500;
 
 type RecorderDataEvent = { data: Blob };
@@ -34,13 +39,20 @@ export type LocalSttControllerOptions = {
 };
 
 let cachedAvailability: boolean | null = null;
+let cachedMaxDurationMs: number | null = null;
 
 export function getCachedLocalSttAvailability(): boolean | null {
   return cachedAvailability;
 }
 
+/** Tope publicado por el servidor, para no duplicar el valor en el cliente. */
+export function getCachedLocalSttMaxDurationMs(): number | null {
+  return cachedMaxDurationMs;
+}
+
 export function resetLocalSttAvailabilityCache(): void {
   cachedAvailability = null;
+  cachedMaxDurationMs = null;
 }
 
 export async function probeLocalSttAvailability(fetchFn: typeof fetch | undefined = globalThis.fetch): Promise<boolean> {
@@ -61,8 +73,11 @@ export async function probeLocalSttAvailability(fetchFn: typeof fetch | undefine
       cachedAvailability = false;
       return cachedAvailability;
     }
-    const payload = await response.json() as { available?: unknown };
+    const payload = await response.json() as { available?: unknown; maxDurationMs?: unknown };
     cachedAvailability = payload?.available === true;
+    if (typeof payload?.maxDurationMs === "number" && Number.isFinite(payload.maxDurationMs)) {
+      cachedMaxDurationMs = payload.maxDurationMs;
+    }
   } catch {
     cachedAvailability = false;
   }
@@ -75,7 +90,14 @@ function defaultRequestStream(): Promise<LocalSttMediaStream> {
   if (!mediaDevices?.getUserMedia) {
     return Promise.reject(new Error("audio-capture"));
   }
-  return mediaDevices.getUserMedia({ audio: true });
+  return mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
 }
 
 function pickRecorderMimeType(): string | undefined {
@@ -136,7 +158,7 @@ const NO_SPEECH_ERROR: SpeechRecognitionError = {
 
 const UNAVAILABLE_ERROR: SpeechRecognitionError = {
   code: "local-stt-unavailable",
-  message: "STT local no disponible. Revisa whisper.cpp y el modelo small multilingue.",
+  message: "STT local no disponible. Revisa whisper.cpp y el modelo base Q5_1 multilingue.",
   disableVoice: true,
 };
 
@@ -147,11 +169,12 @@ export function createLocalHttpSpeechController(
   const fetchFn = options.fetchFn ?? globalThis.fetch;
   const requestStream = options.requestStream ?? defaultRequestStream;
   const createRecorder = options.createRecorder ?? defaultCreateRecorder;
-  const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_DURATION_MS;
+  const maxDurationMs = options.maxDurationMs ?? cachedMaxDurationMs ?? DEFAULT_MAX_DURATION_MS;
   const lang = options.lang ?? "es";
 
   let disposed = false;
   let listening = false;
+  let cancelled = false;
   let activeRecorder: LocalSttRecorder | null = null;
   let activeStream: LocalSttMediaStream | null = null;
 
@@ -181,6 +204,13 @@ export function createLocalHttpSpeechController(
 
     if (response.status === 503) {
       callbacks.onError(UNAVAILABLE_ERROR);
+      return;
+    }
+
+    // 422 = el audio no traia voz. El servidor ya lo filtro con Silero, asi que
+    // aqui no hay nada que reintentar ni que mostrar como fallo tecnico.
+    if (response.status === 422) {
+      callbacks.onError(NO_SPEECH_ERROR);
       return;
     }
 
@@ -229,7 +259,8 @@ export function createLocalHttpSpeechController(
       timer = setTimeout(() => stopRecorder(), maxDurationMs);
       await stopped;
 
-      if (disposed) {
+      // Cancelar tira la grabacion entera: nunca se sube ni se transcribe.
+      if (disposed || cancelled) {
         return;
       }
 
@@ -260,6 +291,13 @@ export function createLocalHttpSpeechController(
     }
   }
 
+  /** Cancela: corta el grabador, suelta el microfono y descarta el audio. */
+  const abort = () => {
+    cancelled = true;
+    stopRecorder();
+    releaseStream();
+  };
+
   return {
     supported: true,
     engine: "local-http",
@@ -268,16 +306,16 @@ export function createLocalHttpSpeechController(
         return false;
       }
       listening = true;
+      cancelled = false;
       void run();
       return true;
     },
     stop() {
-      stopRecorder();
+      abort();
     },
     dispose() {
       disposed = true;
-      stopRecorder();
-      releaseStream();
+      abort();
     },
   };
 }

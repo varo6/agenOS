@@ -1,306 +1,256 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 
-import {
-  createSttService,
-  normalizeWhisperTranscript,
-  readWavDurationSeconds,
-  resolveAudioContext,
-  type SttCommandRunner,
-} from "./stt";
+import { DEFAULT_STT_SETTINGS } from "../../../../stt/config";
+import { WhisperEngineError, type TranscribeWavResult, type WhisperEngine } from "../../../../stt/engine";
+import type { SttPaths } from "../../../../stt/paths";
+import type { SttRuntime } from "../../../../stt/runtime";
+import { createSttService, detectAudioFormat, ffmpegArgs, type SttCommandRunner } from "./stt";
 
-const WHISPER_BIN = "/opt/agenos/system/whisper.cpp/whisper-cli";
-const WHISPER_MODEL = "/opt/agenos/system/whisper.cpp/models/ggml-small.bin";
-const FFMPEG_BIN = "/usr/bin/ffmpeg";
+const ROOT = "/opt/agenos/system/whisper.cpp";
 
-const SIMD_CPUINFO = "flags\t\t: fpu sse4_2 avx avx2 fma f16c bmi2\n";
+const PATHS: SttPaths = {
+  root: ROOT,
+  manifest: {
+    engine: "whisper.cpp",
+    ref: "v1.7.6",
+    buildProfile: "static-simd-plus-baseline-x86_64-v2-server-vad",
+    model: "ggml-base-q5_1.bin",
+    vadModel: "ggml-silero-v5.1.2.bin",
+    language: "es",
+  },
+  server: `${ROOT}/whisper-server`,
+  vadCapture: `${ROOT}/agenos-vad-capture`,
+  model: `${ROOT}/models/ggml-base-q5_1.bin`,
+  vadModel: `${ROOT}/models/ggml-silero-v5.1.2.bin`,
+  recorder: "/usr/bin/arecord",
+  ffmpeg: "/usr/bin/ffmpeg",
+  missing: [],
+};
 
 type RecordedCall = { command: string; args: string[] };
 
-/** WAV real de 16 kHz mono s16, para que el servicio pueda medir su duracion. */
-function wavOfSeconds(seconds: number): Uint8Array {
-  const sampleRate = 16_000;
-  const dataBytes = Math.round(seconds * sampleRate) * 2;
-  const buffer = new ArrayBuffer(44 + dataBytes);
-  const view = new DataView(buffer);
-  const ascii = (offset: number, text: string) => {
-    for (let index = 0; index < text.length; index += 1) {
-      view.setUint8(offset + index, text.charCodeAt(index));
-    }
+type FakeRuntimeOptions = {
+  text?: string;
+  paths?: Partial<SttPaths>;
+  transcribeError?: Error;
+};
+
+function wavBytes(): Uint8Array {
+  const bytes = new Uint8Array(64);
+  bytes.set([0x52, 0x49, 0x46, 0x46], 0);
+  bytes.set([0x57, 0x41, 0x56, 0x45], 8);
+  return bytes;
+}
+
+function fakeRuntime(options: FakeRuntimeOptions = {}) {
+  const requests: Array<{ wav: Uint8Array; language: string | undefined }> = [];
+  const paths: SttPaths = { ...PATHS, ...options.paths };
+  const missing = paths.missing ?? [];
+
+  const engine: WhisperEngine = {
+    status: () => ({
+      available: missing.length === 0,
+      reason: missing.length === 0 ? null : `STT local no disponible: falta ${missing.join(" y ")}.`,
+      model: paths.model,
+      vadModel: paths.vadModel,
+      baseUrl: "http://127.0.0.1:8178",
+      engine: "whisper.cpp",
+    }),
+    ensureReady: async () => {},
+    transcribeWav: async (wav, transcribeOptions): Promise<TranscribeWavResult> => {
+      if (options.transcribeError) {
+        throw options.transcribeError;
+      }
+      requests.push({ wav, language: transcribeOptions?.language });
+      return {
+        text: options.text ?? "abre el navegador",
+        durationMs: 900,
+        model: paths.model as string,
+        language: transcribeOptions?.language ?? "es",
+      };
+    },
+    dispose: () => {},
   };
 
-  ascii(0, "RIFF");
-  view.setUint32(4, 36 + dataBytes, true);
-  ascii(8, "WAVE");
-  ascii(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  ascii(36, "data");
-  view.setUint32(40, dataBytes, true);
+  const runtime: SttRuntime = {
+    settings: DEFAULT_STT_SETTINGS,
+    paths,
+    engine,
+    baseUrl: "http://127.0.0.1:8178",
+  };
 
-  return new Uint8Array(buffer);
+  return { runtime, requests };
 }
 
-function flagValue(args: string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  return index === -1 ? undefined : args[index + 1];
-}
-
-function recordingRunner(calls: RecordedCall[], stdoutByCommand: Record<string, string> = {}): SttCommandRunner {
+function recordingRunner(calls: RecordedCall[]): SttCommandRunner {
   return async (command, args) => {
     calls.push({ command, args });
-    return { stdout: stdoutByCommand[command] ?? "", stderr: "" };
+    // ffmpeg tiene que dejar el wav donde el servicio lo va a leer.
+    await Bun.write(args[args.length - 1], wavBytes());
+    return { stdout: "", stderr: "" };
   };
 }
 
-function serviceWithPaths(paths: string[], overrides: Partial<Parameters<typeof createSttService>[0]> = {}) {
-  return createSttService({
-    env: {},
-    pathExists: (path) => paths.includes(path),
-    readCpuInfo: () => SIMD_CPUINFO,
-    tempDir: tmpdir(),
-    ...overrides,
-  });
+function serviceWith(runtime: SttRuntime, runCommand?: SttCommandRunner) {
+  return createSttService({ env: {}, runtime, runCommand, tempDir: tmpdir() });
 }
 
-describe("createSttService.status", () => {
-  test("reports unavailable when whisper binary and model are missing", () => {
-    const service = serviceWithPaths([]);
-    const status = service.status();
-
-    expect(status.available).toBe(false);
-    expect(status.engine).toBeNull();
-    expect(status.reason).toContain("whisper-cli");
-    expect(status.reason).toContain("ggml-small.bin");
+describe("detectAudioFormat", () => {
+  test("acepta lo que graba el navegador y rechaza el resto", () => {
+    expect(detectAudioFormat("audio/wav")).toBe("wav");
+    expect(detectAudioFormat("audio/webm;codecs=opus")).toBe("webm");
+    expect(detectAudioFormat("application/ogg")).toBe("ogg");
+    expect(detectAudioFormat("audio/mpeg")).toBeNull();
+    expect(detectAudioFormat("")).toBeNull();
   });
+});
 
-  test("reports available when binary and model exist", () => {
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL]);
-    const status = service.status();
+describe("ffmpegArgs", () => {
+  test("convierte a 16 kHz mono y aplica el tope de duracion", () => {
+    const args = ffmpegArgs("/tmp/in.webm", "/tmp/out.wav", 15_000);
+
+    expect(args[args.indexOf("-ar") + 1]).toBe("16000");
+    expect(args[args.indexOf("-ac") + 1]).toBe("1");
+    expect(args[args.indexOf("-t") + 1]).toBe("15.000");
+  });
+});
+
+describe("createSttService.status", () => {
+  test("una instalacion completa se anuncia disponible con su tope", () => {
+    const { runtime } = fakeRuntime();
+    const status = serviceWith(runtime).status();
 
     expect(status.available).toBe(true);
     expect(status.engine).toBe("whisper.cpp");
-    expect(status.model).toBe(WHISPER_MODEL);
-    expect(status.reason).toBeNull();
+    expect(status.model).toBe(PATHS.model);
+    expect(status.maxDurationMs).toBe(15_000);
   });
 
-  test("prefers the baseline binary when the CPU lacks SIMD flags", () => {
-    const baseline = "/opt/agenos/system/whisper.cpp/whisper-cli-baseline";
-    const service = serviceWithPaths([WHISPER_BIN, baseline, WHISPER_MODEL], {
-      readCpuInfo: () => "flags\t\t: fpu sse2\n",
-    });
+  test("si falta el modelo lo dice por su nombre", () => {
+    const { runtime } = fakeRuntime({ paths: { model: null, missing: ["modelo ggml-base-q5_1.bin"] } });
+    const status = serviceWith(runtime).status();
 
-    expect(service.status().available).toBe(true);
-  });
-
-  test("honors AGENOS_WHISPER_CPP_BIN and AGENOS_WHISPER_MODEL", () => {
-    const service = createSttService({
-      env: {
-        AGENOS_WHISPER_CPP_BIN: "/custom/whisper-cli",
-        AGENOS_WHISPER_MODEL: "/custom/model.bin",
-      },
-      pathExists: (path) => path === "/custom/whisper-cli" || path === "/custom/model.bin",
-      readCpuInfo: () => SIMD_CPUINFO,
-    });
-
-    const status = service.status();
-    expect(status.available).toBe(true);
-    expect(status.model).toBe("/custom/model.bin");
+    expect(status.available).toBe(false);
+    expect(status.reason).toContain("ggml-base-q5_1.bin");
   });
 });
 
 describe("createSttService.transcribe", () => {
-  test("fails with unavailable when the engine is missing", async () => {
-    const service = serviceWithPaths([]);
-    const result = await service.transcribe({ audio: new Uint8Array([1]), contentType: "audio/wav" });
+  test("un wav va directo al motor residente, en espanol", async () => {
+    const { runtime, requests } = fakeRuntime();
+    const calls: RecordedCall[] = [];
+
+    const result = await serviceWith(runtime, recordingRunner(calls)).transcribe({
+      audio: wavBytes(),
+      contentType: "audio/wav",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.text).toBe("abre el navegador");
+      expect(result.engine).toBe("whisper.cpp");
+    }
+    // Un wav no necesita ffmpeg.
+    expect(calls).toHaveLength(0);
+    expect(requests[0].language).toBe("es");
+  });
+
+  test("el webm del navegador pasa por ffmpeg antes del motor", async () => {
+    const { runtime, requests } = fakeRuntime();
+    const calls: RecordedCall[] = [];
+
+    const result = await serviceWith(runtime, recordingRunner(calls)).transcribe({
+      audio: new Uint8Array([1, 2, 3]),
+      contentType: "audio/webm;codecs=opus",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(calls[0].command).toBe("/usr/bin/ffmpeg");
+    expect(calls[0].args).toContain("16000");
+    expect(requests).toHaveLength(1);
+  });
+
+  test("`auto` y una etiqueta regional acaban en el idioma fijo", async () => {
+    const { runtime, requests } = fakeRuntime();
+    const service = serviceWith(runtime);
+
+    await service.transcribe({ audio: wavBytes(), contentType: "audio/wav", lang: "auto" });
+    await service.transcribe({ audio: wavBytes(), contentType: "audio/wav", lang: "es-ES" });
+
+    expect(requests.map((request) => request.language)).toEqual(["es", "es"]);
+  });
+
+  test("silencio y ruido bajo devuelven no-speech en vez de texto inventado", async () => {
+    const { runtime } = fakeRuntime({ text: "" });
+
+    const result = await serviceWith(runtime).transcribe({
+      audio: wavBytes(),
+      contentType: "audio/wav",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
-      expect(result.code).toBe("unavailable");
+      expect(result.code).toBe("no-speech");
     }
   });
 
-  test("rejects unsupported content types", async () => {
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL]);
-    const result = await service.transcribe({ audio: new Uint8Array([1]), contentType: "text/plain" });
+  test("un formato que no se puede convertir se rechaza sin tocar el motor", async () => {
+    const { runtime, requests } = fakeRuntime();
+
+    const result = await serviceWith(runtime).transcribe({
+      audio: new Uint8Array([1]),
+      contentType: "audio/mpeg",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.code).toBe("unsupported-media");
     }
+    expect(requests).toHaveLength(0);
   });
 
-  test("transcribes wav input without invoking ffmpeg", async () => {
-    const calls: RecordedCall[] = [];
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL, FFMPEG_BIN], {
-      runCommand: recordingRunner(calls, { [WHISPER_BIN]: " Hola mundo \n" }),
+  test("sin ffmpeg no se puede aceptar webm", async () => {
+    const { runtime } = fakeRuntime({ paths: { ffmpeg: null } });
+
+    const result = await serviceWith(runtime).transcribe({
+      audio: new Uint8Array([1]),
+      contentType: "audio/webm",
     });
-
-    const result = await service.transcribe({ audio: new Uint8Array([1, 2]), contentType: "audio/wav" });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.text).toBe("Hola mundo");
-      expect(result.engine).toBe("whisper.cpp");
-      expect(result.model).toBe(WHISPER_MODEL);
-    }
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.command).toBe(WHISPER_BIN);
-    expect(calls[0]?.args).toContain("-nt");
-    expect(calls[0]?.args).toContain("es");
-  });
-
-  test("converts webm input with ffmpeg before whisper", async () => {
-    const calls: RecordedCall[] = [];
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL, FFMPEG_BIN], {
-      runCommand: recordingRunner(calls, { [WHISPER_BIN]: "abre fotos\n" }),
-    });
-
-    const result = await service.transcribe({
-      audio: new Uint8Array([1, 2, 3]),
-      contentType: "audio/webm;codecs=opus",
-      lang: "es",
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.text).toBe("abre fotos");
-    }
-    expect(calls.map((call) => call.command)).toEqual([FFMPEG_BIN, WHISPER_BIN]);
-    expect(calls[0]?.args).toContain("16000");
-  });
-
-  test("fails with unavailable when webm arrives and ffmpeg is missing", async () => {
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL]);
-    const result = await service.transcribe({ audio: new Uint8Array([1]), contentType: "audio/webm" });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.code).toBe("unavailable");
-      expect(result.message).toContain("ffmpeg");
     }
   });
 
-  test("maps command failures to transcription-failed", async () => {
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL], {
-      runCommand: async () => {
-        throw new Error("boom");
-      },
+  test("un motor caido se reporta como no disponible, no como fallo de audio", async () => {
+    const { runtime } = fakeRuntime({
+      transcribeError: new WhisperEngineError("unavailable", "whisper-server no llego a responder."),
     });
 
-    const result = await service.transcribe({ audio: new Uint8Array([1]), contentType: "audio/wav" });
+    const result = await serviceWith(runtime).transcribe({
+      audio: wavBytes(),
+      contentType: "audio/wav",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.code).toBe("unavailable");
+    }
+  });
+
+  test("otro fallo del motor se reporta como transcripcion fallida", async () => {
+    const { runtime } = fakeRuntime({ transcribeError: new Error("boom") });
+
+    const result = await serviceWith(runtime).transcribe({
+      audio: wavBytes(),
+      contentType: "audio/wav",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.code).toBe("transcription-failed");
-      expect(result.message).toContain("boom");
     }
-  });
-});
-
-describe("createSttService.transcribe idioma y ventana", () => {
-  function transcribeWith(input: { lang?: string; seconds?: number }, env: Record<string, string> = {}) {
-    const calls: RecordedCall[] = [];
-    const service = serviceWithPaths([WHISPER_BIN, WHISPER_MODEL], {
-      env,
-      runCommand: recordingRunner(calls),
-    });
-
-    return service
-      .transcribe({
-        audio: wavOfSeconds(input.seconds ?? 4),
-        contentType: "audio/wav",
-        lang: input.lang,
-      })
-      .then(() => calls.find((call) => call.command === WHISPER_BIN)?.args ?? []);
-  }
-
-  test("transcribe en espanol cuando no se pide idioma", async () => {
-    expect(flagValue(await transcribeWith({}), "-l")).toBe("es");
-  });
-
-  test("ignora la autodeteccion y vuelve a espanol", async () => {
-    expect(flagValue(await transcribeWith({ lang: "auto" }), "-l")).toBe("es");
-    expect(flagValue(await transcribeWith({ lang: "   " }), "-l")).toBe("es");
-  });
-
-  test("reduce una etiqueta regional a su idioma base", async () => {
-    expect(flagValue(await transcribeWith({ lang: "es-ES" }), "-l")).toBe("es");
-  });
-
-  test("respeta un idioma explicito distinto", async () => {
-    expect(flagValue(await transcribeWith({ lang: "en" }), "-l")).toBe("en");
-  });
-
-  test("AGENOS_STT_LANGUAGE cambia el idioma por defecto", async () => {
-    expect(flagValue(await transcribeWith({}, { AGENOS_STT_LANGUAGE: "gl" }), "-l")).toBe("gl");
-  });
-
-  test("recorta la ventana de audio a la duracion grabada", async () => {
-    expect(flagValue(await transcribeWith({ seconds: 4 }), "-ac")).toBe("384");
-  });
-
-  test("no recorta cuando el audio ocupa casi la ventana entera", async () => {
-    expect(await transcribeWith({ seconds: 25 })).not.toContain("-ac");
-  });
-});
-
-describe("resolveAudioContext", () => {
-  test("recorta la ventana para las frases cortas que graba AgenOS", () => {
-    // 4 s de audio necesitan 200 tokens; con holgura caben en 384 en vez de 1500.
-    expect(resolveAudioContext(4)).toBe(384);
-    expect(resolveAudioContext(5)).toBe(448);
-  });
-
-  test("nunca baja de un suelo prudente", () => {
-    expect(resolveAudioContext(0.5)).toBe(256);
-  });
-
-  test("usa la ventana entera cuando el audio ya no cabe recortado", () => {
-    expect(resolveAudioContext(30)).toBe(0);
-    expect(resolveAudioContext(20)).toBe(0);
-  });
-
-  test("una duracion desconocida cae en ventana entera", () => {
-    expect(resolveAudioContext(0)).toBe(0);
-    expect(resolveAudioContext(Number.NaN)).toBe(0);
-  });
-});
-
-describe("readWavDurationSeconds", () => {
-  test("lee la duracion de una cabecera WAV", () => {
-    expect(readWavDurationSeconds(wavOfSeconds(4))).toBeCloseTo(4, 3);
-  });
-
-  test("devuelve 0 ante datos que no son WAV", () => {
-    expect(readWavDurationSeconds(new Uint8Array(64))).toBe(0);
-    expect(readWavDurationSeconds(new Uint8Array([1, 2, 3]))).toBe(0);
-  });
-});
-
-describe("normalizeWhisperTranscript", () => {
-  test("strips timestamps, whisper noise lines, and non-speech markers", () => {
-    const output = [
-      "whisper_init_state: compute buffer",
-      "[00:00:00.000 --> 00:00:02.000]  abre la terminal",
-      "[MÚSICA]",
-      "main: processing",
-      "  de mantenimiento  ",
-    ].join("\n");
-
-    expect(normalizeWhisperTranscript(output)).toBe("abre la terminal de mantenimiento");
-  });
-
-  test("descarta marcadores no verbales fuera de la lista conocida", () => {
-    // Sobre ruido puro `small` emite cosas como [Pausa], que antes se colaban
-    // en el transcript como si fueran una orden del usuario.
-    expect(normalizeWhisperTranscript("[Pausa]")).toBe("");
-    expect(normalizeWhisperTranscript("[BLANK_AUDIO]")).toBe("");
-    expect(normalizeWhisperTranscript("(ruido de fondo)")).toBe("");
   });
 });

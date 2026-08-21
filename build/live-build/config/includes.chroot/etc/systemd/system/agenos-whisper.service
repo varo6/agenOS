@@ -1,0 +1,24 @@
+[Unit]
+Description=AgenOS local speech-to-text (whisper.cpp resident model)
+Documentation=file:///opt/agenos/system/whisper.cpp/stt.env
+After=local-fs.target
+
+[Service]
+Type=simple
+User=agenos
+Group=agenos
+# El modelo se carga una sola vez al arrancar y se reutiliza en cada frase: ese
+# era el otro gran coste del STT anterior, que lanzaba whisper-cli por orden.
+ExecStart=/opt/agenos/system/whisper.cpp/agenos-whisper-server
+Restart=on-failure
+RestartSec=3
+# Solo loopback. El STT nunca sale del equipo.
+IPAddressAllow=localhost
+IPAddressDeny=any
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
