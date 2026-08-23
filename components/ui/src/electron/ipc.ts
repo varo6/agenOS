@@ -36,6 +36,12 @@ export const SPEECH_IPC_CHANNELS = {
   phase: "agenos-speech:phase",
 } as const;
 
+export const TTS_IPC_CHANNELS = {
+  speak: "agenos-tts:speak",
+  stop: "agenos-tts:stop",
+  status: "agenos-tts:status",
+} as const;
+
 /**
  * Fases observables de una captura de voz local.
  *

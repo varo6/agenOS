@@ -4,6 +4,7 @@ import {
   PI_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
+  TTS_IPC_CHANNELS,
   type SpeechCapturePhase,
 } from "./ipc";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
@@ -15,6 +16,7 @@ import type {
   SystemRuntimeInfo,
 } from "../lib/system-types";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
+import type { TextToSpeechOutcome, TextToSpeechStatus } from "../lib/tts-bridge";
 import type {
   PiAuthAttemptResponse,
   PiChatResponse,
@@ -158,6 +160,19 @@ contextBridge.exposeInMainWorld("agenosSpeech", {
     return () => {
       ipcRenderer.off(SPEECH_IPC_CHANNELS.phase, handler);
     };
+  },
+  isAvailable,
+});
+
+contextBridge.exposeInMainWorld("agenosTts", {
+  speak(text: string): Promise<TextToSpeechOutcome> {
+    return invokePi<TextToSpeechOutcome>(TTS_IPC_CHANNELS.speak, { text });
+  },
+  async stop(): Promise<void> {
+    await invokePi<void>(TTS_IPC_CHANNELS.stop);
+  },
+  status(): Promise<TextToSpeechStatus> {
+    return invokePi<TextToSpeechStatus>(TTS_IPC_CHANNELS.status);
   },
   isAvailable,
 });

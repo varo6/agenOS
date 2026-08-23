@@ -9,6 +9,7 @@ import {
   PI_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
+  TTS_IPC_CHANNELS,
   type SpeechCapturePhase,
 } from "./ipc";
 import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
@@ -16,7 +17,9 @@ import { createNetworkManagerService } from "../../../network/node/network-manag
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import { createSystemIpcServices } from "./system-ipc-services";
 import { createLocalSpeechService, createSttRuntime } from "../../../stt";
+import { createLocalTtsService, createTtsRuntime } from "../../../tts";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
+import type { TextToSpeechOutcome, TextToSpeechStatus } from "../lib/tts-bridge";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
@@ -212,6 +215,8 @@ const sttRuntime = createSttRuntime({
   logger: (message) => console.log(`[stt] ${message}`),
 });
 const localSpeech = createLocalSpeechService(sttRuntime);
+const ttsRuntime = createTtsRuntime();
+const localTts = createLocalTtsService(ttsRuntime.settings, ttsRuntime.paths);
 
 /** Avisa al renderer de en qué punto de la captura estamos. */
 function emitSpeechPhase(phase: SpeechCapturePhase): void {
@@ -240,6 +245,15 @@ async function transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
     language: result.language,
     model: result.model,
   };
+}
+
+async function speakText(text: unknown): Promise<TextToSpeechOutcome> {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed) {
+    return { ok: true, engine: "espeak-ng", voice: ttsRuntime.settings.voice };
+  }
+
+  return localTts.speak(trimmed);
 }
 
 function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
@@ -330,6 +344,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle(SPEECH_IPC_CHANNELS.cancel, () => wrapPi(() => {
     localSpeech.cancel();
   }));
+
+  ipcMain.handle(TTS_IPC_CHANNELS.speak, (_event, payload: { text?: unknown }) => wrapPi(() => (
+    speakText(payload?.text)
+  )));
+  ipcMain.handle(TTS_IPC_CHANNELS.stop, () => wrapPi(() => {
+    localTts.stop();
+  }));
+  ipcMain.handle(TTS_IPC_CHANNELS.status, () => wrapPi<TextToSpeechStatus>(() => localTts.status()));
 
   ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
   ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());
@@ -444,6 +466,7 @@ app.on("window-all-closed", () => {
  */
 app.on("will-quit", () => {
   localSpeech.cancel();
+  localTts.stop();
   sttRuntime.engine.dispose();
 });
 

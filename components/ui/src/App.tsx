@@ -30,6 +30,7 @@ import { usePiSession } from "./hooks/usePiSession";
 import { useShellActions } from "./hooks/useShellActions";
 import { useShellBoot } from "./hooks/useShellBoot";
 import { useSystemAlert } from "./hooks/useSystemAlert";
+import { useTtsReplies } from "./hooks/useTtsReplies";
 import { useVoice } from "./hooks/useVoice";
 import { useWorkspaces } from "./hooks/useWorkspaces";
 
@@ -92,6 +93,7 @@ export default function App() {
     blockedReason,
     agentIssue: alert?.hint ?? null,
   });
+  useTtsReplies({ turns: conversation.turns });
 
   const actions = useShellActions({
     session,
