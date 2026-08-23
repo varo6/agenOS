@@ -43,6 +43,7 @@ import { useWorkspaces } from "./hooks/useWorkspaces";
  */
 export default function App() {
   const [section, setSection] = useState<ShellSection>("home");
+  const [continueOffline, setContinueOffline] = useState(false);
   const openSystem = useCallback(() => setSection("system"), []);
 
   const { alert, sink } = useSystemAlert();
@@ -149,9 +150,12 @@ export default function App() {
 
       {booting ? (
         <BootScreen />
-      ) : network.online !== true ? (
+      ) : network.online !== true && !continueOffline ? (
         <NetworkConnectionPanel
+          allowContinueOffline
           client={networkClient}
+          continueOfflineLabel="Usar AgenOS sin internet"
+          onContinueOffline={() => setContinueOffline(true)}
           onOnline={() => {
             network.markOnline();
             actions.refresh();
@@ -164,6 +168,7 @@ export default function App() {
           adminClient={agentAdminClient}
           busy={busy}
           health={health}
+          networkClient={networkClient}
           session={session}
           workspaces={workspaces.workspaces}
           workspacesLive={workspaces.live}

@@ -7,7 +7,10 @@ import { AgentAdminPanel } from "../AgentAdminPanel";
 import { AgentDiagnosticsButton } from "../AgentDiagnosticsButton";
 import { AgentHealthChecklist } from "../AgentHealthChecklist";
 import { Panel } from "../ui";
+import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnectionPanel";
+import type { NetworkClient } from "../../../../network/client";
 import { ConnectionPanel } from "./ConnectionPanel";
+import { DisplaySettingsPanel } from "./DisplaySettingsPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 export type SystemViewProps = {
@@ -20,6 +23,7 @@ export type SystemViewProps = {
   activeWorkspace: AgentWorkspaceNumber;
   /** El compositor empuja el escritorio activo (no es un sondeo). */
   workspacesLive: boolean;
+  networkClient: NetworkClient;
 };
 
 /**
@@ -40,6 +44,7 @@ export function SystemView({
   workspaces,
   activeWorkspace,
   workspacesLive,
+  networkClient,
 }: SystemViewProps) {
   return (
     <main
@@ -47,6 +52,10 @@ export function SystemView({
       id="contenido"
     >
       <h1 className="font-display text-3xl font-medium tracking-tight text-ink">Sistema</h1>
+
+      <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
+
+      <DisplaySettingsPanel />
 
       <ConnectionPanel
         authState={session.authState}

@@ -12,10 +12,11 @@ import {
   TTS_IPC_CHANNELS,
   type SpeechCapturePhase,
 } from "./ipc";
-import type { ApiMessageResponse, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
+import type { ApiMessageResponse, DisplayStatus, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
 import { createNetworkManagerService } from "../../../network/node/network-manager";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import { createSystemIpcServices } from "./system-ipc-services";
+import { createDisplayService } from "./display-service";
 import { createLocalSpeechService, createSttRuntime } from "../../../stt";
 import { createLocalTtsService, createTtsRuntime } from "../../../tts";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
@@ -33,6 +34,7 @@ type IpcEnvelope<T> =
 let mainWindow: BrowserWindow | null = null;
 const networkService = createNetworkManagerService();
 const systemServices = createSystemIpcServices();
+const displayService = createDisplayService();
 type PiBrokerClient = ReturnType<typeof createBrokerPiClient>;
 let piClient: PiBrokerClient | null = null;
 
@@ -281,6 +283,11 @@ function registerIpcHandlers(): void {
     gpu: GPU_MODE,
     version: app.getVersion(),
   }));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.getDisplayStatus, async (): Promise<DisplayStatus> => displayService.getStatus());
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.setBrightness, async (_event, percent: unknown): Promise<ApiMessageResponse> => (
+    displayService.setBrightness(percent)
+  ));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.turnOffDisplay, async (): Promise<ApiMessageResponse> => displayService.turnOff());
 
   ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {

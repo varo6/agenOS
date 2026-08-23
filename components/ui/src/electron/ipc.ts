@@ -3,6 +3,9 @@ export const SYSTEM_IPC_CHANNELS = {
   runMaintenance: "agenos-system:run-maintenance",
   switchMode: "agenos-system:switch-mode",
   getRuntimeInfo: "agenos-system:get-runtime-info",
+  getDisplayStatus: "agenos-system:get-display-status",
+  setBrightness: "agenos-system:set-brightness",
+  turnOffDisplay: "agenos-system:turn-off-display",
 } as const;
 
 export const PI_IPC_CHANNELS = {

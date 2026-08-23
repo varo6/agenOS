@@ -25,6 +25,11 @@ export type ApiMessageResponse = {
   message?: string;
 };
 
+export type DisplayStatus = {
+  available: boolean;
+  brightnessPercent: number | null;
+};
+
 export type SystemRuntimeInfo = {
   mode: SystemBridgeMode;
   host: SystemRuntimeHost;

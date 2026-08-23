@@ -203,7 +203,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Conéctate a internet" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Conectar ChatGPT" })).not.toBeInTheDocument();
   });
 

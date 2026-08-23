@@ -10,6 +10,7 @@ import {
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import type {
   ApiMessageResponse,
+  DisplayStatus,
   MaintenanceAction,
   PreflightResponse,
   ShellMode,
@@ -100,6 +101,15 @@ contextBridge.exposeInMainWorld("agenosSystem", {
   },
   async getRuntimeInfo(): Promise<SystemRuntimeInfo> {
     return invokeOrThrow<SystemRuntimeInfo>(SYSTEM_IPC_CHANNELS.getRuntimeInfo);
+  },
+  async getDisplayStatus(): Promise<DisplayStatus> {
+    return invokeOrThrow<DisplayStatus>(SYSTEM_IPC_CHANNELS.getDisplayStatus);
+  },
+  async setBrightness(percent: number): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.setBrightness, percent);
+  },
+  async turnOffDisplay(): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.turnOffDisplay, undefined);
   },
   isAvailable,
 });
