@@ -46,7 +46,10 @@ require_literal "${CALAMARES_DESKTOP}" 'state_root / "ui-dev" / "pi"'
 require_literal "${CALAMARES_DESKTOP}" 'USER_HOME_DIRS = ["Documentos", "Fotos", "Musica", "Trabajo"]'
 require_literal "${CALAMARES_DESKTOP}" 'XDG_DOCUMENTS_DIR="$HOME/Documentos"'
 
-require_literal "${LIVE_BOOT_CONFIG}" "persistence hostname=agenos"
+require_literal "${LIVE_BOOT_CONFIG}" "persistence persistence-label=agenos-persist hostname=agenos"
+require_literal "${RUN_VM}" "-L agenos-persist"
+require_literal "${RUN_VM}" "/home union"
+require_literal "${ROOT_DIR}/scripts/create-persistent-usb.sh" 'PERSISTENCE_LABEL="agenos-persist"'
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
 require_literal "${SWAY_CONFIG}" "agenos-workspace-watch"
 require_literal "${SWAY_CONFIG}" "seat * xcursor_theme Adwaita 24"
