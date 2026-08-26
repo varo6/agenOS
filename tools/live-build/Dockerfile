@@ -30,7 +30,9 @@ RUN apt-get update && apt-get install -y \
     grub-efi-amd64-bin \
     grub-pc-bin \
     isolinux \
+    libasound2-dev \
     libayatana-appindicator3-dev \
+    libclang-dev \
     libgtk-3-dev \
     librsvg2-dev \
     libssl-dev \

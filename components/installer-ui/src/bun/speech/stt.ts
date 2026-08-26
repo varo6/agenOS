@@ -4,19 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveLanguage } from "../../../../stt/config";
-import { WhisperEngineError } from "../../../../stt/engine";
+import { WhisperEngineError, type SttEngineName } from "../../../../stt/engine";
 import { createSttRuntime, type SttRuntime } from "../../../../stt/runtime";
 
 /**
  * Ruta HTTP del STT local.
  *
- * Habla con el mismo whisper-server residente que Electron y le manda los
- * mismos parametros, asi que una frase transcribe igual venga del navegador o
+ * Habla con el mismo motor que Electron y le manda los mismos parametros, asi
+ * que una frase transcribe igual venga del navegador o
  * del proceso principal. Lo unico que hace de mas es convertir a WAV de 16 kHz
  * lo que llega del navegador, que graba webm/ogg.
  */
 
-export type SttEngine = "whisper.cpp";
+export type SttEngine = SttEngineName;
 
 export type SttStatusResponse = {
   ok: true;
@@ -60,7 +60,7 @@ export type SttServiceOptions = {
   runCommand?: SttCommandRunner;
   tempDir?: string;
   now?: () => number;
-  /** Inyectable para poder probar la ruta HTTP sin levantar whisper-server. */
+  /** Inyectable para poder probar la ruta HTTP sin levantar el motor real. */
   runtime?: SttRuntime;
 };
 
@@ -185,7 +185,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
     return {
       ok: true,
       available: engineStatus.available,
-      engine: engineStatus.available ? "whisper.cpp" : null,
+      engine: engineStatus.available ? engineStatus.engine : null,
       model: engineStatus.model,
       reason: engineStatus.reason,
       maxDurationMs: runtime.settings.maxDurationMs,
@@ -235,8 +235,8 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
       const wav = await readFile(wavPath);
       const transcription = await runtime.engine.transcribeWav(new Uint8Array(wav), { language });
 
-      // whisper-server corre con Silero VAD, asi que silencio y ruido bajo
-      // vuelven vacios en vez de con una frase inventada.
+      // El motor devuelve vacio si no encuentra habla; la ruta HTTP lo conserva
+      // como un 422 tipado en vez de inventar una frase.
       if (!transcription.text) {
         return { ok: false, code: "no-speech", message: NO_SPEECH_MESSAGE };
       }
@@ -245,7 +245,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
         ok: true,
         text: transcription.text,
         durationMs: Math.max(0, now() - startedAt),
-        engine: "whisper.cpp",
+        engine: runtime.engine.status().engine,
         model: transcription.model,
       };
     } catch (error) {

@@ -69,7 +69,7 @@ La mejora de tiempo hasta primer frame es una expectativa fuerte basada en bytes
 
 ## Tiempo hasta poder hablar
 
-Electron no depende del broker para voz: el preload expone STT por IPC y el reconocimiento nativo usa `whisper.cpp` directamente. Tampoco espera a OpenClaw; la conversación foreground usa el harness Pi dentro de Electron. La UI sí bloquea enviar una orden si no hay red o la cuenta no está conectada, que es una condición funcional, no readiness del worker OpenClaw.
+Electron no depende del broker para voz: el preload expone STT por IPC y el reconocimiento nativo usa Voxtype con Whisper. Tampoco espera a OpenClaw; la conversación foreground usa el harness Pi dentro de Electron. La UI sí bloquea enviar una orden si no hay red o la cuenta no está conectada, que es una condición funcional, no readiness del worker OpenClaw.
 
 El bootstrap visual tenía una serialización evitable:
 

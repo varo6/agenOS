@@ -16,13 +16,15 @@ import type { SttPaths } from "./paths";
  * los mismos parametros, asi que las dos rutas transcriben igual.
  */
 
+export type SttEngineName = "whisper.cpp" | "voxtype";
+
 export type WhisperEngineStatus = {
   available: boolean;
   reason: string | null;
   model: string | null;
   vadModel: string | null;
   baseUrl: string;
-  engine: "whisper.cpp";
+  engine: SttEngineName;
 };
 
 export type TranscribeWavOptions = {
@@ -43,6 +45,8 @@ export type WhisperEngine = {
   status(): WhisperEngineStatus;
   ensureReady(): Promise<void>;
   transcribeWav(wav: Uint8Array, options?: TranscribeWavOptions): Promise<TranscribeWavResult>;
+  /** Libera una precarga que ya no se usara, por ejemplo si no hubo voz. */
+  cancelPending?(): void;
   dispose(): void;
 };
 

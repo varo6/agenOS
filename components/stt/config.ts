@@ -9,8 +9,12 @@
  */
 
 export type SttSettings = {
+  /** Motor de transcripcion. Voxtype usa Whisper local y libera el modelo al acabar. */
+  engine: "voxtype" | "whisper.cpp";
   /** Idioma fijo. AgenOS nunca autodetecta: `auto` cae en el idioma por defecto. */
   language: string;
+  /** Vocabulario que ayuda a Whisper con nombres propios del sistema. */
+  initialPrompt: string;
   threads: number;
   beamSize: number;
   bestOf: number;
@@ -43,7 +47,9 @@ export type SttSettings = {
 };
 
 export const DEFAULT_STT_SETTINGS: SttSettings = {
+  engine: "voxtype",
   language: "es",
+  initialPrompt: "AgenOS, Pi, ChatGPT, Chromium, Wi-Fi, Bluetooth, volumen, brillo. Orden breve en español.",
   threads: 4,
   beamSize: 5,
   bestOf: 5,
@@ -106,9 +112,12 @@ export function resolveLanguage(requested: string | undefined, fallback: string)
 
 export function resolveSttSettings(env: EnvLike = process.env): SttSettings {
   const defaults = DEFAULT_STT_SETTINGS;
+  const requestedEngine = env.AGENOS_STT_ENGINE?.trim().toLowerCase();
 
   return {
+    engine: requestedEngine === "whisper.cpp" ? "whisper.cpp" : defaults.engine,
     language: resolveLanguage(env.AGENOS_STT_LANGUAGE, defaults.language),
+    initialPrompt: env.AGENOS_STT_INITIAL_PROMPT?.trim() || defaults.initialPrompt,
     threads: readInt(env, "AGENOS_STT_THREADS", defaults.threads, 1, 16),
     beamSize: readInt(env, "AGENOS_STT_BEAM_SIZE", defaults.beamSize, 1, 8),
     bestOf: readInt(env, "AGENOS_STT_BEST_OF", defaults.bestOf, 1, 8),

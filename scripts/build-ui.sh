@@ -13,13 +13,13 @@ ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 WHISPER_OUTPUT_DIR="${PACKAGE_OUTPUT_DIR}/whisper.cpp"
 VAD_CAPTURE_SRC_DIR="${ROOT_DIR}/tools/whisper-vad-capture"
 WHISPER_CPP_REF="${AGENOS_WHISPER_CPP_REF:-v1.7.6}"
-# `base` multilingue Q5_1 mantiene la calidad util para ordenes cortas en
-# espanol, pero reduce el modelo de 466 MiB a 57 MiB. En el N100 de referencia
-# tambien bajo el pico de RAM de unos 734 MiB a 133 MiB y la inferencia de una
-# frase de cinco segundos de 4,9 s a 0,7 s.
-WHISPER_MODEL_FILE="${AGENOS_WHISPER_MODEL_FILE:-ggml-base-q5_1.bin}"
+VOXTYPE_REF="${AGENOS_VOXTYPE_REF:-v0.7.5}"
+# Voxtype usa `small` multilingue Q5_1 con el idioma fijado a espanol. El
+# proceso se carga mientras se graba y termina tras cada frase, por lo que sus
+# aproximadamente 600-700 MiB no quedan residentes en reposo.
+WHISPER_MODEL_FILE="${AGENOS_WHISPER_MODEL_FILE:-ggml-small-q5_1.bin}"
 WHISPER_MODEL_URL="${AGENOS_WHISPER_MODEL_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL_FILE}}"
-WHISPER_MODEL_SHA1="${AGENOS_WHISPER_MODEL_SHA1:-a3733eda680ef76256db5fc5dd9de8629e62c5e7}"
+WHISPER_MODEL_SHA1="${AGENOS_WHISPER_MODEL_SHA1:-6fe57ddcfdd1c6b07cdcc73aaf620810ce5fc771}"
 # Silero VAD en formato ggml. Viaja en la ISO porque el STT tiene que funcionar
 # sin Internet: sin este fichero no hay forma de saber cuando termina la frase
 # ni de descartar el silencio antes de que Whisper se lo invente.
@@ -37,6 +37,7 @@ whisper_fingerprint() {
   {
     printf '%s\n' \
       "ref=${WHISPER_CPP_REF}" \
+      "voxtype_ref=${VOXTYPE_REF}" \
       "build_profile=${WHISPER_BUILD_PROFILE}" \
       "model=${WHISPER_MODEL_FILE}" \
       "model_sha1=${WHISPER_MODEL_SHA1}" \
@@ -52,6 +53,7 @@ whisper_install_is_current() {
   grep -q "^fingerprint=${fingerprint}$" "${WHISPER_OUTPUT_DIR}/stt.env" 2>/dev/null \
     && [[ -x "${WHISPER_OUTPUT_DIR}/whisper-cli" && -x "${WHISPER_OUTPUT_DIR}/whisper-cli-baseline" ]] \
     && [[ -x "${WHISPER_OUTPUT_DIR}/whisper-server" && -x "${WHISPER_OUTPUT_DIR}/whisper-server-baseline" ]] \
+    && [[ -x "${WHISPER_OUTPUT_DIR}/voxtype" ]] \
     && [[ -x "${WHISPER_OUTPUT_DIR}/agenos-vad-capture" && -x "${WHISPER_OUTPUT_DIR}/agenos-vad-capture-baseline" ]] \
     && printf '%s  %s\n' "${WHISPER_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1 \
     && printf '%s  %s\n' "${WHISPER_VAD_MODEL_SHA1}" "${WHISPER_OUTPUT_DIR}/models/${WHISPER_VAD_MODEL_FILE}" | sha1sum -c - >/dev/null 2>&1
@@ -192,6 +194,23 @@ install_whisper_cpp() {
     install -m 0755 "${work_dir}/build-baseline/bin/${target}" "${WHISPER_OUTPUT_DIR}/${target}-baseline"
   done
 
+  echo "Building Voxtype ${VOXTYPE_REF} for the Bookworm runtime..."
+  curl -fsSL --retry 3 "https://github.com/peteonrails/voxtype/archive/refs/tags/${VOXTYPE_REF}.tar.gz" \
+    -o "${work_dir}/voxtype.tar.gz"
+  tar -xzf "${work_dir}/voxtype.tar.gz" -C "${work_dir}"
+  local voxtype_source_dir
+  voxtype_source_dir="$(find "${work_dir}" -maxdepth 1 -type d -name 'voxtype-*' -print -quit)"
+  if [[ -z "${voxtype_source_dir}" ]]; then
+    echo "No se pudo localizar el source extraido de Voxtype." >&2
+    exit 1
+  fi
+  (
+    cd "${voxtype_source_dir}"
+    cargo build --release --locked --bin voxtype
+  )
+  install -m 0755 "${voxtype_source_dir}/target/release/voxtype" "${WHISPER_OUTPUT_DIR}/voxtype"
+  install -m 0644 "${voxtype_source_dir}/LICENSE" "${WHISPER_OUTPUT_DIR}/LICENSE.voxtype"
+
   download_verified_model \
     "${WHISPER_MODEL_URL}" \
     "${WHISPER_OUTPUT_DIR}/models/${WHISPER_MODEL_FILE}" \
@@ -212,8 +231,9 @@ install_whisper_cpp() {
   # El runtime lee este manifiesto para saber que modelo buscar, en vez de
   # llevar su propia lista que se desincroniza en cuanto alguien toca el build.
   printf '%s\n' \
-    "engine=whisper.cpp" \
+    "engine=voxtype" \
     "ref=${WHISPER_CPP_REF}" \
+    "voxtype_ref=${VOXTYPE_REF}" \
     "build_profile=${WHISPER_BUILD_PROFILE}" \
     "fingerprint=${fingerprint}" \
     "model=${WHISPER_MODEL_FILE}" \

@@ -10,12 +10,13 @@ const ROOT = "/opt/agenos/system/whisper.cpp";
 const MANIFEST = [
   "engine=whisper.cpp",
   "ref=v1.7.6",
+  "voxtype_ref=v0.7.5",
   "build_profile=static-simd-plus-baseline-x86_64-v2-server-vad",
   "fingerprint=abc123",
-  "model=ggml-base-q5_1.bin",
+  "model=ggml-small-q5_1.bin",
   "vad_model=ggml-silero-v5.1.2.bin",
   "language=es",
-  "note=ggml-base-q5_1.bin is multilingual; the .en variants are intentionally not installed.",
+  "note=ggml-small-q5_1.bin is multilingual; the .en variants are intentionally not installed.",
 ].join("\n");
 
 function pathsWith(present: string[], options: Parameters<typeof resolveSttPaths>[0] = {}) {
@@ -35,9 +36,10 @@ const FULL_INSTALL = [
   `${ROOT}/stt.env`,
   `${ROOT}/whisper-server`,
   `${ROOT}/whisper-server-baseline`,
+  `${ROOT}/voxtype`,
   `${ROOT}/agenos-vad-capture`,
   `${ROOT}/agenos-vad-capture-baseline`,
-  `${ROOT}/models/ggml-base-q5_1.bin`,
+  `${ROOT}/models/ggml-small-q5_1.bin`,
   `${ROOT}/models/ggml-silero-v5.1.2.bin`,
   "/usr/bin/arecord",
   "/usr/bin/ffmpeg",
@@ -47,7 +49,7 @@ describe("parseSttManifest", () => {
   test("lee los nombres declarados por el build", () => {
     const manifest = parseSttManifest(MANIFEST);
 
-    expect(manifest.model).toBe("ggml-base-q5_1.bin");
+    expect(manifest.model).toBe("ggml-small-q5_1.bin");
     expect(manifest.vadModel).toBe("ggml-silero-v5.1.2.bin");
     expect(manifest.ref).toBe("v1.7.6");
   });
@@ -64,8 +66,9 @@ describe("resolveSttPaths", () => {
 
     expect(paths.missing).toEqual([]);
     expect(paths.server).toBe(`${ROOT}/whisper-server`);
+    expect(paths.voxtype).toBe(`${ROOT}/voxtype`);
     expect(paths.vadCapture).toBe(`${ROOT}/agenos-vad-capture`);
-    expect(paths.model).toBe(`${ROOT}/models/ggml-base-q5_1.bin`);
+    expect(paths.model).toBe(`${ROOT}/models/ggml-small-q5_1.bin`);
     expect(paths.vadModel).toBe(`${ROOT}/models/ggml-silero-v5.1.2.bin`);
   });
 
@@ -120,7 +123,9 @@ describe("resolveSttPaths", () => {
   });
 
   test("un binario configurado a mano que no existe no se inventa", () => {
-    const paths = pathsWith(FULL_INSTALL, { env: { AGENOS_WHISPER_SERVER_BIN: "/no/existe" } });
+    const paths = pathsWith(FULL_INSTALL, {
+      env: { AGENOS_STT_ENGINE: "whisper.cpp", AGENOS_WHISPER_SERVER_BIN: "/no/existe" },
+    });
 
     expect(paths.server).toBeNull();
     expect(paths.missing).toContain("whisper-server");
