@@ -132,6 +132,7 @@ POST /api/agent/memory/:namespace                    { content, source?, explici
 GET  /api/agent/learning/signals                     señales redactadas y auditables
 POST /api/agent/learning/signals/harness             ingesta local de una traza redactada de Pi
 GET  /api/agent/learning/memories                    memorias confirmadas activas (`?includeDeleted=true` para historial)
+GET  /api/agent/learning/overview                    embudo agregado de propuestas, activación y uso por ID
 POST /api/agent/learning/memories/:itemId             corrige una entrada por intención explícita del usuario
 DELETE /api/agent/learning/memories/:itemId           olvida una entrada por intención explícita del usuario
 GET  /api/agent/learning/context                      selección auditable (`query`, `tokenBudget`; máximo 512)
@@ -166,7 +167,10 @@ cuando los solicita la UI.
 Las memorias aprendidas son registros estructurados append-only con `kind` (`preference`,
 `procedure`, `avoidance`), confianza, señales fuente, caducidad e ID visible. Corregir o borrar
 no reescribe el historial. Las trazas del harness incluyen `harness.learningContext` con los IDs
-y el presupuesto realmente inyectados; el texto de memoria no se copia a esa metadata.
+y el presupuesto realmente inyectados; el texto de memoria no se copia a esa metadata. Al cerrar
+el turno, el broker registra una señal `learning_context_used` con esos IDs. El endpoint `overview`
+deriva de ese historial cuántos turnos usaron memoria y cuántas veces se recuperó cada entrada. No
+afirma que la memoria mejorara la respuesta; esa eficacia necesita un verificador de tarea.
 
 ## Sistema e instalador
 

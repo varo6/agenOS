@@ -74,6 +74,27 @@ describe("self improvement loop", () => {
     expect(writes).toEqual([]);
   });
 
+  test("records which confirmed memories were used by a turn", async () => {
+    const memory = createLearnedMemoryStore({ rootDir: mkdtempSync(join(tmpdir(), "agenos-learning-loop-")) });
+    const loop = createSelfImprovementLoop({ memory, proposeMemoryWrite: async () => undefined });
+
+    const result = await loop.captureHarnessTrace(trace({
+      input: { text: "resume el proyecto", length: 19, truncated: false },
+      harness: {
+        promptHash: "prompt-with-memory",
+        tools: [],
+        learningContext: { itemIds: ["learn_summary"], estimatedTokens: 82, tokenBudget: 256, truncated: false },
+      },
+    }));
+
+    expect(result.signals).toContainEqual(expect.objectContaining({
+      type: "learning_context_used",
+      itemIds: ["learn_summary"],
+      traceId: "trace_1",
+    }));
+    expect(result.proposals).toEqual([]);
+  });
+
   test("distills denied actions but never recursively learns a denied memory write", async () => {
     const memory = createLearnedMemoryStore({ rootDir: mkdtempSync(join(tmpdir(), "agenos-learning-loop-")) });
     const writes: unknown[] = [];

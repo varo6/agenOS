@@ -71,7 +71,15 @@ export function AgentAdminPanel({ client }: AgentAdminPanelProps) {
   }, []);
 
   const pendingConfirmations = useMemo(
-    () => confirmations.filter((confirmation) => confirmation.status === "pending"),
+    () => confirmations.filter((confirmation) => {
+      if (confirmation.status !== "pending") {
+        return false;
+      }
+      const input = confirmation.input && typeof confirmation.input === "object"
+        ? confirmation.input as { learned?: unknown }
+        : null;
+      return confirmation.tool !== "memory.write" || !input?.learned;
+    }),
     [confirmations],
   );
 

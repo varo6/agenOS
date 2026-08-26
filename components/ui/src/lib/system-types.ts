@@ -30,6 +30,12 @@ export type DisplayStatus = {
   brightnessPercent: number | null;
 };
 
+export type AudioStatus = {
+  available: boolean;
+  volumePercent: number | null;
+  muted: boolean;
+};
+
 export type SystemRuntimeInfo = {
   mode: SystemBridgeMode;
   host: SystemRuntimeHost;
@@ -182,4 +188,34 @@ export type AgentConfirmationRequiredResponse = {
   decision: "confirm";
   confirmationId?: string;
   message?: string;
+};
+
+export type LearnedMemoryKind = "preference" | "procedure" | "avoidance";
+
+export type LearnedMemoryItem = {
+  schemaVersion: 1;
+  itemId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: "active" | "deleted";
+  kind: LearnedMemoryKind;
+  statement: string;
+  confidence: number;
+  expiresAt: string;
+  sourceSignalIds: string[];
+  userEdited: boolean;
+};
+
+export type LearningOverview = {
+  signalsCaptured: number;
+  turnsObserved: number;
+  turnsWithMemory: number;
+  memoryUses: number;
+  activeMemories: number;
+  pendingProposals: number;
+  acceptedProposals: number;
+  deniedProposals: number;
+  acceptanceRate: number | null;
+  lastLearningAt: string | null;
+  usageByItem: Record<string, { count: number; lastUsedAt: string }>;
 };

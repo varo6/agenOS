@@ -62,4 +62,29 @@ describe("agent admin client", () => {
       { url: "http://agent.test/api/agent/channels/telegram/enable", body: { explicitUserIntent: true } },
     ]);
   });
+
+  test("marks memory correction and forgetting as explicit user actions", async () => {
+    const requests = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push({ url: String(input), method: init?.method, body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify({ itemId: "learn_1", status: "active" }), { status: 202 });
+    };
+
+    const client = createAgentAdminClient({ baseUrl: "http://agent.test" });
+    await client.correctLearnedMemory("learn_1", "Prefiero dos viñetas");
+    await client.forgetLearnedMemory("learn_1");
+
+    expect(requests).toEqual([
+      {
+        url: "http://agent.test/api/agent/learning/memories/learn_1",
+        method: "POST",
+        body: { statement: "Prefiero dos viñetas", explicitUserIntent: true },
+      },
+      {
+        url: "http://agent.test/api/agent/learning/memories/learn_1",
+        method: "DELETE",
+        body: { explicitUserIntent: true },
+      },
+    ]);
+  });
 });

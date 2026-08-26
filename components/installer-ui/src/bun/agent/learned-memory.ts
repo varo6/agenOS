@@ -15,7 +15,8 @@ export type LearningSignalType =
   | "explicit_correction"
   | "task_failed"
   | "task_retried"
-  | "confirmation_denied";
+  | "confirmation_denied"
+  | "learning_context_used";
 
 export type LearningSignal = {
   schemaVersion: 1;
@@ -28,6 +29,7 @@ export type LearningSignal = {
   taskId?: string;
   confirmationId?: string;
   tool?: string;
+  itemIds?: string[];
   summary: string;
   inputPreview?: string;
 };
@@ -218,6 +220,7 @@ export function createLearnedMemoryStore(options: LearnedMemoryStoreOptions = {}
         ...(input.taskId ? { taskId: input.taskId } : {}),
         ...(input.confirmationId ? { confirmationId: input.confirmationId } : {}),
         ...(input.tool ? { tool: cleanText(input.tool, 100) } : {}),
+        ...(input.itemIds?.length ? { itemIds: [...new Set(input.itemIds.map((itemId) => cleanText(itemId, 100)).filter(Boolean))] } : {}),
         summary: cleanText(input.summary, 500),
         ...(input.inputPreview ? { inputPreview: cleanText(input.inputPreview) } : {}),
       };
@@ -304,7 +307,9 @@ export function createLearnedMemoryStore(options: LearnedMemoryStoreOptions = {}
       });
     },
     list(options: { includeDeleted?: boolean } = {}): LearnedMemoryItem[] {
-      return latestItems().filter((item) => options.includeDeleted || item.status === "active");
+      return latestItems().filter((item) => options.includeDeleted || (
+        item.status === "active" && Date.parse(item.expiresAt) > now().getTime()
+      ));
     },
     get(itemId: string): LearnedMemoryItem | null {
       return latestItems().find((item) => item.itemId === itemId) ?? null;

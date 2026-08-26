@@ -1187,6 +1187,48 @@ export function createInstallerApiHandler(
           return json(deps.learnedMemory.signals(Number.isFinite(limit) ? limit : 100));
         }
 
+        if (url.pathname === "/api/agent/learning/overview") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const signals = deps.learnedMemory.signals(10_000);
+          const confirmations = deps.confirmations.list(10_000).filter((record) => {
+            if (record.tool !== "memory.write" || !record.input || typeof record.input !== "object") {
+              return false;
+            }
+            return Boolean((record.input as { learned?: unknown }).learned);
+          });
+          const usageByItem: Record<string, { count: number; lastUsedAt: string }> = {};
+          for (const signal of signals) {
+            if (signal.type !== "learning_context_used") {
+              continue;
+            }
+            for (const itemId of signal.itemIds ?? []) {
+              const usage = usageByItem[itemId];
+              usageByItem[itemId] = {
+                count: (usage?.count ?? 0) + 1,
+                lastUsedAt: !usage || signal.timestamp > usage.lastUsedAt ? signal.timestamp : usage.lastUsedAt,
+              };
+            }
+          }
+          const acceptedProposals = confirmations.filter((record) => record.status === "confirmed").length;
+          const deniedProposals = confirmations.filter((record) => record.status === "denied").length;
+          const decidedProposals = acceptedProposals + deniedProposals;
+          return json({
+            signalsCaptured: signals.length,
+            turnsObserved: signals.filter((signal) => signal.type === "turn_succeeded" || signal.type === "turn_failed").length,
+            turnsWithMemory: signals.filter((signal) => signal.type === "learning_context_used").length,
+            memoryUses: Object.values(usageByItem).reduce((total, usage) => total + usage.count, 0),
+            activeMemories: deps.learnedMemory.list().length,
+            pendingProposals: confirmations.filter((record) => record.status === "pending").length,
+            acceptedProposals,
+            deniedProposals,
+            acceptanceRate: decidedProposals > 0 ? acceptedProposals / decidedProposals : null,
+            lastLearningAt: signals[0]?.timestamp ?? null,
+            usageByItem,
+          });
+        }
+
         if (url.pathname === "/api/agent/learning/context") {
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);

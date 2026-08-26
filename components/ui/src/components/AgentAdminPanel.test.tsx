@@ -19,6 +19,10 @@ const adminClient = {
   clearTask: vi.fn(),
   exportDiagnostics: vi.fn(),
   listConfirmations: vi.fn(),
+  listLearnedMemories: vi.fn(),
+  getLearningOverview: vi.fn(),
+  correctLearnedMemory: vi.fn(),
+  forgetLearnedMemory: vi.fn(),
   confirm: vi.fn(),
   deny: vi.fn(),
   executeShell: vi.fn(),
@@ -96,5 +100,24 @@ describe("AgentAdminPanel", () => {
 
     await waitFor(() => expect(adminClient.executeShell).toHaveBeenCalledWith("pwd && id"));
     expect(await screen.findByText(/uid=1000/)).toBeInTheDocument();
+  });
+
+  test("leaves learned-memory proposals to the user-facing learning panel", async () => {
+    adminClient.listConfirmations.mockResolvedValue([{
+      schemaVersion: 1,
+      confirmationId: "conf_learning",
+      correlationId: "corr_learning",
+      timestamp: "2026-08-25T10:00:00.000Z",
+      status: "pending",
+      source: "system",
+      tool: "memory.write",
+      summary: "Recordar tres viñetas",
+      input: { learned: { statement: "Prefiero tres viñetas" } },
+    }]);
+
+    render(<AgentAdminPanel client={adminClient} />);
+
+    expect(await screen.findByText("Sin confirmaciones pendientes.")).toBeInTheDocument();
+    expect(screen.queryByText("Recordar tres viñetas")).not.toBeInTheDocument();
   });
 });

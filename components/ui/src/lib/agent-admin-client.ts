@@ -6,6 +6,8 @@ import type {
   AgentPolicyResponse,
   AgentSetupStateSummary,
   AgentShellExecResponse,
+  LearnedMemoryItem,
+  LearningOverview,
 } from "./system-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
@@ -145,6 +147,25 @@ export function createAgentAdminClient(options: AgentAdminClientOptions = {}) {
     },
     listConfirmations(): Promise<AgentConfirmation[]> {
       return requestJson<AgentConfirmation[]>(baseUrl, "/api/agent/confirmations");
+    },
+    listLearnedMemories(includeDeleted = false): Promise<LearnedMemoryItem[]> {
+      return requestJson<LearnedMemoryItem[]>(baseUrl, `/api/agent/learning/memories?includeDeleted=${includeDeleted ? "true" : "false"}`);
+    },
+    getLearningOverview(): Promise<LearningOverview> {
+      return requestJson<LearningOverview>(baseUrl, "/api/agent/learning/overview");
+    },
+    correctLearnedMemory(itemId: string, statement: string): Promise<LearnedMemoryItem> {
+      return postJson<LearnedMemoryItem>(baseUrl, `/api/agent/learning/memories/${encodeURIComponent(itemId)}`, {
+        statement,
+        explicitUserIntent: true,
+      });
+    },
+    forgetLearnedMemory(itemId: string): Promise<LearnedMemoryItem> {
+      return requestJson<LearnedMemoryItem>(baseUrl, `/api/agent/learning/memories/${encodeURIComponent(itemId)}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ explicitUserIntent: true }),
+      });
     },
     confirm(confirmationId: string): Promise<AgentActionResponse> {
       return postJson<AgentActionResponse>(baseUrl, `/api/agent/confirmations/${encodeURIComponent(confirmationId)}/confirm`);

@@ -76,6 +76,18 @@ export function createSelfImprovementLoop(options: SelfImprovementLoopOptions) {
           : trace.error ?? "El turno foreground fallo sin detalle.",
       }));
 
+      const usedItemIds = trace.harness.learningContext?.itemIds ?? [];
+      if (usedItemIds.length > 0) {
+        results.push(await recordAndMaybePropose({
+          signalId: stableId("sig", trace.traceId, "learning-context"),
+          type: "learning_context_used",
+          source: "foreground",
+          traceId: trace.traceId,
+          itemIds: usedItemIds,
+          summary: `El turno uso ${usedItemIds.length} memoria${usedItemIds.length === 1 ? "" : "s"} confirmada${usedItemIds.length === 1 ? "" : "s"}.`,
+        }));
+      }
+
       if (looksLikeCorrection(trace.input.text)) {
         results.push(await recordAndMaybePropose({
           signalId: stableId("sig", trace.traceId, "correction"),
