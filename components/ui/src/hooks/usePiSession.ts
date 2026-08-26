@@ -51,7 +51,7 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
   const [ready, setReady] = useState(true);
   const [authState, setAuthState] = useState<PiAuthState>("disconnected");
   const [providerName, setProviderName] = useState("ChatGPT/Codex");
-  const [modelId, setModelId] = useState("gpt-5.4-mini");
+  const [modelId, setModelId] = useState("gpt-5.6-sol");
   const [busy, setBusy] = useState(false);
   const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
   const [manualCode, setManualCode] = useState("");

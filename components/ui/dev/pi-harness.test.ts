@@ -2,7 +2,14 @@ import { describe, expect, test } from "bun:test";
 
 import type { AgentTaskClient } from "../../agent/agent-task-tool";
 import type { LearningMemoryClient } from "../../agent/learning-memory-tool";
-import { createPiHarness, PI_SYSTEM_PROMPT, resolvePiHarnessPaths, type PiTurnStoreLike } from "./pi-harness";
+import {
+  createPiHarness,
+  DEFAULT_PI_MODEL_PREFERENCE,
+  DEFAULT_PI_THINKING_LEVEL,
+  PI_SYSTEM_PROMPT,
+  resolvePiHarnessPaths,
+  type PiTurnStoreLike,
+} from "./pi-harness";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -142,6 +149,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     modelRegistry: {
       getAll() {
         return [
+          { id: "gpt-5.6-sol", provider: "openai-codex" },
           { id: "gpt-5.5-instant", provider: "openai-codex" },
           { id: "gpt-5.4", provider: "openai-codex" },
           { id: "gpt-5.4-mini", provider: "openai-codex" },
@@ -260,6 +268,11 @@ async function settleTurn() {
 }
 
 describe("PiHarness", () => {
+  test("uses Sol with low reasoning by default", () => {
+    expect(DEFAULT_PI_MODEL_PREFERENCE[0]).toBe("gpt-5.6-sol");
+    expect(DEFAULT_PI_THINKING_LEVEL).toBe("low");
+  });
+
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("browser_open");
@@ -470,7 +483,7 @@ describe("PiHarness", () => {
     promptDeferred.resolve();
     await expect(firstPrompt).resolves.toMatchObject({
       ok: true,
-      modelId: "gpt-5.5-instant",
+      modelId: "gpt-5.6-sol",
       provider: "openai-codex",
     });
   });
@@ -693,7 +706,7 @@ describe("PiHarness", () => {
     const finished = harness.getTurn(turn.turnId);
     expect(finished.status).toBe("succeeded");
     expect(finished.reply).toBe("hecho");
-    expect(finished.modelId).toBe("gpt-5.5-instant");
+    expect(finished.modelId).toBe("gpt-5.6-sol");
     expect(finished.finishedAt).toBeTruthy();
     expect(harness.getStatus().busy).toBe(false);
     expect(harness.getLatestTurn()?.turnId).toBe(turn.turnId);
@@ -871,7 +884,7 @@ describe("PiHarness", () => {
       message: "hola",
       source: "text",
     })).resolves.toMatchObject({
-      modelId: "gpt-5.5-instant",
+      modelId: "gpt-5.6-sol",
     });
   });
 
@@ -948,7 +961,7 @@ describe("PiHarness", () => {
       channel: "text",
       status: "succeeded",
       provider: "openai-codex",
-      modelId: "gpt-5.5-instant",
+      modelId: "gpt-5.6-sol",
       input: { text: "abre el archivo" },
       output: { text: "Archivo abierto token=[redacted]" },
       toolEvents: [
