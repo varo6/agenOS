@@ -1,0 +1,5 @@
+{
+  "_comment": "Copia este fichero a google-client.json con la credencial OAuth de tipo 'Aplicacion de escritorio' del proyecto de Google. Ver docs/integracion/google.md. Sin el, el agente no puede entrar en Gmail ni Calendar y lo dice con honestidad.",
+  "clientId": "",
+  "clientSecret": ""
+}
