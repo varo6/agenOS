@@ -12,11 +12,12 @@ import {
   TTS_IPC_CHANNELS,
   type SpeechCapturePhase,
 } from "./ipc";
-import type { ApiMessageResponse, DisplayStatus, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
+import type { ApiMessageResponse, AudioStatus, DisplayStatus, PreflightResponse, SystemRuntimeInfo } from "../lib/system-types";
 import { createNetworkManagerService } from "../../../network/node/network-manager";
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import { createSystemIpcServices } from "./system-ipc-services";
 import { createDisplayService } from "./display-service";
+import { createAudioService } from "./audio-service";
 import { createLocalSpeechService, createSttRuntime } from "../../../stt";
 import { createLocalTtsService, createTtsRuntime } from "../../../tts";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
@@ -35,6 +36,7 @@ let mainWindow: BrowserWindow | null = null;
 const networkService = createNetworkManagerService();
 const systemServices = createSystemIpcServices();
 const displayService = createDisplayService();
+const audioService = createAudioService();
 type PiBrokerClient = ReturnType<typeof createBrokerPiClient>;
 let piClient: PiBrokerClient | null = null;
 
@@ -288,6 +290,13 @@ function registerIpcHandlers(): void {
     displayService.setBrightness(percent)
   ));
   ipcMain.handle(SYSTEM_IPC_CHANNELS.turnOffDisplay, async (): Promise<ApiMessageResponse> => displayService.turnOff());
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.getAudioStatus, async (): Promise<AudioStatus> => audioService.getStatus());
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.setVolume, async (_event, percent: unknown): Promise<ApiMessageResponse> => (
+    audioService.setVolume(percent)
+  ));
+  ipcMain.handle(SYSTEM_IPC_CHANNELS.setMuted, async (_event, muted: unknown): Promise<ApiMessageResponse> => (
+    audioService.setMuted(muted)
+  ));
 
   ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {

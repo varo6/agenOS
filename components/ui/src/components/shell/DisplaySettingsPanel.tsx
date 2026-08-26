@@ -49,9 +49,11 @@ export function DisplaySettingsPanel() {
             max="100"
             min="5"
             onChange={(event) => setBrightness(Number(event.target.value))}
-            onPointerUp={() => void saveBrightness(brightness)}
+            onPointerUp={(event) => void saveBrightness(Number(event.currentTarget.value))}
             onKeyUp={(event) => {
-              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) void saveBrightness(brightness);
+              if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+                void saveBrightness(Number(event.currentTarget.value));
+              }
             }}
             step="5"
             type="range"

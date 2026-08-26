@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { SystemView, type SystemViewProps } from "./SystemView";
@@ -74,6 +74,22 @@ const adminClient = {
   clearTask: vi.fn(),
   exportDiagnostics: vi.fn(),
   listConfirmations: vi.fn().mockResolvedValue([]),
+  listLearnedMemories: vi.fn().mockResolvedValue([]),
+  getLearningOverview: vi.fn().mockResolvedValue({
+    signalsCaptured: 0,
+    turnsObserved: 0,
+    turnsWithMemory: 0,
+    memoryUses: 0,
+    activeMemories: 0,
+    pendingProposals: 0,
+    acceptedProposals: 0,
+    deniedProposals: 0,
+    acceptanceRate: null,
+    lastLearningAt: null,
+    usageByItem: {},
+  }),
+  correctLearnedMemory: vi.fn(),
+  forgetLearnedMemory: vi.fn(),
   confirm: vi.fn(),
   deny: vi.fn(),
   executeShell: vi.fn(),
@@ -159,12 +175,37 @@ describe("SystemView", () => {
     expect(screen.getByText("Conecta ChatGPT para empezar.")).toBeInTheDocument();
   });
 
+  test("los ajustes del portátil se abren solo al pedir más ajustes", () => {
+    renderSystem();
+
+    expect(screen.queryByRole("region", { name: "Ajustes del portátil" })).not.toBeInTheDocument();
+
+    const moreSettings = screen.getByRole("button", { name: "Más ajustes" });
+    expect(moreSettings).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(moreSettings);
+
+    expect(screen.getByRole("region", { name: "Ajustes del portátil" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pantalla" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sonido" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ocultar ajustes del portátil" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   // Los escritorios se fueron de la barra fija, pero siguen aquí y con nombre.
   test("los escritorios se cambian desde aquí y llevan su nombre escrito", () => {
     renderSystem();
 
     expect(screen.getByRole("button", { name: "Escritorio 2: Apps" })).toBeInTheDocument();
     expect(screen.getByText("Apps")).toBeInTheDocument();
+  });
+
+  test("el aprendizaje queda visible fuera de los detalles técnicos", async () => {
+    renderSystem();
+
+    expect(await screen.findByRole("heading", { name: "Lo que Pi aprende" })).toBeInTheDocument();
+    expect(screen.getByText("Pi todavía no tiene aprendizajes confirmados.")).toBeInTheDocument();
+    expect(screen.getByText("Detalles técnicos").closest("details")).not.toContainElement(
+      screen.getByRole("heading", { name: "Lo que Pi aprende" }),
+    );
   });
 
   // Lo técnico no desaparece (hace falta para defender el proyecto): se pliega.

@@ -1,5 +1,6 @@
 import type {
   ApiMessageResponse,
+  AudioStatus,
   DisplayStatus,
   MaintenanceAction,
   PreflightResponse,
@@ -15,6 +16,9 @@ export type AgenosSystemBridge = {
   getDisplayStatus(): Promise<DisplayStatus>;
   setBrightness(percent: number): Promise<ApiMessageResponse>;
   turnOffDisplay(): Promise<ApiMessageResponse>;
+  getAudioStatus(): Promise<AudioStatus>;
+  setVolume(percent: number): Promise<ApiMessageResponse>;
+  setMuted(muted: boolean): Promise<ApiMessageResponse>;
   isAvailable(): boolean;
 };
 

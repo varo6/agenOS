@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { Settings2 } from "lucide-react";
+
 import type { createAgentAdminClient } from "../../lib/agent-admin-client";
 import type { AgentWorkspace, AgentWorkspaceNumber } from "../../lib/system-types";
 import type { AgentHealthController } from "../../hooks/useAgentHealth";
@@ -6,10 +9,12 @@ import type { ShellActions } from "../../hooks/useShellActions";
 import { AgentAdminPanel } from "../AgentAdminPanel";
 import { AgentDiagnosticsButton } from "../AgentDiagnosticsButton";
 import { AgentHealthChecklist } from "../AgentHealthChecklist";
-import { Panel } from "../ui";
+import { LearningPanel } from "../LearningPanel";
+import { Button, Panel } from "../ui";
 import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnectionPanel";
 import type { NetworkClient } from "../../../../network/client";
 import { ConnectionPanel } from "./ConnectionPanel";
+import { AudioSettingsPanel } from "./AudioSettingsPanel";
 import { DisplaySettingsPanel } from "./DisplaySettingsPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
@@ -46,16 +51,14 @@ export function SystemView({
   workspacesLive,
   networkClient,
 }: SystemViewProps) {
+  const [showSystemSettings, setShowSystemSettings] = useState(false);
+
   return (
     <main
       className="relative z-10 mx-auto grid w-full max-w-4xl gap-5 px-4 pb-16 pt-28 text-left sm:px-6"
       id="contenido"
     >
       <h1 className="font-display text-3xl font-medium tracking-tight text-ink">Sistema</h1>
-
-      <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
-
-      <DisplaySettingsPanel />
 
       <ConnectionPanel
         authState={session.authState}
@@ -73,6 +76,23 @@ export function SystemView({
         ready={session.ready}
       />
 
+      <Button
+        aria-expanded={showSystemSettings}
+        aria-controls="ajustes-del-portatil"
+        icon={<Settings2 aria-hidden="true" className="h-5 w-5" />}
+        onClick={() => setShowSystemSettings((visible) => !visible)}
+      >
+        {showSystemSettings ? "Ocultar ajustes del portátil" : "Más ajustes"}
+      </Button>
+
+      {showSystemSettings ? (
+        <section aria-label="Ajustes del portátil" className="grid gap-5" id="ajustes-del-portatil">
+          <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
+          <DisplaySettingsPanel />
+          <AudioSettingsPanel />
+        </section>
+      ) : null}
+
       <Panel title="Escritorios">
         <WorkspaceSwitcher
           activeWorkspace={activeWorkspace}
@@ -81,6 +101,8 @@ export function SystemView({
           workspaces={workspaces}
         />
       </Panel>
+
+      <LearningPanel client={adminClient} />
 
       {/*
        * Un `details` y no una pestaña: se abre con teclado, se anuncia como

@@ -6,6 +6,9 @@ export const SYSTEM_IPC_CHANNELS = {
   getDisplayStatus: "agenos-system:get-display-status",
   setBrightness: "agenos-system:set-brightness",
   turnOffDisplay: "agenos-system:turn-off-display",
+  getAudioStatus: "agenos-system:get-audio-status",
+  setVolume: "agenos-system:set-volume",
+  setMuted: "agenos-system:set-muted",
 } as const;
 
 export const PI_IPC_CHANNELS = {
