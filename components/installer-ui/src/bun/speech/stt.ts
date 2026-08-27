@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resolveLanguage } from "../../../../stt/config";
 import { WhisperEngineError, type SttEngineName } from "../../../../stt/engine";
 import { createSttRuntime, type SttRuntime } from "../../../../stt/runtime";
 
@@ -31,11 +30,13 @@ export type SttStatusResponse = {
 export type SttTranscribeInput = {
   audio: Uint8Array;
   contentType: string;
-  lang?: string;
+  signal?: AbortSignal;
 };
 
 export type SttFailureCode =
   | "unavailable"
+  | "busy"
+  | "cancelled"
   | "unsupported-media"
   | "no-speech"
   | "transcription-failed";
@@ -67,6 +68,7 @@ export type SttServiceOptions = {
 export type SttService = {
   status(): SttStatusResponse;
   transcribe(input: SttTranscribeInput): Promise<SttTranscribeResponse>;
+  dispose(): void;
 };
 
 const NO_SPEECH_MESSAGE = "No se detecto voz. Intentalo otra vez o usa texto.";
@@ -215,7 +217,6 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
       };
     }
 
-    const language = resolveLanguage(input.lang, runtime.settings.language);
     const startedAt = now();
     const workDir = await mkdtemp(join(tempDir, "agenos-stt-http-"));
     const inputPath = join(workDir, `utterance.${format}`);
@@ -233,7 +234,7 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
       }
 
       const wav = await readFile(wavPath);
-      const transcription = await runtime.engine.transcribeWav(new Uint8Array(wav), { language });
+      const transcription = await runtime.engine.transcribeWav(new Uint8Array(wav), { signal: input.signal });
 
       // El motor devuelve vacio si no encuentra habla; la ruta HTTP lo conserva
       // como un 422 tipado en vez de inventar una frase.
@@ -249,12 +250,15 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
         model: transcription.model,
       };
     } catch (error) {
-      const unavailable = error instanceof WhisperEngineError && error.code === "unavailable";
+      const engineCode = error instanceof WhisperEngineError ? error.code : null;
+      const unavailable = engineCode === "unavailable";
       const message = error instanceof Error ? error.message : String(error);
 
       return {
         ok: false,
-        code: unavailable ? "unavailable" : "transcription-failed",
+        code: engineCode === "busy" || engineCode === "cancelled"
+          ? engineCode
+          : unavailable ? "unavailable" : "transcription-failed",
         message: unavailable ? message : `No se pudo transcribir el audio: ${message}`,
       };
     } finally {
@@ -262,5 +266,11 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
     }
   }
 
-  return { status, transcribe };
+  return {
+    status,
+    transcribe,
+    dispose() {
+      runtime.engine.dispose();
+    },
+  };
 }

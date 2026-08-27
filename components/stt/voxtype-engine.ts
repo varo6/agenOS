@@ -26,12 +26,13 @@ export type VoxtypeEngineOptions = {
   env?: Record<string, string | undefined>;
   now?: () => number;
   logger?: (message: string) => void;
+  startTimeoutMs?: number;
+  inferenceTimeoutMs?: number;
 };
 
 type WorkerReply = {
   ok?: boolean;
   text?: unknown;
-  language?: unknown;
   error?: unknown;
 };
 
@@ -39,6 +40,7 @@ type Worker = {
   child: ChildProcess;
   ready: Promise<void>;
   result: Promise<WorkerReply>;
+  stop(error: WhisperEngineError): void;
 };
 
 const START_TIMEOUT_MS = 60_000;
@@ -133,8 +135,11 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
   const env = options.env ?? process.env;
   const now = options.now ?? (() => Date.now());
   const log = options.logger ?? (() => {});
+  const startTimeoutMs = options.startTimeoutMs ?? START_TIMEOUT_MS;
+  const inferenceTimeoutMs = options.inferenceTimeoutMs ?? INFERENCE_TIMEOUT_MS;
 
   let worker: Worker | null = null;
+  let transcribing = false;
   let disposed = false;
 
   function status() {
@@ -155,10 +160,16 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
       throw new WhisperEngineError("unavailable", status().reason ?? "Voxtype no esta disponible.");
     }
 
-    const child = spawnFn(paths.voxtype, voxtypeWorkerArgs(settings, paths.model), {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...env },
-    });
+    let child: ChildProcess;
+    try {
+      child = spawnFn(paths.voxtype, voxtypeWorkerArgs(settings, paths.model), {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...env },
+      });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw new WhisperEngineError("unavailable", `No se pudo arrancar Voxtype: ${detail}`);
+    }
 
     let stdoutBuffer = "";
     let readyResolve!: () => void;
@@ -167,6 +178,7 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
     let resultReject!: (error: Error) => void;
     let sawReady = false;
     let sawResult = false;
+    let stopped = false;
 
     const ready = new Promise<void>((resolvePromise, rejectPromise) => {
       readyResolve = resolvePromise;
@@ -181,14 +193,35 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
     // como promesa sin manejar en ese camino.
     void result.catch(() => {});
 
-    const startTimer = setTimeout(() => {
+    let startTimer: ReturnType<typeof setTimeout>;
+
+    const settleFailure = (error: WhisperEngineError) => {
       if (!sawReady) {
-        const error = new WhisperEngineError("unavailable", "Voxtype no cargo el modelo a tiempo.");
+        sawReady = true;
         readyReject(error);
+      }
+      if (!sawResult) {
+        sawResult = true;
         resultReject(error);
+      }
+    };
+
+    const stop = (error: WhisperEngineError) => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(startTimer);
+      settleFailure(error);
+      if (child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
-    }, START_TIMEOUT_MS);
+      if (worker?.child === child) {
+        worker = null;
+      }
+    };
+
+    startTimer = setTimeout(() => {
+      stop(new WhisperEngineError("unavailable", "Voxtype no cargo el modelo a tiempo."));
+    }, startTimeoutMs);
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutBuffer += chunk.toString("utf8");
@@ -206,10 +239,11 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
           continue;
         }
         try {
+          const reply = JSON.parse(line) as WorkerReply;
           sawResult = true;
-          resultResolve(JSON.parse(line) as WorkerReply);
+          resultResolve(reply);
         } catch {
-          // Voxtype solo publica una linea JSON; el resto es salida de diagnostico.
+          stop(new WhisperEngineError("transcription-failed", "Voxtype devolvio JSON no valido."));
         }
       }
     });
@@ -219,11 +253,11 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
         log(line);
       }
     });
+    child.stdin?.on("error", (cause) => {
+      stop(new WhisperEngineError("transcription-failed", `Voxtype no pudo recibir el audio: ${cause.message}`));
+    });
     child.on("error", (cause) => {
-      clearTimeout(startTimer);
-      const error = new WhisperEngineError("unavailable", `No se pudo arrancar Voxtype: ${cause.message}`);
-      if (!sawReady) readyReject(error);
-      if (!sawResult) resultReject(error);
+      stop(new WhisperEngineError("unavailable", `No se pudo arrancar Voxtype: ${cause.message}`));
     });
     child.on("close", (code) => {
       clearTimeout(startTimer);
@@ -231,14 +265,14 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
         sawReady ? "transcription-failed" : "unavailable",
         `Voxtype termino con codigo ${code ?? "desconocido"}.`,
       );
-      if (!sawReady) readyReject(error);
-      if (!sawResult) resultReject(error);
+      settleFailure(error);
+      stopped = true;
       if (worker?.child === child) {
         worker = null;
       }
     });
 
-    return { child, ready, result };
+    return { child, ready, result, stop };
   }
 
   async function ensureReady(): Promise<void> {
@@ -258,61 +292,93 @@ export function createVoxtypeEngine(options: VoxtypeEngineOptions): WhisperEngin
     wav: Uint8Array,
     transcribeOptions: TranscribeWavOptions = {},
   ): Promise<TranscribeWavResult> {
-    await ensureReady();
-    const active = worker;
-    if (!active || !active.child.stdin) {
-      throw new WhisperEngineError("transcription-failed", "Voxtype perdio el proceso de transcripcion.");
+    if (transcribing) {
+      throw new WhisperEngineError("busy", "Voxtype ya esta transcribiendo otra frase.");
     }
+    transcribing = true;
 
     const startedAt = now();
-    const samples = wavToFloat32(wav);
-    if (!hasAudibleSignal(samples)) {
-      cancelPending();
+    let active: Worker | null = null;
+    let abortReject: ((error: Error) => void) | null = null;
+    const aborted = new Promise<never>((_, rejectPromise) => {
+      abortReject = rejectPromise;
+    });
+    const abortError = () => new WhisperEngineError("cancelled", "Transcripcion de Voxtype cancelada.");
+    const onAbort = () => {
+      const error = abortError();
+      (active ?? worker)?.stop(error);
+      abortReject?.(error);
+    };
+    transcribeOptions.signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+      if (transcribeOptions.signal?.aborted) throw abortError();
+      await Promise.race([ensureReady(), aborted]);
+      if (transcribeOptions.signal?.aborted) throw abortError();
+      active = worker;
+      if (!active || !active.child.stdin) {
+        throw new WhisperEngineError("transcription-failed", "Voxtype perdio el proceso de transcripcion.");
+      }
+
+      const samples = wavToFloat32(wav);
+      if (!hasAudibleSignal(samples)) {
+        return {
+          text: "",
+          durationMs: Math.max(0, now() - startedAt),
+          model: paths.model ?? "",
+          language: "es",
+        };
+      }
+
+      let resultTimer: ReturnType<typeof setTimeout> | null = null;
+      const resultTimeout = new Promise<never>((_, rejectPromise) => {
+        resultTimer = setTimeout(() => {
+          const error = new WhisperEngineError("transcription-failed", "Voxtype no termino la transcripcion a tiempo.");
+          active?.stop(error);
+          rejectPromise(error);
+        }, inferenceTimeoutMs);
+      });
+
+      try {
+        active.child.stdin.end(encodeVoxtypeAudio(samples));
+      } catch (cause) {
+        throw new WhisperEngineError(
+          "transcription-failed",
+          `Voxtype no pudo recibir el audio: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
+
+      const reply = await Promise.race([active.result, resultTimeout, aborted]).finally(() => {
+        if (resultTimer) clearTimeout(resultTimer);
+      });
+      if (reply.ok !== true) {
+        throw new WhisperEngineError(
+          "transcription-failed",
+          typeof reply.error === "string" ? reply.error : "Voxtype no pudo transcribir el audio.",
+        );
+      }
+
       return {
-        text: "",
+        text: normalizeWhisperTranscript(typeof reply.text === "string" ? reply.text : ""),
         durationMs: Math.max(0, now() - startedAt),
         model: paths.model ?? "",
-        language: transcribeOptions.language?.trim() || settings.language,
+        language: "es",
       };
+    } catch (error) {
+      const failure = error instanceof WhisperEngineError
+        ? error
+        : new WhisperEngineError("transcription-failed", error instanceof Error ? error.message : String(error));
+      (active ?? worker)?.stop(failure);
+      throw failure;
+    } finally {
+      transcribeOptions.signal?.removeEventListener("abort", onAbort);
+      active?.stop(new WhisperEngineError("cancelled", "Worker de Voxtype finalizado."));
+      transcribing = false;
     }
-    let resultTimer: ReturnType<typeof setTimeout> | null = null;
-    const resultTimeout = new Promise<never>((_, rejectPromise) => {
-      resultTimer = setTimeout(() => {
-        active.child.kill("SIGKILL");
-        rejectPromise(new WhisperEngineError("transcription-failed", "Voxtype no termino la transcripcion a tiempo."));
-      }, INFERENCE_TIMEOUT_MS);
-    });
-
-    active.child.stdin.end(encodeVoxtypeAudio(samples));
-    const reply = await Promise.race([active.result, resultTimeout]).finally(() => {
-      if (resultTimer) clearTimeout(resultTimer);
-    });
-    if (worker?.child === active.child) {
-      worker = null;
-    }
-    if (reply.ok !== true) {
-      throw new WhisperEngineError(
-        "transcription-failed",
-        typeof reply.error === "string" ? reply.error : "Voxtype no pudo transcribir el audio.",
-      );
-    }
-
-    const language = typeof reply.language === "string"
-      ? reply.language
-      : transcribeOptions.language?.trim() || settings.language;
-    return {
-      text: normalizeWhisperTranscript(typeof reply.text === "string" ? reply.text : ""),
-      durationMs: Math.max(0, now() - startedAt),
-      model: paths.model ?? "",
-      language,
-    };
   }
 
   function cancelPending(): void {
-    if (worker?.child.exitCode === null) {
-      worker.child.kill("SIGKILL");
-    }
-    worker = null;
+    worker?.stop(new WhisperEngineError("cancelled", "Transcripcion de Voxtype cancelada."));
   }
 
   function dispose(): void {

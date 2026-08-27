@@ -15,6 +15,9 @@ export type SttManifest = {
   ref: string | null;
   voxtypeRef: string | null;
   buildProfile: string | null;
+  voxtypeFingerprint?: string | null;
+  whisperNativeFingerprint?: string | null;
+  modelsFingerprint?: string | null;
   model: string | null;
   vadModel: string | null;
   language: string | null;
@@ -78,6 +81,9 @@ export function parseSttManifest(contents: string): SttManifest {
     ref: values.get("ref") ?? null,
     voxtypeRef: values.get("voxtype_ref") ?? null,
     buildProfile: values.get("build_profile") ?? null,
+    voxtypeFingerprint: values.get("voxtype_fingerprint") ?? null,
+    whisperNativeFingerprint: values.get("whisper_native_fingerprint") ?? null,
+    modelsFingerprint: values.get("models_fingerprint") ?? null,
     model: values.get("model") ?? null,
     vadModel: values.get("vad_model") ?? null,
     language: values.get("language") ?? null,
@@ -89,6 +95,9 @@ const EMPTY_MANIFEST: SttManifest = {
   ref: null,
   voxtypeRef: null,
   buildProfile: null,
+  voxtypeFingerprint: null,
+  whisperNativeFingerprint: null,
+  modelsFingerprint: null,
   model: null,
   vadModel: null,
   language: null,
@@ -154,7 +163,9 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
     }
   })();
 
-  const variants = supportsSimd() ? ["", "-baseline"] : ["-baseline", ""];
+  // En CPUs antiguas nunca se prueba el binario optimizado: hacerlo puede
+  // acabar en SIGILL antes de que el runtime pueda mostrar un error.
+  const variants = supportsSimd() ? ["", "-baseline"] : ["-baseline"];
 
   const resolveBinary = (name: string, override: string | undefined): string | null => {
     const configured = override?.trim();
@@ -184,13 +195,7 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
   };
 
   const server = resolveBinary("whisper-server", env.AGENOS_WHISPER_SERVER_BIN);
-  const voxtype = (() => {
-    const configured = env.AGENOS_VOXTYPE_BIN?.trim();
-    if (configured) {
-      return pathExists(configured) ? configured : null;
-    }
-    return root && pathExists(resolve(root, "voxtype")) ? resolve(root, "voxtype") : null;
-  })();
+  const voxtype = resolveBinary("voxtype", env.AGENOS_VOXTYPE_BIN);
   const vadCapture = resolveBinary("agenos-vad-capture", env.AGENOS_STT_VAD_CAPTURE_BIN);
   const model = resolveModel(env.AGENOS_WHISPER_MODEL, manifest.model, FALLBACK_WHISPER_MODEL);
   const vadModel = resolveModel(env.AGENOS_STT_VAD_MODEL, manifest.vadModel, FALLBACK_VAD_MODEL);
@@ -216,7 +221,7 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
   if (!model) {
     missing.push(`modelo ${manifest.model ?? FALLBACK_WHISPER_MODEL}`);
   }
-  if (!vadModel) {
+  if (requestedEngine === "whisper.cpp" && !vadModel) {
     missing.push(`modelo VAD ${manifest.vadModel ?? FALLBACK_VAD_MODEL}`);
   }
 

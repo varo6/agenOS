@@ -105,6 +105,7 @@ function fakeSpeech() {
       engine: "whisper.cpp" as const,
       model: "/opt/agenos/system/whisper.cpp/models/ggml-base-q5_1.bin",
     }),
+    dispose: () => {},
   };
 }
 
@@ -1535,7 +1536,7 @@ describe("createInstallerApiHandler", () => {
   test("transcribes audio through /api/speech/transcribe", async () => {
     const handler = createHandler();
 
-    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe?lang=es", {
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe?lang=en", {
       method: "POST",
       headers: { "content-type": "audio/webm" },
       body: new Uint8Array([1, 2, 3]),
@@ -1547,6 +1548,53 @@ describe("createInstallerApiHandler", () => {
       text: "abre fotos",
       engine: "whisper.cpp",
     });
+  });
+
+  test("ignores the legacy lang query instead of forwarding it", async () => {
+    let received: Record<string, unknown> | null = null;
+    const speech = fakeSpeech();
+    const handler = createHandler({
+      speech: {
+        ...speech,
+        transcribe: async (input) => {
+          received = input as unknown as Record<string, unknown>;
+          return speech.transcribe();
+        },
+      },
+    });
+
+    await handler.fetch(new Request("http://localhost/api/speech/transcribe?lang=en", {
+      method: "POST",
+      headers: { "content-type": "audio/wav" },
+      body: new Uint8Array([1]),
+    }));
+
+    expect(received).not.toHaveProperty("lang");
+  });
+
+  test("maps a busy one-shot worker to 409", async () => {
+    const handler = createHandler({
+      speech: {
+        ...fakeSpeech(),
+        transcribe: async () => ({ ok: false, code: "busy", message: "Voxtype ocupado." }),
+      },
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/speech/transcribe", {
+      method: "POST",
+      headers: { "content-type": "audio/wav" },
+      body: new Uint8Array([1]),
+    }));
+
+    expect(response.status).toBe(409);
+  });
+
+  test("disposing the handler disposes speech", () => {
+    let disposeCalls = 0;
+    const handler = createHandler({ speech: { ...fakeSpeech(), dispose: () => { disposeCalls += 1; } } });
+
+    handler.dispose();
+    expect(disposeCalls).toBe(1);
   });
 
   test("rejects empty audio bodies on /api/speech/transcribe", async () => {
@@ -1572,6 +1620,7 @@ describe("createInstallerApiHandler", () => {
           maxDurationMs: 15_000,
         }),
         transcribe: async () => ({ ok: false, code: "no-speech", message: "No se detecto voz." }),
+        dispose: () => {},
       },
     });
 
@@ -1597,6 +1646,7 @@ describe("createInstallerApiHandler", () => {
           maxDurationMs: 15_000,
         }),
         transcribe: async () => ({ ok: false, code: "unavailable", message: "falta whisper-server" }),
+        dispose: () => {},
       },
     });
 

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import type { SttSettings } from "./config";
 import type { SttPaths } from "./paths";
@@ -152,12 +152,7 @@ export function startVadCapture(options: StartCaptureOptions): CaptureHandle {
       });
       analyzer = spawnFn(paths.vadCapture as string, vadCaptureArgs(settings, paths.vadModel as string, outPath), {
         stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          ...env,
-          LD_LIBRARY_PATH: [resolve(paths.vadCapture as string, "..", "lib"), env.LD_LIBRARY_PATH]
-            .filter(Boolean)
-            .join(":"),
-        },
+        env: { ...env },
       });
 
       recorder.stdout?.pipe(analyzer.stdin as NodeJS.WritableStream);

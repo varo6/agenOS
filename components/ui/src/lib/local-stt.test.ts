@@ -156,7 +156,7 @@ describe("createLocalHttpSpeechController", () => {
     expect(callbacks.results).toEqual(["abre fotos"]);
     expect(callbacks.errors).toHaveLength(0);
     expect(stream.stoppedTracks).toBe(1);
-    expect(requests[0]?.url).toContain("/api/speech/transcribe?lang=es");
+    expect(requests[0]?.url).toBe("/api/speech/transcribe");
     expect(requests[0]?.contentType).toBe("audio/webm");
 
     expect(controller.start()).toBe(true);
@@ -185,7 +185,7 @@ describe("createLocalHttpSpeechController", () => {
       requestStream: async () => fakeStream(),
       createRecorder: () => new FakeRecorder(),
       maxDurationMs: 10,
-      fetchFn: (async () => jsonResponse({ ok: false, message: "falta whisper-cli" }, 503)) as typeof fetch,
+      fetchFn: (async () => jsonResponse({ ok: false, message: "falta voxtype" }, 503)) as typeof fetch,
     });
 
     controller.start();

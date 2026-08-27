@@ -1,16 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { resolve } from "node:path";
 
 import type { SttSettings } from "./config";
 import type { SttPaths } from "./paths";
 
 /**
- * Motor Whisper residente.
+ * Fallback mediante whisper-server.
  *
- * whisper-server carga el modelo una sola vez y lo reutiliza en cada peticion,
- * que era el otro gran coste de la version anterior: arrancar `whisper-cli` por
- * frase pagaba la carga del modelo cada vez. Escucha solo en loopback y, si
- * systemd no lo ha levantado, este modulo lo arranca bajo demanda.
+ * whisper-server es el fallback explicito. Carga el modelo una sola vez,
+ * escucha solo en loopback y este modulo lo arranca bajo demanda.
  *
  * Electron y la ruta HTTP hablan con el mismo servidor y le mandan exactamente
  * los mismos parametros, asi que las dos rutas transcriben igual.
@@ -28,7 +25,6 @@ export type WhisperEngineStatus = {
 };
 
 export type TranscribeWavOptions = {
-  language?: string;
   /** Se ignora si el motor no esta listo; lo normal es dejar el default. */
   audioContext?: number;
   signal?: AbortSignal;
@@ -38,7 +34,7 @@ export type TranscribeWavResult = {
   text: string;
   durationMs: number;
   model: string;
-  language: string;
+  language: "es";
 };
 
 export type WhisperEngine = {
@@ -68,9 +64,9 @@ const START_POLL_MS = 200;
 const INFERENCE_TIMEOUT_MS = 120_000;
 
 export class WhisperEngineError extends Error {
-  readonly code: "unavailable" | "transcription-failed";
+  readonly code: "unavailable" | "busy" | "cancelled" | "transcription-failed";
 
-  constructor(code: "unavailable" | "transcription-failed", message: string) {
+  constructor(code: "unavailable" | "busy" | "cancelled" | "transcription-failed", message: string) {
     super(message);
     this.name = "WhisperEngineError";
     this.code = code;
@@ -78,7 +74,7 @@ export class WhisperEngineError extends Error {
 }
 
 /**
- * Argumentos con los que arranca el servidor residente.
+ * Argumentos con los que arranca whisper-server cuando se pide el fallback.
  *
  * Los parametros del VAD no van aqui: en whisper.cpp v1.7.6 el flag
  * `--vad-min-silence-duration-ms` escribe por error sobre
@@ -88,14 +84,14 @@ export class WhisperEngineError extends Error {
 export function whisperServerArgs(settings: SttSettings, paths: SttPaths): string[] {
   return [
     "-m", paths.model ?? "",
-    "--host", settings.serverHost,
-    "--port", String(settings.serverPort),
+    "--host", settings.fallbackServerHost,
+    "--port", String(settings.fallbackServerPort),
     "-t", String(settings.threads),
     "-l", settings.language,
-    "-bs", String(settings.beamSize),
-    "-bo", String(settings.bestOf),
-    ...(settings.suppressNonSpeech ? ["--suppress-nst"] : []),
-    ...(settings.audioContext > 0 ? ["-ac", String(settings.audioContext)] : []),
+    "-bs", String(settings.fallbackBeamSize),
+    "-bo", String(settings.fallbackBestOf),
+    ...(settings.fallbackSuppressNonSpeech ? ["--suppress-nst"] : []),
+    ...(settings.fallbackAudioContext > 0 ? ["-ac", String(settings.fallbackAudioContext)] : []),
     "--vad",
     "-vm", paths.vadModel ?? "",
     "--no-gpu",
@@ -105,18 +101,17 @@ export function whisperServerArgs(settings: SttSettings, paths: SttPaths): strin
 /** Campos del multipart de /inference. Mismos para Electron y para HTTP. */
 export function inferenceFields(
   settings: SttSettings,
-  language: string,
   audioContext: number,
 ): Record<string, string> {
   return {
     response_format: "json",
-    language,
+    language: settings.language,
     temperature: "0",
     temperature_inc: "0.2",
-    beam_size: String(settings.beamSize),
-    best_of: String(settings.bestOf),
+    beam_size: String(settings.fallbackBeamSize),
+    best_of: String(settings.fallbackBestOf),
     audio_ctx: String(audioContext),
-    suppress_nst: "true",
+    suppress_nst: String(settings.fallbackSuppressNonSpeech),
     no_timestamps: "false",
     no_context: "true",
     vad: "true",
@@ -193,15 +188,10 @@ export function createWhisperEngine(options: WhisperEngineOptions): WhisperEngin
       throw new WhisperEngineError("unavailable", status().reason ?? "STT local no disponible.");
     }
 
-    log(`Arrancando whisper-server residente en ${baseUrl}.`);
+    log(`Arrancando el fallback whisper-server en ${baseUrl}.`);
     child = spawnFn(paths.server, whisperServerArgs(settings, paths), {
       stdio: ["ignore", "ignore", "pipe"],
-      env: {
-        ...env,
-        LD_LIBRARY_PATH: [resolve(paths.server, "..", "lib"), env.LD_LIBRARY_PATH]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: { ...env },
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -235,7 +225,7 @@ export function createWhisperEngine(options: WhisperEngineOptions): WhisperEngin
       throw new WhisperEngineError("unavailable", missing.reason ?? "STT local no disponible.");
     }
 
-    if (!settings.serverAutostart) {
+    if (!settings.fallbackServerAutostart) {
       throw new WhisperEngineError(
         "unavailable",
         `whisper-server no responde en ${baseUrl} y el arranque automatico esta desactivado.`,
@@ -272,13 +262,12 @@ export function createWhisperEngine(options: WhisperEngineOptions): WhisperEngin
   ): Promise<TranscribeWavResult> {
     await ensureReady();
 
-    const language = transcribeOptions.language?.trim() || settings.language;
-    const audioContext = transcribeOptions.audioContext ?? settings.audioContext;
+    const audioContext = transcribeOptions.audioContext ?? settings.fallbackAudioContext;
     const startedAt = now();
 
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "utterance.wav");
-    for (const [key, value] of Object.entries(inferenceFields(settings, language, audioContext))) {
+    for (const [key, value] of Object.entries(inferenceFields(settings, audioContext))) {
       form.append(key, value);
     }
 
@@ -312,7 +301,7 @@ export function createWhisperEngine(options: WhisperEngineOptions): WhisperEngin
       text: normalizeWhisperTranscript(typeof payload.text === "string" ? payload.text : ""),
       durationMs: Math.max(0, now() - startedAt),
       model: paths.model ?? "",
-      language,
+      language: "es",
     };
   }
 

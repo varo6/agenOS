@@ -489,7 +489,7 @@ function runGoogleSend(api: ReturnType<typeof createGoogleApi>, record: Record<s
 
 export function createInstallerApiHandler(
   dependencies: Partial<InstallerApiDependencies> = {},
-): { fetch: (request: Request) => Promise<Response> } {
+): { fetch: (request: Request) => Promise<Response>; dispose: () => void } {
   const confirmations = dependencies.confirmations ?? createConfirmationStore();
   const memoryStore = dependencies.memoryStore ?? createMemoryStore();
   const learnedMemory = dependencies.learnedMemory ?? createLearnedMemoryStore();
@@ -1145,19 +1145,23 @@ export function createInstallerApiHandler(
           const result = await deps.speech.transcribe({
             audio,
             contentType: request.headers.get("content-type") ?? "",
-            lang: url.searchParams.get("lang") ?? undefined,
+            signal: request.signal,
           });
 
           if (result.ok === false) {
             const speechStatus = result.code === "unavailable"
               ? 503
-              : result.code === "unsupported-media"
-                ? 400
-                // Silencio o ruido no son un fallo del servidor: la peticion era
-                // valida y el audio simplemente no traia voz.
-                : result.code === "no-speech"
-                  ? 422
-                  : 500;
+              : result.code === "busy"
+                ? 409
+                : result.code === "cancelled"
+                  ? 499
+                  : result.code === "unsupported-media"
+                    ? 400
+                    // Silencio o ruido no son un fallo del servidor: la peticion era
+                    // valida y el audio simplemente no traia voz.
+                    : result.code === "no-speech"
+                      ? 422
+                      : 500;
             return json(result, { status: speechStatus });
           }
 
@@ -1817,6 +1821,9 @@ export function createInstallerApiHandler(
         );
       }
     },
+    dispose() {
+      deps.speech.dispose();
+    },
   };
 }
 
@@ -1835,6 +1842,14 @@ export function startInstallerApiServer(
     // default 10s idle timeout would kill them mid-turn. 0 disables it.
     idleTimeout: 0,
     fetch: handler.fetch,
+  });
+  const stopServer = server.stop.bind(server);
+  Object.defineProperty(server, "stop", {
+    configurable: true,
+    value: (closeActiveConnections?: boolean) => {
+      handler.dispose();
+      return stopServer(closeActiveConnections);
+    },
   });
 
   console.log(`[agenos-installer-api] listening on http://${server.hostname}:${server.port}`);

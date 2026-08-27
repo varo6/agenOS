@@ -22,7 +22,7 @@ export type LocalSpeechResult =
       ok: true;
       transcript: string;
       engine: SttEngineName;
-      language: string;
+      language: "es";
       model: string;
       captureMs: number;
       transcribeMs: number;
@@ -75,8 +75,8 @@ export function createLocalSpeechService(
       return { ok: false, code: "unavailable", message: current.reason ?? "STT local no disponible." };
     }
 
-    // Voxtype carga el modelo en paralelo con la grabacion. En el fallback
-    // residente esta llamada solo comprueba que whisper-server responde.
+    // Voxtype carga el modelo en paralelo con la grabacion. En el fallback esta
+    // llamada comprueba que whisper-server responde.
     const engineReady = runtime.engine.ensureReady();
     void engineReady.catch(() => {});
     const handle = startVadCapture({

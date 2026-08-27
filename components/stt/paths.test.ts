@@ -12,7 +12,9 @@ const MANIFEST = [
   "ref=v1.7.6",
   "voxtype_ref=v0.7.5",
   "build_profile=static-simd-plus-baseline-x86_64-v2-server-vad",
-  "fingerprint=abc123",
+  "voxtype_fingerprint=vox123",
+  "whisper_native_fingerprint=whisper123",
+  "models_fingerprint=models123",
   "model=ggml-small-q5_1.bin",
   "vad_model=ggml-silero-v5.1.2.bin",
   "language=es",
@@ -37,6 +39,7 @@ const FULL_INSTALL = [
   `${ROOT}/whisper-server`,
   `${ROOT}/whisper-server-baseline`,
   `${ROOT}/voxtype`,
+  `${ROOT}/voxtype-baseline`,
   `${ROOT}/agenos-vad-capture`,
   `${ROOT}/agenos-vad-capture-baseline`,
   `${ROOT}/models/ggml-small-q5_1.bin`,
@@ -52,6 +55,9 @@ describe("parseSttManifest", () => {
     expect(manifest.model).toBe("ggml-small-q5_1.bin");
     expect(manifest.vadModel).toBe("ggml-silero-v5.1.2.bin");
     expect(manifest.ref).toBe("v1.7.6");
+    expect(manifest.voxtypeFingerprint).toBe("vox123");
+    expect(manifest.whisperNativeFingerprint).toBe("whisper123");
+    expect(manifest.modelsFingerprint).toBe("models123");
   });
 
   test("un `note` con `=` dentro no rompe el resto", () => {
@@ -91,6 +97,7 @@ describe("resolveSttPaths", () => {
     const paths = pathsWith(FULL_INSTALL, { readCpuInfo: () => BASELINE_CPUINFO });
 
     expect(paths.server).toBe(`${ROOT}/whisper-server-baseline`);
+    expect(paths.voxtype).toBe(`${ROOT}/voxtype-baseline`);
     expect(paths.vadCapture).toBe(`${ROOT}/agenos-vad-capture-baseline`);
   });
 
@@ -98,12 +105,31 @@ describe("resolveSttPaths", () => {
     const paths = pathsWith(FULL_INSTALL, { env: { AGENOS_STT_FORCE_BASELINE: "1" } });
 
     expect(paths.server).toBe(`${ROOT}/whisper-server-baseline`);
+    expect(paths.voxtype).toBe(`${ROOT}/voxtype-baseline`);
   });
 
-  test("faltar el modelo de VAD se reporta aparte del de Whisper", () => {
+  test("Voxtype no depende del modelo VAD externo", () => {
     const paths = pathsWith(FULL_INSTALL.filter((path) => !path.endsWith("silero-v5.1.2.bin")));
 
+    expect(paths.missing).toEqual([]);
+    expect(paths.vadModel).toBeNull();
+  });
+
+  test("el fallback si necesita el modelo VAD externo", () => {
+    const paths = pathsWith(FULL_INSTALL.filter((path) => !path.endsWith("silero-v5.1.2.bin")), {
+      env: { AGENOS_STT_ENGINE: "whisper.cpp" },
+    });
+
     expect(paths.missing).toEqual(["modelo VAD ggml-silero-v5.1.2.bin"]);
+  });
+
+  test("una CPU sin AVX2 nunca cae al Voxtype optimizado", () => {
+    const paths = pathsWith(FULL_INSTALL.filter((path) => !path.endsWith("voxtype-baseline")), {
+      readCpuInfo: () => BASELINE_CPUINFO,
+    });
+
+    expect(paths.voxtype).toBeNull();
+    expect(paths.missing).toContain("voxtype");
   });
 
   test("una raiz alternativa (Electron empaquetado) se prefiere a la del sistema", () => {

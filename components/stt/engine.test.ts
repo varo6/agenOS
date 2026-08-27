@@ -76,7 +76,7 @@ describe("whisperServerArgs", () => {
 
 describe("inferenceFields", () => {
   test("cada peticion lleva los mismos parametros que el arranque", () => {
-    const fields = inferenceFields(DEFAULT_STT_SETTINGS, "es", 0);
+    const fields = inferenceFields(DEFAULT_STT_SETTINGS, 0);
 
     expect(fields.language).toBe("es");
     expect(fields.beam_size).toBe("5");
@@ -162,7 +162,7 @@ describe("createWhisperEngine", () => {
       (async () => {
         throw new Error("ECONNREFUSED");
       }) as unknown as typeof fetch,
-      { ...DEFAULT_STT_SETTINGS, serverAutostart: false },
+      { ...DEFAULT_STT_SETTINGS, fallbackServerAutostart: false },
     );
 
     await expect(engine.transcribeWav(new Uint8Array([1]))).rejects.toThrow(/no responde/);

@@ -35,7 +35,6 @@ export type LocalSttControllerOptions = {
   requestStream?: () => Promise<LocalSttMediaStream>;
   createRecorder?: (stream: LocalSttMediaStream) => LocalSttRecorder;
   maxDurationMs?: number;
-  lang?: string;
 };
 
 let cachedAvailability: boolean | null = null;
@@ -158,7 +157,7 @@ const NO_SPEECH_ERROR: SpeechRecognitionError = {
 
 const UNAVAILABLE_ERROR: SpeechRecognitionError = {
   code: "local-stt-unavailable",
-  message: "STT local no disponible. Revisa whisper.cpp y el modelo base Q5_1 multilingue.",
+  message: "STT local no disponible. Revisa Voxtype y el modelo small Q5_1 multilingue.",
   disableVoice: true,
 };
 
@@ -170,7 +169,6 @@ export function createLocalHttpSpeechController(
   const requestStream = options.requestStream ?? defaultRequestStream;
   const createRecorder = options.createRecorder ?? defaultCreateRecorder;
   const maxDurationMs = options.maxDurationMs ?? cachedMaxDurationMs ?? DEFAULT_MAX_DURATION_MS;
-  const lang = options.lang ?? "es";
 
   let disposed = false;
   let listening = false;
@@ -196,7 +194,7 @@ export function createLocalHttpSpeechController(
   }
 
   async function transcribe(blob: Blob): Promise<void> {
-    const response = await fetchFn(`${LOCAL_STT_TRANSCRIBE_PATH}?lang=${encodeURIComponent(lang)}`, {
+    const response = await fetchFn(LOCAL_STT_TRANSCRIBE_PATH, {
       method: "POST",
       headers: { "content-type": blob.type || "audio/webm" },
       body: blob,

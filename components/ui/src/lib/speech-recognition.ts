@@ -128,7 +128,7 @@ function nativeFailureToSpeechError(
     case "unavailable":
       return {
         code: "native-unavailable",
-        message: "STT local no disponible. Revisa whisper.cpp, el modelo base Q5_1 multilingue y el microfono.",
+        message: "STT local no disponible. Revisa Voxtype, el modelo small Q5_1 multilingue y el microfono.",
         disableVoice: true,
       };
     case "no-speech":

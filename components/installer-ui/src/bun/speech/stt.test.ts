@@ -46,7 +46,7 @@ function wavBytes(): Uint8Array {
 }
 
 function fakeRuntime(options: FakeRuntimeOptions = {}) {
-  const requests: Array<{ wav: Uint8Array; language: string | undefined }> = [];
+  const requests: Uint8Array[] = [];
   const paths: SttPaths = { ...PATHS, ...options.paths };
   const missing = paths.missing ?? [];
 
@@ -64,12 +64,12 @@ function fakeRuntime(options: FakeRuntimeOptions = {}) {
       if (options.transcribeError) {
         throw options.transcribeError;
       }
-      requests.push({ wav, language: transcribeOptions?.language });
+      requests.push(wav);
       return {
         text: options.text ?? "abre el navegador",
         durationMs: 900,
         model: paths.model as string,
-        language: transcribeOptions?.language ?? "es",
+        language: "es",
       };
     },
     dispose: () => {},
@@ -136,10 +136,18 @@ describe("createSttService.status", () => {
     expect(status.available).toBe(false);
     expect(status.reason).toContain("ggml-base-q5_1.bin");
   });
+
+  test("un WAV HTTP sigue disponible sin el modelo externo de Silero", async () => {
+    const { runtime } = fakeRuntime({ paths: { vadModel: null, missing: [] } });
+    const service = serviceWith(runtime);
+
+    expect(service.status().available).toBe(true);
+    expect((await service.transcribe({ audio: wavBytes(), contentType: "audio/wav" })).ok).toBe(true);
+  });
 });
 
 describe("createSttService.transcribe", () => {
-  test("un wav va directo al motor residente, en espanol", async () => {
+  test("un wav va directo al motor en espanol", async () => {
     const { runtime, requests } = fakeRuntime();
     const calls: RecordedCall[] = [];
 
@@ -155,7 +163,7 @@ describe("createSttService.transcribe", () => {
     }
     // Un wav no necesita ffmpeg.
     expect(calls).toHaveLength(0);
-    expect(requests[0].language).toBe("es");
+    expect(requests).toHaveLength(1);
   });
 
   test("el webm del navegador pasa por ffmpeg antes del motor", async () => {
@@ -173,14 +181,13 @@ describe("createSttService.transcribe", () => {
     expect(requests).toHaveLength(1);
   });
 
-  test("`auto` y una etiqueta regional acaban en el idioma fijo", async () => {
+  test("ignora cualquier campo lang heredado y transcribe en espanol", async () => {
     const { runtime, requests } = fakeRuntime();
     const service = serviceWith(runtime);
 
-    await service.transcribe({ audio: wavBytes(), contentType: "audio/wav", lang: "auto" });
-    await service.transcribe({ audio: wavBytes(), contentType: "audio/wav", lang: "es-ES" });
+    await service.transcribe({ audio: wavBytes(), contentType: "audio/wav", lang: "en" } as never);
 
-    expect(requests.map((request) => request.language)).toEqual(["es", "es"]);
+    expect(requests).toHaveLength(1);
   });
 
   test("silencio y ruido bajo devuelven no-speech en vez de texto inventado", async () => {

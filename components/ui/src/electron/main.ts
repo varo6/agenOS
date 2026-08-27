@@ -476,9 +476,8 @@ app.on("window-all-closed", () => {
 
 /*
  * Al salir hay que soltar el micrófono y, si fue esta app quien levantó el
- * Whisper residente, cerrarlo también: si no, se queda un proceso de unos
- * 300 MB huérfano cada vez que se reinicia la shell durante el desarrollo.
- * Cuando el motor lo gestiona systemd, `dispose()` no toca nada.
+ * worker de Voxtype precargado, cerrarlo también. El fallback solo termina el
+ * whisper-server que este proceso haya arrancado.
  */
 app.on("will-quit", () => {
   localSpeech.cancel();

@@ -39,6 +39,8 @@ type FakeChild = EventEmitter & {
   stdout: PassThrough;
   stderr: PassThrough;
   exitCode: number | null;
+  signalCode: string | null;
+  killedWith: string[];
   kill(signal?: string): boolean;
 };
 
@@ -67,7 +69,13 @@ function fakeChild(): FakeChild {
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
   child.exitCode = null;
-  child.kill = () => true;
+  child.signalCode = null;
+  child.killedWith = [];
+  child.kill = (signal = "SIGTERM") => {
+    child.killedWith.push(signal);
+    child.signalCode = signal;
+    return true;
+  };
   return child;
 }
 
@@ -124,5 +132,194 @@ describe("worker de Voxtype", () => {
     expect(result.text).toBe("abre AgenOS");
     expect(result.language).toBe("es");
     expect(engine.status().engine).toBe("voxtype");
+  });
+
+  test("rechaza concurrencia sin compartir stdin", async () => {
+    const child = fakeChild();
+    const spawnFn = (() => {
+      queueMicrotask(() => child.stdout.write("READY\n"));
+      return child;
+    }) as never;
+    const engine = createVoxtypeEngine({ settings: DEFAULT_STT_SETTINGS, paths: PATHS, spawnFn });
+    const controller = new AbortController();
+    const first = engine.transcribeWav(pcmWav([0, 1000, -1000]), { signal: controller.signal });
+
+    await Promise.resolve();
+    await expect(engine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toMatchObject({ code: "busy" });
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: "cancelled" });
+    expect(child.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("un WAV invalido despues de precargar mata el worker y permite reintentar", async () => {
+    const children: FakeChild[] = [];
+    const spawnFn = (() => {
+      const child = fakeChild();
+      children.push(child);
+      queueMicrotask(() => child.stdout.write("READY\n"));
+      if (children.length === 2) {
+        child.stdin.on("finish", () => child.stdout.write('{"ok":true,"text":"abre fotos","language":"en"}\n'));
+      }
+      return child;
+    }) as never;
+    const engine = createVoxtypeEngine({ settings: DEFAULT_STT_SETTINGS, paths: PATHS, spawnFn });
+
+    await engine.ensureReady();
+    await expect(engine.transcribeWav(new Uint8Array([1, 2, 3]))).rejects.toThrow(/WAV no valido/);
+    expect(children[0].killedWith).toEqual(["SIGKILL"]);
+
+    const result = await engine.transcribeWav(pcmWav([0, 1000, -1000]));
+    expect(result.text).toBe("abre fotos");
+    expect(result.language).toBe("es");
+    expect(children[1].killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("el timeout de inferencia mata el worker", async () => {
+    const child = fakeChild();
+    const engine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => child.stdout.write("READY\n"));
+        return child;
+      }) as never,
+      inferenceTimeoutMs: 5,
+    });
+
+    await expect(engine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/tiempo/);
+    expect(child.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("el timeout de precarga mata el worker", async () => {
+    const child = fakeChild();
+    const engine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => child) as never,
+      startTimeoutMs: 5,
+    });
+
+    await expect(engine.ensureReady()).rejects.toThrow(/cargo el modelo/);
+    expect(child.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("cancelar durante la inferencia mata el worker", async () => {
+    const child = fakeChild();
+    const controller = new AbortController();
+    const engine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => child.stdout.write("READY\n"));
+        return child;
+      }) as never,
+    });
+    const transcription = engine.transcribeWav(pcmWav([0, 1000, -1000]), { signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(transcription).rejects.toMatchObject({ code: "cancelled" });
+    expect(child.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("una salida prematura limpia el estado y la siguiente frase funciona", async () => {
+    const children: FakeChild[] = [];
+    const spawnFn = (() => {
+      const child = fakeChild();
+      children.push(child);
+      queueMicrotask(() => child.stdout.write("READY\n"));
+      child.stdin.on("finish", () => {
+        if (children.length === 1) {
+          child.exitCode = 7;
+          child.emit("close", 7);
+        } else {
+          child.stdout.write('{"ok":true,"text":"sube el volumen"}\n');
+        }
+      });
+      return child;
+    }) as never;
+    const engine = createVoxtypeEngine({ settings: DEFAULT_STT_SETTINGS, paths: PATHS, spawnFn });
+
+    await expect(engine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/codigo 7/);
+    expect((await engine.transcribeWav(pcmWav([0, 1000, -1000]))).text).toBe("sube el volumen");
+    expect(children).toHaveLength(2);
+  });
+
+  test("JSON mal formado y dispose limpian siempre el proceso", async () => {
+    const malformed = fakeChild();
+    const engine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => malformed.stdout.write("READY\n"));
+        malformed.stdin.on("finish", () => malformed.stdout.write("{mal}\n"));
+        return malformed;
+      }) as never,
+    });
+
+    await expect(engine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/JSON/);
+    expect(malformed.killedWith).toEqual(["SIGKILL"]);
+
+    const preloaded = fakeChild();
+    const disposable = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => preloaded.stdout.write("READY\n"));
+        return preloaded;
+      }) as never,
+    });
+    await disposable.ensureReady();
+    disposable.dispose();
+    disposable.dispose();
+    expect(preloaded.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("un fallo declarado y un error de stdin matan sus workers", async () => {
+    const failed = fakeChild();
+    const failedEngine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => failed.stdout.write("READY\n"));
+        failed.stdin.on("finish", () => failed.stdout.write('{"ok":false,"error":"modelo roto"}\n'));
+        return failed;
+      }) as never,
+    });
+    await expect(failedEngine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/modelo roto/);
+    expect(failed.killedWith).toEqual(["SIGKILL"]);
+
+    const stdinFailed = fakeChild();
+    const stdinEngine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        queueMicrotask(() => stdinFailed.stdout.write("READY\n"));
+        stdinFailed.stdin.on("finish", () => stdinFailed.stdin.emit("error", new Error("EPIPE")));
+        return stdinFailed;
+      }) as never,
+    });
+    await expect(stdinEngine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/EPIPE/);
+    expect(stdinFailed.killedWith).toEqual(["SIGKILL"]);
+  });
+
+  test("un error de spawn no deja estado y permite el siguiente intento", async () => {
+    let attempts = 0;
+    const recovered = fakeChild();
+    const engine = createVoxtypeEngine({
+      settings: DEFAULT_STT_SETTINGS,
+      paths: PATHS,
+      spawnFn: (() => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("ENOENT");
+        queueMicrotask(() => recovered.stdout.write("READY\n"));
+        recovered.stdin.on("finish", () => recovered.stdout.write('{"ok":true,"text":"abre ajustes"}\n'));
+        return recovered;
+      }) as never,
+    });
+
+    await expect(engine.transcribeWav(pcmWav([0, 1000, -1000]))).rejects.toThrow(/ENOENT/);
+    expect((await engine.transcribeWav(pcmWav([0, 1000, -1000]))).text).toBe("abre ajustes");
+    expect(attempts).toBe(2);
   });
 });
