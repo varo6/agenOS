@@ -275,6 +275,52 @@ describe("createInstallerApiHandler", () => {
     expect(await jsonPayload(response)).toEqual({ ok: true });
   });
 
+  test("passes broker web control steps and correlation ids through visual tracing", async () => {
+    const traced: Array<{ input: Record<string, unknown>; correlationId?: string }> = [];
+    const webController = {
+      open: async (url: string) => ({ ok: true, message: "Página abierta.", url }),
+    } as never;
+    const webControlVisualTracer = {
+      async run(
+        input: Record<string, unknown>,
+        context: { correlationId?: string },
+        operation: () => unknown,
+      ) {
+        traced.push({ input, correlationId: context.correlationId });
+        return operation();
+      },
+      flush: async () => undefined,
+    } as never;
+    const handler = createHandler({
+      webController,
+      webControlVisualTracer,
+      workerAuth: {
+        authorizeWorkerRequest: () => ({ ok: true as const }),
+      } as never,
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/worker/tool-call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "openclaw",
+        correlationId: "corr_web_1",
+        tool: "web.control",
+        input: { action: "open", url: "https://example.test/page?secret=1" },
+      }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      output: { ok: true, message: "Página abierta." },
+    });
+    expect(traced).toEqual([{
+      correlationId: "corr_web_1",
+      input: { action: "open", url: "https://example.test/page?secret=1" },
+    }]);
+  });
+
   test("serves preflight data", async () => {
     const handler = createHandler();
 

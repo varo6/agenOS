@@ -205,6 +205,10 @@ type PiToolUpdateCallback = (update: {
   details: unknown;
 }) => void;
 
+export type PiToolContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
 export type PiCustomToolLike = {
   name: string;
   label: string;
@@ -218,7 +222,7 @@ export type PiCustomToolLike = {
     signal?: AbortSignal,
     onUpdate?: PiToolUpdateCallback,
     ctx?: unknown,
-  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
+  ): Promise<{ content: PiToolContent[]; details: unknown }>;
 };
 
 export type PiTurnStoreLike = {

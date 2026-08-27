@@ -25,6 +25,7 @@ import { runShellCommand } from "../../../agent/shell";
 import { createFileTool } from "../../../agent/files";
 import { createFilesContentService } from "../../../agent/files-content";
 import { createWebController } from "../../../agent/web-control";
+import { createPlaywrightWebController } from "./agent/web-control-playwright";
 import { createDesktopController } from "../../../agent/desktop-control";
 import { createGoogleAuth } from "../../../agent/google-auth";
 import { createGoogleApi } from "../../../agent/google-api";
@@ -43,6 +44,10 @@ import { createToolRunner, type ToolRunResult } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createLocalUiAuth } from "./agent/ui-auth";
 import { createBrokerPiTools } from "./agent/broker-pi-tools";
+import {
+  createWebControlVisualTracer,
+  type WebControlVisualTracer,
+} from "./agent/web-control-visual-trace";
 import { createAptCatalog, createPackageResolver } from "./agent/package-resolver";
 import { createPackageInstaller } from "./agent/package-installer";
 import { createPackageService } from "./agent/package-service";
@@ -105,6 +110,7 @@ export type InstallerApiDependencies = {
   browserTool: ReturnType<typeof createBrowserTool>;
   fileTool: ReturnType<typeof createFileTool>;
   webController: ReturnType<typeof createWebController>;
+  webControlVisualTracer: WebControlVisualTracer;
   desktopController: ReturnType<typeof createDesktopController>;
   googleAuth: ReturnType<typeof createGoogleAuth>;
   googleApi: ReturnType<typeof createGoogleApi>;
@@ -384,7 +390,7 @@ function asText(value: unknown): string {
 type WebControllerLike = ReturnType<typeof createWebController>;
 type DesktopControllerLike = ReturnType<typeof createDesktopController>;
 
-function runWebControl(controller: WebControllerLike, record: Record<string, unknown>) {
+async function runWebControl(controller: WebControllerLike, record: Record<string, unknown>): Promise<unknown> {
   switch (asText(record.action)) {
     case "open":
       return controller.open(asText(record.url));
@@ -502,11 +508,14 @@ export function createInstallerApiHandler(
   // El controlador web se engancha al Chromium del usuario; si no hay ninguno
   // escuchando, lo arranca con el mismo lanzador que browser_open, de modo que
   // el agente reutiliza el perfil y las sesiones ya iniciadas.
-  const webController = dependencies.webController ?? createWebController({
+  const webController = dependencies.webController ?? createPlaywrightWebController({
     ensureBrowser: async (url) => {
       const launch = await launchBrowserUrl(url ?? "about:blank", { focus: true });
       return { ok: Boolean(launch.ok), message: launch.message };
     },
+  });
+  const webControlVisualTracer = dependencies.webControlVisualTracer ?? createWebControlVisualTracer({
+    controller: webController,
   });
   const desktopController = dependencies.desktopController ?? createDesktopController();
   const googleAuth = dependencies.googleAuth ?? createGoogleAuth();
@@ -538,7 +547,14 @@ export function createInstallerApiHandler(
         ? filesContent.append(asText(record.path), asText(record.content))
         : filesContent.write(asText(record.path), asText(record.content));
     },
-    "web.control": (input) => runWebControl(webController, asRecord(input)),
+    "web.control": (input, context) => {
+      const record = asRecord(input);
+      return webControlVisualTracer.run(
+        record,
+        { correlationId: context.correlationId },
+        () => runWebControl(webController, record),
+      );
+    },
     "desktop.inspect": () => desktopController.inspect(),
     "desktop.capabilities": () => desktopController.capabilities(),
     "desktop.screenshot": (input) => desktopController.screenshot(asText(asRecord(input).path) || undefined),
@@ -695,6 +711,7 @@ export function createInstallerApiHandler(
     fileTool,
     filesContent,
     webController,
+    webControlVisualTracer,
     desktopController,
     googleAuth,
     googleApi,
@@ -1823,6 +1840,9 @@ export function createInstallerApiHandler(
     },
     dispose() {
       deps.speech.dispose();
+      // La traza visual escribe en segundo plano; al parar el broker se le da
+      // la oportunidad de terminar en vez de dejar el paso a medias.
+      void webControlVisualTracer.flush();
     },
   };
 }

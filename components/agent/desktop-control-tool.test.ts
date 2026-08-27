@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createDesktopControlModelTool } from "./desktop-control-tool";
 import type {
   DesktopCapabilitiesResult,
@@ -133,6 +136,44 @@ describe("desktop_control model tool", () => {
     await tool.execute("call_3", { action: "capabilities" });
 
     expect(calls.map((call) => call.method)).toEqual(["screenshot", "closeWindow", "capabilities"]);
+  });
+
+  test("screenshot devuelve el mensaje y el PNG al modelo", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "agenos-desktop-tool-"));
+    const path = join(directory, "captura.png");
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("contenido de prueba"),
+    ]);
+    await writeFile(path, png);
+
+    try {
+      const { controller } = fakeController({
+        screenshot: async () => ({ ok: true, message: `Captura guardada en ${path}.`, path }),
+      });
+      const result = await createDesktopControlModelTool(controller).execute("call_image", { action: "screenshot" });
+
+      expect(result.content).toEqual([
+        { type: "text", text: `Captura guardada en ${path}.` },
+        { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+      ]);
+      expect(result.details).toEqual({ action: "screenshot", ok: true, message: `Captura guardada en ${path}.`, path });
+    } finally {
+      await rm(directory, { recursive: true });
+    }
+  });
+
+  test("screenshot conserva el texto si no puede leer la imagen", async () => {
+    const path = join(tmpdir(), "agenos-captura-inexistente.png");
+    const { controller } = fakeController({
+      screenshot: async () => ({ ok: true, message: `Captura guardada en ${path}.`, path }),
+    });
+
+    const result = await createDesktopControlModelTool(controller).execute("call_missing", { action: "screenshot" });
+
+    expect(result.content).toHaveLength(1);
+    expect(result.content[0]?.text).toContain(`Captura guardada en ${path}.`);
+    expect(result.content[0]?.text).toContain("No pude leer la captura");
   });
 
   test("reenvia los parametros a los metodos del controlador", async () => {

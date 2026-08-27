@@ -10,6 +10,7 @@ import type {
   DesktopTypeResult,
   DesktopWindowActionResult,
 } from "./desktop-control";
+import { screenshotToolContent, type ToolContent } from "./screenshot-tool-content";
 
 // Tool de modelo para manejar el escritorio nativo (Sway/Wayland).
 // Sigue el patron del resto de tools del repo: cada fichero redeclara
@@ -49,7 +50,7 @@ type PiCustomToolLike = {
     signal?: AbortSignal,
     onUpdate?: ToolUpdateCallback,
     ctx?: unknown,
-  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
+  ): Promise<{ content: ToolContent[]; details: unknown }>;
 };
 
 export const DESKTOP_CONTROL_ACTIONS = [
@@ -166,7 +167,7 @@ export function createDesktopControlModelTool(controller: DesktopControllerLike)
       "Si falta un binario (wtype, ydotool, grim) o el demonio ydotoold no responde, dilo tal cual al usuario en vez de fingir que la accion se hizo.",
     ],
     parameters: DESKTOP_CONTROL_TOOL_PARAMETERS,
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const action = params.action;
       if (!isAction(action)) {
         const message = `Accion no valida. Usa una de: ${DESKTOP_CONTROL_ACTIONS.join(", ")}.`;
@@ -197,10 +198,15 @@ export function createDesktopControlModelTool(controller: DesktopControllerLike)
         }
       }
 
-      return {
-        content: [{ type: "text", text: lines.filter((line) => line.trim() !== "").join("\n") }],
-        details: { action, ...result },
-      };
+      const text = lines.filter((line) => line.trim() !== "").join("\n");
+      const content = action === "screenshot"
+        ? await screenshotToolContent(
+          { ok: result.ok, message: text, path: typeof result.path === "string" ? result.path : undefined },
+          { ctx },
+        )
+        : [{ type: "text" as const, text }];
+
+      return { content, details: { action, ...result } };
     },
   };
 }

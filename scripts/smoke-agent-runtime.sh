@@ -6,6 +6,7 @@ PACKAGE_DIR="${ROOT_DIR}/build/live-build/config/includes.chroot/opt/agenos/inst
 BUN="${PACKAGE_DIR}/bin/bun"
 SERVER_ENTRY="${PACKAGE_DIR}/api/server.js"
 PI_PACKAGE_DIR="${PACKAGE_DIR}/pi-coding-agent"
+PLAYWRIGHT_PACKAGE_DIR="${PACKAGE_DIR}/node_modules/playwright-core"
 INSTALLER_WRAPPER="${PACKAGE_DIR}/agenos-installer"
 RUNTIME_ROOT="$(mktemp -d)"
 SERVER_LOG="${RUNTIME_ROOT}/agent-api.log"
@@ -39,6 +40,14 @@ fi
 
 if [[ ! -f "${PI_PACKAGE_DIR}/package.json" ]]; then
   echo "No se encontró pi-coding-agent empaquetado en ${PI_PACKAGE_DIR}" >&2
+  exit 1
+fi
+
+# web_control prefiere Playwright y cae al CDP directo si falta; el paquete se
+# resuelve desde api/server.js, así que tiene que estar en el node_modules
+# hermano y no basta con que exista en el árbol de desarrollo.
+if [[ ! -f "${PLAYWRIGHT_PACKAGE_DIR}/package.json" ]]; then
+  echo "No se encontró playwright-core empaquetado en ${PLAYWRIGHT_PACKAGE_DIR}" >&2
   exit 1
 fi
 
