@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 import { SystemView, type SystemViewProps } from "./SystemView";
@@ -6,6 +6,7 @@ import type { AgentHealthController } from "../../hooks/useAgentHealth";
 import type { PiSession } from "../../hooks/usePiSession";
 import type { ShellActions } from "../../hooks/useShellActions";
 import type { AgentAdminStatus, AgentWorkspace } from "../../lib/system-types";
+import type { NetworkClient } from "../../../../network/client";
 
 const readyAdminStatus: AgentAdminStatus = {
   ok: true,
@@ -37,6 +38,23 @@ const workspaces: AgentWorkspace[] = [
   { number: 2, name: "2:app", label: "Apps" },
 ];
 
+const networkClient = {
+  getStatus: vi.fn().mockResolvedValue({
+    ok: true,
+    overall: "offline",
+    checkedAt: "2026-08-23T00:00:00.000Z",
+    wifiEnabled: true,
+    wirelessHardware: "available",
+    internet: { ok: false, captivePortalSuspected: false, message: "Sin conexión." },
+    providers: { codex: "unknown", gemini: "unknown" },
+  }),
+  scanWifi: vi.fn().mockResolvedValue({ ok: true }),
+  listAccessPoints: vi.fn().mockResolvedValue({ ok: true, accessPoints: [] }),
+  connectWifi: vi.fn(),
+  disconnectWifi: vi.fn(),
+  setWifiEnabled: vi.fn(),
+} as unknown as NetworkClient;
+
 // El panel de administración pide su estado al montarse; aquí solo importa que
 // siga colgando de esta vista, así que se le da un cliente que no responde.
 const adminClient = {
@@ -56,6 +74,22 @@ const adminClient = {
   clearTask: vi.fn(),
   exportDiagnostics: vi.fn(),
   listConfirmations: vi.fn().mockResolvedValue([]),
+  listLearnedMemories: vi.fn().mockResolvedValue([]),
+  getLearningOverview: vi.fn().mockResolvedValue({
+    signalsCaptured: 0,
+    turnsObserved: 0,
+    turnsWithMemory: 0,
+    memoryUses: 0,
+    activeMemories: 0,
+    pendingProposals: 0,
+    acceptedProposals: 0,
+    deniedProposals: 0,
+    acceptanceRate: null,
+    lastLearningAt: null,
+    usageByItem: {},
+  }),
+  correctLearnedMemory: vi.fn(),
+  forgetLearnedMemory: vi.fn(),
   confirm: vi.fn(),
   deny: vi.fn(),
   executeShell: vi.fn(),
@@ -97,6 +131,7 @@ function renderSystem(overrides: Partial<SystemViewProps> = {}) {
     adminClient: adminClient as unknown as SystemViewProps["adminClient"],
     busy: false,
     health: { status: readyAdminStatus, error: null, refresh: vi.fn() } as AgentHealthController,
+    networkClient,
     session,
     workspaces,
     workspacesLive: false,
@@ -140,12 +175,37 @@ describe("SystemView", () => {
     expect(screen.getByText("Conecta ChatGPT para empezar.")).toBeInTheDocument();
   });
 
+  test("los ajustes del portátil se abren solo al pedir más ajustes", () => {
+    renderSystem();
+
+    expect(screen.queryByRole("region", { name: "Ajustes del portátil" })).not.toBeInTheDocument();
+
+    const moreSettings = screen.getByRole("button", { name: "Más ajustes" });
+    expect(moreSettings).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(moreSettings);
+
+    expect(screen.getByRole("region", { name: "Ajustes del portátil" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pantalla" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sonido" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ocultar ajustes del portátil" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   // Los escritorios se fueron de la barra fija, pero siguen aquí y con nombre.
   test("los escritorios se cambian desde aquí y llevan su nombre escrito", () => {
     renderSystem();
 
     expect(screen.getByRole("button", { name: "Escritorio 2: Apps" })).toBeInTheDocument();
     expect(screen.getByText("Apps")).toBeInTheDocument();
+  });
+
+  test("el aprendizaje queda visible fuera de los detalles técnicos", async () => {
+    renderSystem();
+
+    expect(await screen.findByRole("heading", { name: "Lo que Pi aprende" })).toBeInTheDocument();
+    expect(screen.getByText("Pi todavía no tiene aprendizajes confirmados.")).toBeInTheDocument();
+    expect(screen.getByText("Detalles técnicos").closest("details")).not.toContainElement(
+      screen.getByRole("heading", { name: "Lo que Pi aprende" }),
+    );
   });
 
   // Lo técnico no desaparece (hace falta para defender el proyecto): se pliega.

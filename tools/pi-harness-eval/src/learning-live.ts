@@ -95,7 +95,7 @@ function parseArgs(args: string[]): Options {
     mode: "baseline",
     authPath: join(homedir(), ".agenos", "ui-dev", "pi", "auth.json"),
     outPath: resolve(".out", "learning-baseline.ndjson"),
-    model: "gpt-5.6-terra",
+    model: "gpt-5.6-sol",
   };
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];

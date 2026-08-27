@@ -6,7 +6,9 @@ describe("resolveSttSettings", () => {
   test("sin entorno usa la configuracion objetivo de AgenOS", () => {
     const settings = resolveSttSettings({});
 
+    expect(settings.engine).toBe("voxtype");
     expect(settings.language).toBe("es");
+    expect(settings.initialPrompt).toContain("AgenOS");
     expect(settings.threads).toBe(4);
     expect(settings.beamSize).toBe(5);
     expect(settings.bestOf).toBe(5);
@@ -15,6 +17,11 @@ describe("resolveSttSettings", () => {
     expect(settings.audioContext).toBe(0);
     expect(settings.maxDurationMs).toBe(15_000);
     expect(settings.silenceMs).toBe(650);
+  });
+
+  test("whisper.cpp queda disponible como fallback explicito", () => {
+    expect(resolveSttSettings({ AGENOS_STT_ENGINE: "whisper.cpp" }).engine).toBe("whisper.cpp");
+    expect(resolveSttSettings({ AGENOS_STT_ENGINE: "desconocido" }).engine).toBe("voxtype");
   });
 
   test("las variables de entorno mueven modelo, idioma, hilos, beam, best-of, dispositivo y duracion", () => {

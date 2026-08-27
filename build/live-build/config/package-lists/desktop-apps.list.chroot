@@ -37,3 +37,11 @@ gnome-2048
 # The session prefers Qt's native Wayland backend; Calamares already brings
 # most of Qt, so making the platform plugin explicit has negligible overhead.
 qtwayland5
+
+# Control del escritorio por el agente: introspeccion de ventanas (swaymsg ya
+# viene con sway), sintesis de teclado (wtype), raton y teclado a bajo nivel
+# via uinput (ydotool) y capturas de pantalla (grim/slurp).
+wtype
+ydotool
+grim
+slurp

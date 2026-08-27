@@ -133,5 +133,7 @@ describe("learned memory", () => {
     setNow("2026-08-15T00:00:00.000Z");
 
     expect(store.context("respuesta", 200)).toMatchObject({ text: "", itemIds: [] });
+    expect(store.list()).toEqual([]);
+    expect(store.list({ includeDeleted: true })).toHaveLength(1);
   });
 });

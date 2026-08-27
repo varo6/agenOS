@@ -1,12 +1,13 @@
 import { resolveSttSettings, sttServerBaseUrl, type SttSettings } from "./config";
 import { createWhisperEngine, type WhisperEngine } from "./engine";
+import { createVoxtypeEngine } from "./voxtype-engine";
 import { resolveSttPaths, type SttPaths } from "./paths";
 
 /**
  * Punto de entrada unico del STT local.
  *
  * Tanto el proceso principal de Electron como el servidor HTTP construyen su
- * runtime desde aqui, con los mismos ajustes y contra el mismo whisper-server.
+ * runtime desde aqui y usan el mismo motor seleccionado.
  */
 
 export type SttRuntime = {
@@ -28,7 +29,9 @@ export function createSttRuntime(options: SttRuntimeOptions = {}): SttRuntime {
   const settings = resolveSttSettings(env);
   const paths = resolveSttPaths({ env, extraRoots: options.extraRoots });
   const baseUrl = sttServerBaseUrl(settings, env);
-  const engine = createWhisperEngine({ settings, paths, baseUrl, env, logger: options.logger });
+  const engine = settings.engine === "voxtype"
+    ? createVoxtypeEngine({ settings, paths, env, logger: options.logger })
+    : createWhisperEngine({ settings, paths, baseUrl, env, logger: options.logger });
 
   return { settings, paths, engine, baseUrl };
 }

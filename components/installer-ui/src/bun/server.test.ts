@@ -920,6 +920,32 @@ describe("createInstallerApiHandler", () => {
     const context = await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/context?query=respuestas&tokenBudget=160")));
     expect(context).toMatchObject({ itemIds: ["learn_1"], tokenBudget: 160 });
 
+    await handler.fetch(new Request("http://localhost/api/agent/learning/signals/harness", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...trace,
+        traceId: "trace_with_memory",
+        input: { text: "resume el proyecto", length: 19, truncated: false },
+        harness: {
+          promptHash: "hash-with-memory",
+          tools: [],
+          learningContext: { itemIds: ["learn_1"], estimatedTokens: 82, tokenBudget: 256, truncated: false },
+        },
+      }),
+    }));
+    const overview = await jsonPayload(await handler.fetch(new Request("http://localhost/api/agent/learning/overview")));
+    expect(overview).toMatchObject({
+      turnsObserved: 2,
+      turnsWithMemory: 1,
+      memoryUses: 1,
+      activeMemories: 1,
+      pendingProposals: 0,
+      acceptedProposals: 1,
+      acceptanceRate: 1,
+      usageByItem: { learn_1: { count: 1 } },
+    });
+
     const corrected = await handler.fetch(new Request("http://localhost/api/agent/learning/memories/learn_1", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

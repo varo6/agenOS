@@ -1,5 +1,7 @@
 import type {
   ApiMessageResponse,
+  AudioStatus,
+  DisplayStatus,
   MaintenanceAction,
   PreflightResponse,
   ShellMode,
@@ -11,6 +13,12 @@ export type AgenosSystemBridge = {
   runMaintenance(action: MaintenanceAction): Promise<ApiMessageResponse>;
   switchMode(mode: ShellMode): Promise<ApiMessageResponse>;
   getRuntimeInfo(): Promise<SystemRuntimeInfo>;
+  getDisplayStatus(): Promise<DisplayStatus>;
+  setBrightness(percent: number): Promise<ApiMessageResponse>;
+  turnOffDisplay(): Promise<ApiMessageResponse>;
+  getAudioStatus(): Promise<AudioStatus>;
+  setVolume(percent: number): Promise<ApiMessageResponse>;
+  setMuted(muted: boolean): Promise<ApiMessageResponse>;
   isAvailable(): boolean;
 };
 

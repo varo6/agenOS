@@ -28,7 +28,7 @@ bun run eval
 For the current Pi/Codex target model:
 
 ```bash
-bun run eval -- --model gpt-5.6-terra
+bun run eval -- --model gpt-5.6-sol
 ```
 
 Defaults:

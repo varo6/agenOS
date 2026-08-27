@@ -1,12 +1,12 @@
 import type { spawn } from "node:child_process";
 
 import { captureUnavailableReason, startVadCapture, type CaptureHandle, type CapturePhase } from "./capture";
-import { WhisperEngineError } from "./engine";
+import { WhisperEngineError, type SttEngineName } from "./engine";
 import type { SttRuntime } from "./runtime";
 
 /**
  * Ciclo completo de una orden de voz en el equipo: grabar con VAD y transcribir
- * con el Whisper residente. Solo puede haber una captura viva a la vez, y
+ * con el motor local. Solo puede haber una captura viva a la vez, y
  * cancelarla mata el microfono sin producir texto.
  */
 
@@ -21,7 +21,7 @@ export type LocalSpeechResult =
   | {
       ok: true;
       transcript: string;
-      engine: "whisper.cpp";
+      engine: SttEngineName;
       language: string;
       model: string;
       captureMs: number;
@@ -75,6 +75,10 @@ export function createLocalSpeechService(
       return { ok: false, code: "unavailable", message: current.reason ?? "STT local no disponible." };
     }
 
+    // Voxtype carga el modelo en paralelo con la grabacion. En el fallback
+    // residente esta llamada solo comprueba que whisper-server responde.
+    const engineReady = runtime.engine.ensureReady();
+    void engineReady.catch(() => {});
     const handle = startVadCapture({
       settings: runtime.settings,
       paths: runtime.paths,
@@ -92,18 +96,22 @@ export function createLocalSpeechService(
     }
 
     if (outcome.status === "cancelled") {
+      runtime.engine.cancelPending?.();
       return { ok: false, code: "cancelled", message: "Captura cancelada." };
     }
     if (outcome.status === "failed") {
+      runtime.engine.cancelPending?.();
       return { ok: false, code: "capture-failed", message: outcome.message };
     }
     if (outcome.status === "no-speech") {
+      runtime.engine.cancelPending?.();
       return { ok: false, code: "no-speech", message: NO_SPEECH_MESSAGE };
     }
 
     onPhase?.("transcribing");
 
     try {
+      await engineReady;
       const transcription = await runtime.engine.transcribeWav(outcome.wav);
       if (!transcription.text) {
         return { ok: false, code: "no-speech", message: NO_SPEECH_MESSAGE };
@@ -112,7 +120,7 @@ export function createLocalSpeechService(
       return {
         ok: true,
         transcript: transcription.text,
-        engine: "whisper.cpp",
+        engine: runtime.engine.status().engine,
         language: transcription.language,
         model: transcription.model,
         captureMs: outcome.durationMs,

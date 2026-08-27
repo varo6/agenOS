@@ -156,16 +156,29 @@ prepare_live_persistence() {
   fi
 
   require_command mkfs.ext4
+  require_command blkid
+  require_command e2label
   mkdir -p "${STATE_DIR}"
   mkdir -p "$(dirname "${VM_PERSIST_DISK}")"
   if [[ ! -f "${VM_PERSIST_DISK}" ]]; then
     local mount_dir
     mount_dir="$(mktemp -d)"
-    printf '/home\n' >"${mount_dir}/persistence.conf"
+    printf '/home union\n' >"${mount_dir}/persistence.conf"
     qemu-img create -f raw "${VM_PERSIST_DISK}" "${VM_PERSIST_SIZE}" >/dev/null
-    mkfs.ext4 -F -L persistence -d "${mount_dir}" "${VM_PERSIST_DISK}" >/dev/null
+    mkfs.ext4 -F -L agenos-persist -d "${mount_dir}" "${VM_PERSIST_DISK}" >/dev/null
     rm -rf "${mount_dir}"
     echo "Disco de persistencia live creado en ${VM_PERSIST_DISK} (${VM_PERSIST_SIZE})"
+  else
+    local persistence_label
+    persistence_label="$(blkid -s LABEL -o value "${VM_PERSIST_DISK}" 2>/dev/null || true)"
+    if [[ "${persistence_label}" == "persistence" ]]; then
+      e2label "${VM_PERSIST_DISK}" agenos-persist
+      echo "Etiqueta de persistencia live migrada a agenos-persist"
+    elif [[ "${persistence_label}" != "agenos-persist" ]]; then
+      echo "El disco de persistencia live no tiene una etiqueta válida: ${VM_PERSIST_DISK}" >&2
+      echo "Ejecuta 'make vm-reset' para recrearlo si no necesitas sus datos." >&2
+      exit 1
+    fi
   fi
 }
 

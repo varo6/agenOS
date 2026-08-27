@@ -228,6 +228,27 @@ export function overallFromNetworkState(input: {
   return "offline";
 }
 
+export function overallWithReachability(input: {
+  networkManagerOverall: NetworkOverall;
+  connectivity: ProviderReachability;
+  codex: ProviderReachability;
+  gemini: ProviderReachability;
+}): NetworkOverall {
+  if (input.networkManagerOverall === "online") {
+    return "online";
+  }
+
+  if (
+    input.connectivity === "reachable"
+    || input.codex === "reachable"
+    || input.gemini === "reachable"
+  ) {
+    return "online";
+  }
+
+  return input.networkManagerOverall;
+}
+
 export function sanitizeNetworkError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/NoReply|timed out|timeout/i.test(message)) {
@@ -474,13 +495,22 @@ export function createNetworkManagerService(dependencies: Partial<NetworkManager
             : !wifiEnabled
               ? "soft-blocked"
               : "available";
-        const overall = overallFromNetworkState({ state, connectivity, hasManagedDevice, hardware: wirelessHardware });
-        const [codex, gemini] = overall === "online"
+        const networkManagerOverall = overallFromNetworkState({ state, connectivity, hasManagedDevice, hardware: wirelessHardware });
+        const hasActiveLink = state >= NM_STATE_CONNECTED_LOCAL
+          || devices.some((device) => device.managed && device.state === NM_DEVICE_STATE_ACTIVATED);
+        const [connectivityReachability, codex, gemini] = hasActiveLink
           ? await Promise.all([
+              deps.checkProvider(deps.connectivityCheckUrl, 2500),
               deps.checkProvider(deps.codexCheckUrl, 2500),
               deps.checkProvider(deps.geminiCheckUrl, 2500),
             ])
-          : ["unknown", "unknown"] as const;
+          : ["unknown", "unknown", "unknown"] as const;
+        const overall = overallWithReachability({
+          networkManagerOverall,
+          connectivity: connectivityReachability,
+          codex,
+          gemini,
+        });
 
         return {
           ok: true,
@@ -491,7 +521,7 @@ export function createNetworkManagerService(dependencies: Partial<NetworkManager
           activeConnection: await resolveActiveConnection(bus, nmProxy, activeConnections, devices),
           internet: {
             ok: overall === "online",
-            captivePortalSuspected: overall === "portal" || connectivity === NM_CONNECTIVITY_PORTAL,
+            captivePortalSuspected: overall === "portal",
             message: overall === "online"
               ? "Internet disponible."
               : overall === "portal"

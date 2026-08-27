@@ -4,6 +4,7 @@ import {
   createNetworkManagerService,
   normalizeAccessPoints,
   overallFromNetworkState,
+  overallWithReachability,
   sanitizeNetworkError,
   securityFromFlags,
 } from "../../../network/node/network-manager";
@@ -63,6 +64,29 @@ describe("network-manager model helpers", () => {
       hasManagedDevice: false,
       hardware: "missing",
     })).toBe("unmanaged");
+  });
+
+  test("accepts a direct internet check for Ethernet when NetworkManager is stuck on local", () => {
+    const ethernetReportedByNetworkManager = overallFromNetworkState({
+      state: 50,
+      connectivity: 1,
+      hasManagedDevice: true,
+      hardware: "missing",
+    });
+
+    expect(overallWithReachability({
+      networkManagerOverall: ethernetReportedByNetworkManager,
+      connectivity: "reachable",
+      codex: "reachable",
+      gemini: "reachable",
+    })).toBe("online");
+
+    expect(overallWithReachability({
+      networkManagerOverall: "portal",
+      connectivity: "blocked",
+      codex: "blocked",
+      gemini: "blocked",
+    })).toBe("portal");
   });
 
   test("sanitizes low-level errors without exposing secrets", () => {

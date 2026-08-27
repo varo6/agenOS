@@ -1,0 +1,18 @@
+[Unit]
+Description=AgenOS ydotool daemon (sintesis de raton y teclado para el agente)
+Documentation=man:ydotoold(8)
+After=multi-user.target
+
+[Service]
+Type=simple
+# El socket vive en /run para que desaparezca al reiniciar y no quede un
+# descriptor con permisos amplios en disco. Solo el usuario de la sesion
+# (agenos, uid 1000) puede hablar con el.
+RuntimeDirectory=ydotoold
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/ydotoold --socket-path=/run/ydotoold/socket --socket-own=1000:1000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

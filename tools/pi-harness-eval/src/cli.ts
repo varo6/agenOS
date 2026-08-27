@@ -132,7 +132,7 @@ function printHelp() {
     `  trace: ${join(homedir(), ".agenos", "ui-dev", "pi", "traces", "pi-chat.ndjson")}`,
     `  out:   ${join(toolRoot, ".out", "latest")}`,
     "",
-    "Use --model gpt-5.6-terra to ignore traces from other model ids.",
+    "Use --model gpt-5.6-sol to ignore traces from other model ids.",
     "",
     "--strict exits non-zero when scenarios fail.",
   ].join("\n"));

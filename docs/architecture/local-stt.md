@@ -1,4 +1,4 @@
-# STT local con whisper.cpp
+# STT local con Voxtype y Whisper
 
 AgenOS transcribe voz sin salir del equipo. Este documento describe cómo, por
 qué está partido así y qué se puede mover sin recompilar.
@@ -28,8 +28,11 @@ síntomas concretos:
                      (Silero VAD, ggml)          │
                      eventos NDJSON              │ multipart
                      listening / speech / done   ▼
-                                          whisper-server  ◄── ruta HTTP
-                                          (modelo residente)    /api/speech/*
+                                          Voxtype worker  ◄── ruta HTTP
+                                          (proceso aislado)     /api/speech/*
+                                                │
+                                                ▼
+                                      small Q5_1 multilingüe
 ```
 
 - **`tools/whisper-vad-capture/vad-capture.cpp`** → `agenos-vad-capture`.
@@ -44,9 +47,15 @@ síntomas concretos:
   principal de Electron y el servidor HTTP: resolución de rutas, ajustes,
   cliente del motor y orquestación de la captura.
 
-- **`whisper-server`** de whisper.cpp, arrancado por
-  `scripts/agenos-whisper-server` bajo `agenos-whisper.service`. Carga el modelo
-  una vez y escucha solo en `127.0.0.1`.
+- **Voxtype**. AgenOS compila la versión fijada en `scripts/build-ui.sh` y usa
+  su comando interno `transcribe-worker`. El proceso carga el modelo durante la
+  grabación, recibe PCM por stdin, devuelve JSON y termina. No se usa el daemon
+  de hotkeys ni la inyección de texto de Voxtype. Electron conserva el control
+  del micrófono y recibe la transcripción por IPC.
+
+- **`whisper-server`** de whisper.cpp queda empaquetado como fallback. Ya no
+  arranca con el sistema. `AGENOS_STT_ENGINE=whisper.cpp` lo activa y el runtime
+  lo levanta cuando hace falta.
 
 ## Cómo termina una frase
 
@@ -76,42 +85,39 @@ por una tubería. `SPEECH_IPC_CHANNELS.cancel` llega a
 `LocalSpeechService.cancel()`, que manda `SIGKILL` a los dos y marca la captura
 como cancelada. La promesa en curso resuelve con `{ ok: false, code:
 "cancelled" }`, que el renderer trata como final normal: ni transcribe ni pinta
-error. El micrófono queda libre y se puede empezar otra captura de inmediato.
+error. También termina el worker precargado de Voxtype. El micrófono y la RAM
+del modelo quedan libres de inmediato.
 
 ## Un solo motor para las dos rutas
 
 Electron y `/api/speech/transcribe` construyen su runtime con
-`createSttRuntime()` y hablan con el mismo `whisper-server`, mandando los mismos
-campos en cada `POST /inference`. La única diferencia es lo que hace falta antes:
+`createSttRuntime()` y usan el mismo adaptador de Voxtype. La única diferencia
+es lo que hace falta antes:
 el navegador graba webm/ogg, así que la ruta HTTP pasa por `ffmpeg` para dejarlo
 en 16 kHz mono.
 
-`whisper-server` corre con `--vad`, de modo que también la ruta HTTP filtra
-silencio y ruido antes de la inferencia: sobre silencio devuelve texto vacío, y
-el servicio lo traduce a `422 no-speech` en vez de a una frase inventada.
-
-Los parámetros del VAD viajan en el multipart y no en la línea de comandos: en
-whisper.cpp v1.7.6, `--vad-min-silence-duration-ms` escribe por error sobre
-`vad_min_speech_duration_ms`. Por petición el mapeo sí es correcto.
+El fallback `whisper.cpp` conserva su VAD por petición. Sus parámetros no van en
+la línea de comandos porque en v1.7.6 el flag de silencio escribe por error
+sobre la duración mínima de voz.
 
 ### Lo que sigue siendo distinto
 
 El corte por silencio de 650 ms lo hace el binario de captura, que solo existe
 en la ruta de Electron. Un navegador no tiene forma de correr Silero sin
 arrastrar onnxruntime-web, así que la ruta HTTP graba hasta que la persona pare
-o hasta el tope de 15 s que publica `/api/speech/status`. El resto —motor,
-modelo, flags, filtrado de silencio, semántica de cancelar— es idéntico.
+o hasta el tope de 15 s que publica `/api/speech/status`. El motor, el modelo y
+la normalización del resultado sí son los mismos.
 
-## Configuración objetivo
+## Configuración objetivo de Voxtype
 
-| flag | valor | por qué |
+| ajuste | valor | por qué |
 |---|---|---|
-| `-l` | `es` | AgenOS es un sistema en español y `auto` se equivoca en frases cortas |
-| `-t` | 4 | los cuatro núcleos del equipo de referencia |
-| `-bs` / `-bo` | 5 / 5 | calidad por delante de latencia |
-| `-sns` | sí | suprime los tokens que Whisper reserva para lo que no es habla |
-| `-ac` | no | ventana completa de 30 s |
-| `-nt` | no | los segmentos llegan con marcas de tiempo y se normalizan en `normalizeWhisperTranscript` |
+| motor | `voxtype` | usa Whisper mediante `whisper-rs` y libera el proceso tras cada frase |
+| modelo | `small` Q5_1 multilingüe | mejora el español frente a `base` sin llegar al tamaño de `medium` |
+| idioma | `es` | evita que una orden corta se detecte como inglés |
+| prompt | vocabulario de AgenOS | ayuda con Pi, ChatGPT, Chromium y controles del portátil |
+| hilos | 4 | coincide con los cuatro núcleos del Intel N100 de referencia |
+| transporte | worker por stdin/stdout | no simula teclado y devuelve JSON a Electron |
 
 ## Variables de entorno
 
@@ -120,10 +126,13 @@ recompilar.
 
 | variable | por defecto | qué mueve |
 |---|---|---|
+| `AGENOS_STT_ENGINE` | `voxtype` | `voxtype` o fallback `whisper.cpp` |
 | `AGENOS_WHISPER_DIR` | `/opt/agenos/system/whisper.cpp` | raíz de binarios y modelos |
+| `AGENOS_VOXTYPE_BIN` | el declarado en el paquete | binario de Voxtype |
 | `AGENOS_WHISPER_MODEL` | el declarado en `stt.env` | modelo de Whisper |
 | `AGENOS_STT_VAD_MODEL` | el declarado en `stt.env` | modelo de Silero |
 | `AGENOS_STT_LANGUAGE` | `es` | idioma (`auto` cae en `es`) |
+| `AGENOS_STT_INITIAL_PROMPT` | vocabulario de AgenOS | nombres propios que Whisper debe reconocer |
 | `AGENOS_STT_THREADS` | `4` | hilos |
 | `AGENOS_STT_BEAM_SIZE` | `5` | beam search |
 | `AGENOS_STT_BEST_OF` | `5` | candidatos |
@@ -144,29 +153,31 @@ recompilar.
 
 ## Build y caché
 
-`scripts/build-ui.sh` compila whisper.cpp dos veces (SIMD y baseline) con los
-targets `whisper-cli`, `whisper-server` y `agenos-vad-capture`, y descarga los
-dos modelos verificando su SHA1. Los modelos viajan en la ISO: el STT funciona
-sin Internet una vez instalado.
+`scripts/build-ui.sh` compila Voxtype desde su tag fijado dentro del contenedor
+Debian Bookworm. También compila whisper.cpp dos veces con los targets de
+diagnóstico, fallback y captura VAD. Descarga `small-q5_1` y Silero verificando
+su SHA1. Los modelos viajan en la ISO, así que el STT funciona sin Internet.
+
+El build instala `LICENSE.voxtype` junto al binario. Voxtype se distribuye bajo
+[licencia MIT](https://github.com/peteonrails/voxtype/blob/dev/LICENSE).
 
 El manifiesto `stt.env` que queda junto a los binarios lleva el nombre exacto de
 los modelos instalados, y **el runtime lo lee en vez de llevar su propia lista**.
-Así no puede repetirse el fallo de que el build empaquete `ggml-base-q5_1.bin` y
-el runtime siga buscando `ggml-small.bin`.
+Así no puede repetirse el fallo de que el build empaquete un modelo y el runtime
+siga buscando otro.
 
-La caché se invalida por huella: `whisper_fingerprint()` mezcla la versión de
-whisper.cpp, el perfil de compilación, los dos nombres de modelo con sus SHA1 y
-el hash del fuente de `agenos-vad-capture`. Si cualquiera cambia, se reconstruye.
+La caché se invalida por huella. Mezcla las versiones de whisper.cpp y Voxtype,
+el perfil de compilación, los modelos con sus SHA1 y el fuente del capturador.
 
 ## Números medidos (Intel N100, 4 núcleos, `powersave`)
 
 | medida | valor |
 |---|---|
 | frase de 3,2 s: fin de la voz → cierre de la captura | ~650 ms |
-| inferencia con `base` Q5_1, beam 5, contexto completo | ~3,0 s |
-| whisper-server residente en reposo tras transcribir | ~300 MB RSS |
-| modelo en disco | 57 MiB (Whisper) + 0,85 MiB (Silero) |
+| inferencia anterior con `base` Q5_1, beam 5, contexto completo | ~3,0 s |
+| servidor anterior residente después de transcribir | ~300 MB RSS |
+| modelo anterior en disco | 57 MiB (Whisper) + 0,85 MiB (Silero) |
+| modelo nuevo `small` Q5_1 en disco | 181 MiB |
 
-Con `AGENOS_STT_AUDIO_CTX=512` la inferencia baja a ~1,0 s a costa de precisión.
-Se deja fuera del valor por defecto a propósito: el objetivo es que entienda bien
-el español, no que baje del segundo.
+Falta medir en el N100 la latencia y el pico RSS del worker nuevo. En reposo no
+queda cargado. Esa medición debe formar parte de la prueba de la próxima ISO.

@@ -70,6 +70,16 @@ make quick-test
 
 Mas detalle en `docs/installer/quick-test.md`.
 
+## Probar desde un USB sin perder los datos
+
+La imagen admite persistencia para conservar archivos, sesiones y redes Wi-Fi entre arranques. El USB necesita una partición adicional, que puede crearse desde Linux con una simulación previa:
+
+```bash
+./scripts/create-persistent-usb.sh --device /dev/disk/by-id/usb-FABRICANTE_MODELO
+```
+
+La guía completa y las advertencias sobre borrado y datos sin cifrar están en `docs/installer/persistent-usb.md`.
+
 ## Publicar una release
 
 Si ya tienes una ISO en `dist/`, puedes empaquetar la release y subirla a Google Drive:

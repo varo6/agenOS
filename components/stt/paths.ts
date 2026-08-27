@@ -6,13 +6,14 @@ import { resolve } from "node:path";
  *
  * El build escribe un manifiesto `stt.env` junto a los binarios con el nombre
  * exacto de los modelos que ha instalado. El runtime lo lee en vez de llevar su
- * propia lista: asi no puede pasar que el build empaquete `ggml-base-q5_1.bin` y
- * el runtime siga buscando `ggml-small.bin`, que es como se rompio la ultima vez.
+ * propia lista: asi no puede pasar que el build cambie de modelo y el runtime
+ * siga buscando el anterior, que es como se rompio la ultima vez.
  */
 
 export type SttManifest = {
   engine: string | null;
   ref: string | null;
+  voxtypeRef: string | null;
   buildProfile: string | null;
   model: string | null;
   vadModel: string | null;
@@ -23,6 +24,7 @@ export type SttPaths = {
   root: string | null;
   manifest: SttManifest;
   server: string | null;
+  voxtype: string | null;
   vadCapture: string | null;
   model: string | null;
   vadModel: string | null;
@@ -53,7 +55,7 @@ const FFMPEG_CANDIDATES = ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
 const REQUIRED_SIMD_FLAGS = ["sse4_2", "avx", "avx2", "fma", "f16c", "bmi2"];
 
 /** Fallback historico por si el manifiesto no viaja en la imagen. */
-export const FALLBACK_WHISPER_MODEL = "ggml-base-q5_1.bin";
+export const FALLBACK_WHISPER_MODEL = "ggml-small-q5_1.bin";
 export const FALLBACK_VAD_MODEL = "ggml-silero-v5.1.2.bin";
 
 export function parseSttManifest(contents: string): SttManifest {
@@ -74,6 +76,7 @@ export function parseSttManifest(contents: string): SttManifest {
   return {
     engine: values.get("engine") ?? null,
     ref: values.get("ref") ?? null,
+    voxtypeRef: values.get("voxtype_ref") ?? null,
     buildProfile: values.get("build_profile") ?? null,
     model: values.get("model") ?? null,
     vadModel: values.get("vad_model") ?? null,
@@ -84,6 +87,7 @@ export function parseSttManifest(contents: string): SttManifest {
 const EMPTY_MANIFEST: SttManifest = {
   engine: null,
   ref: null,
+  voxtypeRef: null,
   buildProfile: null,
   model: null,
   vadModel: null,
@@ -180,6 +184,13 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
   };
 
   const server = resolveBinary("whisper-server", env.AGENOS_WHISPER_SERVER_BIN);
+  const voxtype = (() => {
+    const configured = env.AGENOS_VOXTYPE_BIN?.trim();
+    if (configured) {
+      return pathExists(configured) ? configured : null;
+    }
+    return root && pathExists(resolve(root, "voxtype")) ? resolve(root, "voxtype") : null;
+  })();
   const vadCapture = resolveBinary("agenos-vad-capture", env.AGENOS_STT_VAD_CAPTURE_BIN);
   const model = resolveModel(env.AGENOS_WHISPER_MODEL, manifest.model, FALLBACK_WHISPER_MODEL);
   const vadModel = resolveModel(env.AGENOS_STT_VAD_MODEL, manifest.vadModel, FALLBACK_VAD_MODEL);
@@ -195,8 +206,12 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
     : firstExisting(FFMPEG_CANDIDATES);
 
   const missing: string[] = [];
-  if (!server) {
+  const requestedEngine = env.AGENOS_STT_ENGINE?.trim().toLowerCase();
+  if (requestedEngine === "whisper.cpp" && !server) {
     missing.push("whisper-server");
+  }
+  if (requestedEngine !== "whisper.cpp" && !voxtype) {
+    missing.push("voxtype");
   }
   if (!model) {
     missing.push(`modelo ${manifest.model ?? FALLBACK_WHISPER_MODEL}`);
@@ -205,5 +220,5 @@ export function resolveSttPaths(options: SttPathsOptions = {}): SttPaths {
     missing.push(`modelo VAD ${manifest.vadModel ?? FALLBACK_VAD_MODEL}`);
   }
 
-  return { root, manifest, server, vadCapture, model, vadModel, recorder, ffmpeg, missing };
+  return { root, manifest, server, voxtype, vadCapture, model, vadModel, recorder, ffmpeg, missing };
 }

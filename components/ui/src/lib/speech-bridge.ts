@@ -17,7 +17,7 @@ export type SpeechTranscriptionOutcome =
   | {
       ok: true;
       transcript: string;
-      engine: "whisper.cpp";
+      engine: "whisper.cpp" | "voxtype";
       /** Siempre "es" salvo que AGENOS_STT_LANGUAGE lo cambie; nunca autodetectado. */
       language: string;
       model: string;

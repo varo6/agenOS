@@ -50,7 +50,7 @@ describe("NetworkConnectionPanel", () => {
     expect(await screen.findByRole("button", { name: "Abrir portal de acceso" })).toBeInTheDocument();
   });
 
-  test("clears the password dialog after a Wi-Fi connection attempt", async () => {
+  test("clears the password dialog after a successful Wi-Fi connection", async () => {
     const client = createClient({
       listAccessPoints: vi.fn().mockResolvedValue({
         ok: true,
@@ -79,5 +79,64 @@ describe("NetworkConnectionPanel", () => {
     await waitFor(() => {
       expect(screen.queryByLabelText("Contraseña")).not.toBeInTheDocument();
     });
+  });
+
+  test("keeps the password dialog open when the connection fails", async () => {
+    const client = createClient({
+      connectWifi: vi.fn().mockResolvedValue({ ok: false, status: "failed", message: "La contraseña no es válida." }),
+      listAccessPoints: vi.fn().mockResolvedValue({
+        ok: true,
+        accessPoints: [{ ssid: "Casa", bssid: "00:11:22:33:44:55", strength: 75, security: "wpa2", device: "/dev/wlan0" }],
+      }),
+    });
+
+    render(<NetworkConnectionPanel client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Casa/ }));
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "incorrecta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Conectar" }));
+
+    expect(await screen.findByText("La contraseña no es válida.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  test("lets keyboard users inspect the password and leave the dialog with Escape", async () => {
+    const client = createClient({
+      listAccessPoints: vi.fn().mockResolvedValue({
+        ok: true,
+        accessPoints: [{ ssid: "Casa", bssid: "00:11:22:33:44:55", strength: 75, security: "wpa2", device: "/dev/wlan0" }],
+      }),
+    });
+
+    render(<NetworkConnectionPanel client={client} />);
+    const network = await screen.findByRole("button", { name: /Casa/ });
+    fireEvent.click(network);
+
+    const password = screen.getByLabelText("Contraseña");
+    fireEvent.change(password, { target: { value: "secret-password" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar contraseña" }));
+    expect(password).toHaveAttribute("type", "text");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(network).toHaveFocus());
+  });
+
+  test("disconnects the active Wi-Fi from settings", async () => {
+    const client = createClient({
+      getStatus: vi.fn().mockResolvedValue({
+        ok: true,
+        overall: "online",
+        checkedAt: "2026-08-23T00:00:00.000Z",
+        wifiEnabled: true,
+        wirelessHardware: "available",
+        activeConnection: { id: "Casa", type: "wifi", ssid: "Casa", strength: 80 },
+        internet: { ok: true, captivePortalSuspected: false },
+        providers: { codex: "reachable", gemini: "reachable" },
+      }),
+    });
+
+    render(<NetworkConnectionPanel allowDisconnect client={client} embedded />);
+    fireEvent.click(await screen.findByRole("button", { name: "Desconectar de Casa" }));
+    await waitFor(() => expect(client.disconnectWifi).toHaveBeenCalledTimes(1));
   });
 });

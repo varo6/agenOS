@@ -10,6 +10,8 @@ import {
 import { NETWORK_IPC_CHANNELS, type ConnectWifiRequest } from "../../../network/types";
 import type {
   ApiMessageResponse,
+  AudioStatus,
+  DisplayStatus,
   MaintenanceAction,
   PreflightResponse,
   ShellMode,
@@ -100,6 +102,24 @@ contextBridge.exposeInMainWorld("agenosSystem", {
   },
   async getRuntimeInfo(): Promise<SystemRuntimeInfo> {
     return invokeOrThrow<SystemRuntimeInfo>(SYSTEM_IPC_CHANNELS.getRuntimeInfo);
+  },
+  async getDisplayStatus(): Promise<DisplayStatus> {
+    return invokeOrThrow<DisplayStatus>(SYSTEM_IPC_CHANNELS.getDisplayStatus);
+  },
+  async setBrightness(percent: number): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.setBrightness, percent);
+  },
+  async turnOffDisplay(): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.turnOffDisplay, undefined);
+  },
+  async getAudioStatus(): Promise<AudioStatus> {
+    return invokeOrThrow<AudioStatus>(SYSTEM_IPC_CHANNELS.getAudioStatus);
+  },
+  async setVolume(percent: number): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.setVolume, percent);
+  },
+  async setMuted(muted: boolean): Promise<ApiMessageResponse> {
+    return invokeApiMessage(SYSTEM_IPC_CHANNELS.setMuted, muted);
   },
   isAvailable,
 });

@@ -7,6 +7,10 @@ const mocks = vi.hoisted(() => ({
     getStatus: vi.fn(),
     getPolicy: vi.fn(),
     listConfirmations: vi.fn(),
+    listLearnedMemories: vi.fn(),
+    getLearningOverview: vi.fn(),
+    correctLearnedMemory: vi.fn(),
+    forgetLearnedMemory: vi.fn(),
     rerunSetup: vi.fn(),
   },
   agentClient: {
@@ -162,6 +166,21 @@ beforeEach(() => {
   mocks.networkClient.connectWifi.mockResolvedValue({ ok: true, status: "connected" });
   mocks.networkClient.disconnectWifi.mockResolvedValue({ ok: true });
   mocks.networkClient.setWifiEnabled.mockResolvedValue({ ok: true });
+  mocks.agentAdminClient.listConfirmations.mockResolvedValue([]);
+  mocks.agentAdminClient.listLearnedMemories.mockResolvedValue([]);
+  mocks.agentAdminClient.getLearningOverview.mockResolvedValue({
+    signalsCaptured: 0,
+    turnsObserved: 0,
+    turnsWithMemory: 0,
+    memoryUses: 0,
+    activeMemories: 0,
+    pendingProposals: 0,
+    acceptedProposals: 0,
+    deniedProposals: 0,
+    acceptanceRate: null,
+    lastLearningAt: null,
+    usageByItem: {},
+  });
   mocks.agentClient.listWorkspaces.mockResolvedValue({
     ok: true,
     activeWorkspace: 1,
@@ -203,7 +222,7 @@ describe("App chat recovery", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Conéctate a internet" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Conectar ChatGPT" })).not.toBeInTheDocument();
   });
 

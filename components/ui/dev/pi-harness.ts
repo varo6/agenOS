@@ -100,11 +100,8 @@ const PI_DEVICE_AUTH_INSTRUCTIONS =
 const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
 // El primero es el modelo objetivo de Pi; el resto solo entra si el registro de
 // Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
-const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-terra", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
-// Pi decide sola que abrir a partir de frases vagas ("me apetece jugar al
-// ajedrez"), y eso es razonamiento, no autocompletado: el effort alto compra
-// esa capacidad de decision a cambio de algo de latencia.
-const DEFAULT_PI_THINKING_LEVEL = "high" as const;
+export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+export const DEFAULT_PI_THINKING_LEVEL = "low" as const;
 
 function emptyLearningContext(): LearnedContextResponse {
   return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };

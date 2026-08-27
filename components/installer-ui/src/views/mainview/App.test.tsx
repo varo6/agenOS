@@ -279,7 +279,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Conectemos a internet")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Conéctate a internet" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Continuar al instalador sin internet" }));
 
     expect(await screen.findByRole("heading", { name: "Todo listo para preparar la instalacion" })).toBeInTheDocument();

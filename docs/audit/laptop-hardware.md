@@ -175,7 +175,7 @@ La cadena completa queda así:
 2. firmware SOF/SST y perfiles UCM/topology;
 3. PipeWire + WirePlumber + RTKit;
 4. `pipewire-alsa`, por lo que `arecord -D default` entra al source por defecto;
-5. Electron graba S16_LE mono/16 kHz y llama a whisper.cpp;
+5. Electron graba S16_LE mono/16 kHz y llama al worker aislado de Voxtype;
 6. el fallback web usa MediaRecorder y el broker normaliza con ffmpeg.
 
 WirePlumber descubre automáticamente dispositivos ALSA, elige el source/sink de
