@@ -219,6 +219,78 @@ describe("Playwright web controller", () => {
     expect(fallbackCalls).toBe(2);
   });
 
+  test("permite desactivar Playwright sin intentar cargar el módulo", async () => {
+    let loads = 0;
+    const controller = createPlaywrightWebController({
+      fallback: fallbackController(),
+      playwrightEnabled: false,
+      loadPlaywright: async () => {
+        loads += 1;
+        throw new Error("no debería cargarse");
+      },
+    });
+
+    expect((await controller.snapshot()).text).toBe("fallback");
+    expect(loads).toBe(0);
+  });
+
+  test("un error de permisos desactiva Playwright para el resto del proceso", async () => {
+    let loads = 0;
+    const controller = createPlaywrightWebController({
+      fallback: fallbackController(),
+      loadPlaywright: async () => {
+        loads += 1;
+        throw new Error("EACCES: permission denied, open playwright-core");
+      },
+    });
+
+    expect((await controller.snapshot()).text).toBe("fallback");
+    expect((await controller.snapshot()).text).toBe("fallback");
+    expect(loads).toBe(1);
+  });
+
+  test("un cierre del transporte cae al CDP y activa el enfriamiento", async () => {
+    let attempts = 0;
+    let fallbackCalls = 0;
+    const fallback = fallbackController({
+      snapshot: async () => {
+        fallbackCalls += 1;
+        return { ok: true, message: "snapshot CDP", text: "fallback estable" };
+      },
+    });
+    const mainFrame = {
+      evaluate: async () => {
+        throw new Error("Target page, context or browser has been closed");
+      },
+    };
+    const page = {
+      url: () => "https://example.com/",
+      frames: () => [mainFrame],
+      mainFrame: () => mainFrame,
+      setDefaultTimeout: () => {},
+      setDefaultNavigationTimeout: () => {},
+    };
+    const controller = createPlaywrightWebController({
+      fallback,
+      loadPlaywright: async () => ({
+        chromium: {
+          connectOverCDP: async () => {
+            attempts += 1;
+            return {
+              contexts: () => [{ pages: () => [page] }],
+              on: () => {},
+            };
+          },
+        },
+      }) as never,
+    });
+
+    expect((await controller.snapshot()).text).toBe("fallback estable");
+    expect((await controller.snapshot()).text).toBe("fallback estable");
+    expect(attempts).toBe(1);
+    expect(fallbackCalls).toBe(2);
+  });
+
   test("sin Chromium escuchando arranca por el respaldo y no navega dos veces", async () => {
     const opened: string[] = [];
     const fallback = fallbackController({

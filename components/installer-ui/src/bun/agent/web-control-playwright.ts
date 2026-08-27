@@ -20,7 +20,9 @@ import {
 } from "../../../../agent/web-control";
 
 const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
-const DEFAULT_CONNECT_TIMEOUT_MS = 8_000;
+// El endpoint es local. Si no responde en dos segundos, el CDP directo ofrece
+// una respuesta mejor que hacer esperar al usuario ocho segundos por acción.
+const DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_RETRY_DELAY_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 120_000;
 
@@ -33,6 +35,8 @@ export type PlaywrightWebControllerDeps = WebControllerDeps & {
   connectTimeoutMs?: number;
   /** Tiempo sin reintentar la conexión tras un fallo. Por defecto 30 s. */
   connectRetryDelayMs?: number;
+  /** Permite desactivar Playwright sin quitar el paquete. */
+  playwrightEnabled?: boolean;
 };
 
 type ParsedRef = {
@@ -52,6 +56,20 @@ type FrameSnapshot = {
 };
 
 class PlaywrightUnavailableError extends Error {}
+
+function envFlagDisablesPlaywright(value: string | undefined): boolean {
+  return value !== undefined && ["0", "false", "off", "disabled", "no"].includes(value.trim().toLowerCase());
+}
+
+function permanentlyUnavailable(error: unknown): boolean {
+  const detail = describeError(error, "");
+  return /cannot find|module not found|resolve module|\bEACCES\b|\bEPERM\b|permission denied|operation not permitted/i.test(detail);
+}
+
+function infrastructureFailure(error: unknown): boolean {
+  const detail = describeError(error, "");
+  return /target (?:page|context|browser).*closed|browser.*(?:closed|disconnected)|not connected|connection closed|websocket.*closed|protocol error|\bECONN(?:REFUSED|RESET)\b|socket hang up/i.test(detail);
+}
 
 function describeError(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim()) {
@@ -257,8 +275,12 @@ export function createPlaywrightWebController(deps: PlaywrightWebControllerDeps 
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const pollIntervalMs = deps.pollIntervalMs ?? 200;
   const connectRetryDelayMs = deps.connectRetryDelayMs ?? DEFAULT_CONNECT_RETRY_DELAY_MS;
+  const playwrightEnabled = deps.playwrightEnabled
+    ?? !envFlagDisablesPlaywright(process.env.AGENOS_WEB_CONTROL_PLAYWRIGHT);
   let browserPromise: Promise<Browser> | null = null;
-  let disabledReason: string | null = null;
+  let disabledReason: string | null = playwrightEnabled
+    ? null
+    : "Playwright está desactivado por AGENOS_WEB_CONTROL_PLAYWRIGHT.";
   let lastPageUrl: string | null = null;
   // Si Chromium no está escuchando, cada acción pagaría el timeout de conexión
   // entera antes de caer al CDP directo. Tras un fallo se deja de reintentar
@@ -287,7 +309,7 @@ export function createPlaywrightWebController(deps: PlaywrightWebControllerDeps 
           browserPromise = null;
           const detail = describeError(error, "Playwright no pudo conectarse a Chromium");
           lastConnectError = detail;
-          if (/cannot find|module not found|resolve module|dynamic import/i.test(detail)) {
+          if (permanentlyUnavailable(error)) {
             disabledReason = detail;
           } else {
             retryConnectAfterMs = now() + connectRetryDelayMs;
@@ -329,6 +351,12 @@ export function createPlaywrightWebController(deps: PlaywrightWebControllerDeps 
       return await playwrightAction();
     } catch (error) {
       if (error instanceof PlaywrightUnavailableError) {
+        return await fallbackAction();
+      }
+      if (infrastructureFailure(error)) {
+        browserPromise = null;
+        lastConnectError = describeError(error, "Playwright perdió la conexión con Chromium");
+        retryConnectAfterMs = now() + connectRetryDelayMs;
         return await fallbackAction();
       }
       throw error;

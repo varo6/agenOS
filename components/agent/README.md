@@ -57,6 +57,12 @@ pague el timeout completo. El empaquetado de la ISO copia `playwright-core` a
 `/opt/agenos/installer/node_modules/`, junto al `api/server.js` que lo importa;
 `scripts/smoke-agent-runtime.sh` comprueba que esté.
 
+Si una instalación no permite Playwright, define
+`AGENOS_WEB_CONTROL_PLAYWRIGHT=off`. El broker usará CDP directamente sin
+intentar cargar el módulo. Un error de permisos también desactiva Playwright
+para el resto del proceso; una pérdida de transporte activa el respaldo y el
+enfriamiento de 30 s.
+
 ### Capturas y visión
 
 `web_control screenshot` y `desktop_control screenshot` devuelven el mensaje de
