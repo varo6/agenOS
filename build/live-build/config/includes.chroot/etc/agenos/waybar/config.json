@@ -1,0 +1,26 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 46,
+  "fixed-center": true,
+  "spacing": 0,
+  "modules-left": ["sway/workspaces"],
+  "modules-center": ["clock"],
+  "modules-right": ["custom/workspace-status"],
+  "sway/workspaces": {
+    "disable-scroll": true,
+    "all-outputs": false,
+    "format": "{name}"
+  },
+  "clock": {
+    "interval": 60,
+    "format": "{:%H:%M}",
+    "tooltip-format": "{:%A, %d de %B de %Y}"
+  },
+  "custom/workspace-status": {
+    "exec": "/usr/local/bin/agenos-workspace-watch --status",
+    "restart-interval": 1,
+    "escape": true,
+    "tooltip": false
+  }
+}

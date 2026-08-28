@@ -351,12 +351,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
     getPiClient().getTurn(String(payload.turnId ?? ""))
   )));
+  ipcMain.handle(PI_IPC_CHANNELS.cancelTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
+    getPiClient().cancelTurn(String(payload.turnId ?? ""))
+  )));
   ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(() => getPiClient().getLatestTurn()));
   ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(() => (
     getPiClient().listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
   )));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
+  ipcMain.handle(SPEECH_IPC_CHANNELS.finish, () => wrapPi(() => {
+    localSpeech.finish();
+  }));
   ipcMain.handle(SPEECH_IPC_CHANNELS.cancel, () => wrapPi(() => {
     localSpeech.cancel();
   }));

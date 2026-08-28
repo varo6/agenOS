@@ -18,6 +18,7 @@ export type AgenosPiBridge = {
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse>;
   startTurn(message: string, source: "text" | "voice"): Promise<PiTurnState>;
   getTurn(turnId: string): Promise<PiTurnState>;
+  cancelTurn(turnId: string): Promise<PiTurnState>;
   getLatestTurn(): Promise<PiTurnState | null>;
   listTurns(limit?: number): Promise<PiTurnState[]>;
   isAvailable(): boolean;

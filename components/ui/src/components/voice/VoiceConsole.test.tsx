@@ -6,23 +6,23 @@ import { resolveVoiceStatus, voiceButtonLabel, type VoiceStatusInput } from "../
 
 function renderConsole(
   input: VoiceStatusInput,
-  handlers: { onActivate?: () => void; onCancel?: () => void; size?: "full" | "compact" } = {},
+  handlers: { onActivate?: () => void; onFinish?: () => void; size?: "full" | "compact" } = {},
 ) {
   const status = resolveVoiceStatus(input);
   const onActivate = handlers.onActivate ?? vi.fn();
-  const onCancel = handlers.onCancel ?? vi.fn();
+  const onFinish = handlers.onFinish ?? vi.fn();
 
   render(
     <VoiceConsole
       buttonLabel={voiceButtonLabel(status)}
       onActivate={onActivate}
-      onCancel={onCancel}
+      onFinish={onFinish}
       size={handlers.size}
       status={status}
     />,
   );
 
-  return { status, onActivate, onCancel };
+  return { status, onActivate, onFinish };
 }
 
 describe("VoiceConsole", () => {
@@ -54,13 +54,13 @@ describe("VoiceConsole", () => {
     expect(onActivate).toHaveBeenCalledTimes(1);
   });
 
-  test("mientras escucha, pulsar cancela en vez de volver a empezar", () => {
+  test("mientras escucha, pulsar termina la captura para procesarla", () => {
     const onActivate = vi.fn();
-    const onCancel = vi.fn();
-    renderConsole({ capture: "listening", turn: "idle" }, { onActivate, onCancel });
+    const onFinish = vi.fn();
+    renderConsole({ capture: "listening", turn: "idle" }, { onActivate, onFinish });
 
     fireEvent.click(screen.getByRole("button"));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onFinish).toHaveBeenCalledTimes(1);
     expect(onActivate).not.toHaveBeenCalled();
   });
 

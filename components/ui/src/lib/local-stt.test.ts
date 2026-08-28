@@ -215,12 +215,7 @@ describe("createLocalHttpSpeechController", () => {
     expect(callbacks.errors[0]?.disableVoice).toBe(true);
   });
 
-  /*
-   * stop() es cancelar, no "termina ya". El final normal de una frase lo decide
-   * el VAD; lo que la persona pide al pulsar de nuevo es abortar, y abortar no
-   * puede acabar mandandole texto a Pi.
-   */
-  test("stop() cancela: corta el grabador, suelta el micrófono y no transcribe", async () => {
+  test("stop() corta el grabador y transcribe el audio acumulado", async () => {
     const callbacks = capture();
     const recorder = new FakeRecorder();
     const stream = fakeStream();
@@ -241,13 +236,36 @@ describe("createLocalHttpSpeechController", () => {
     controller.stop();
     await waitFor(() => callbacks.ends === 1);
 
-    expect(callbacks.results).toEqual([]);
-    expect(transcribeCalls).toBe(0);
+    expect(callbacks.results).toEqual(["hola"]);
+    expect(transcribeCalls).toBe(1);
     expect(recorder.state).toBe("inactive");
     expect(stream.stoppedTracks).toBeGreaterThan(0);
   });
 
-  test("tras cancelar se puede volver a grabar", async () => {
+  test("dispose cancela y descarta el audio", async () => {
+    const callbacks = capture();
+    const recorder = new FakeRecorder();
+    let transcribeCalls = 0;
+    const controller = createLocalHttpSpeechController(callbacks, {
+      requestStream: async () => fakeStream(),
+      createRecorder: () => recorder,
+      maxDurationMs: 60_000,
+      fetchFn: (async () => {
+        transcribeCalls += 1;
+        return jsonResponse({ ok: true, text: "hola" });
+      }) as typeof fetch,
+    });
+
+    controller.start();
+    await waitFor(() => recorder.state === "recording");
+    controller.dispose();
+    await waitFor(() => recorder.state === "inactive");
+
+    expect(callbacks.results).toEqual([]);
+    expect(transcribeCalls).toBe(0);
+  });
+
+  test("tras terminar manualmente se puede volver a grabar", async () => {
     const callbacks = capture();
     const recorders = [new FakeRecorder(), new FakeRecorder()];
     let index = 0;
@@ -264,9 +282,11 @@ describe("createLocalHttpSpeechController", () => {
     controller.stop();
     await waitFor(() => callbacks.ends === 1);
 
-    expect(controller.start()).toBe(true);
-    await waitFor(() => callbacks.results.length === 1);
     expect(callbacks.results).toEqual(["hola"]);
+
+    expect(controller.start()).toBe(true);
+    await waitFor(() => callbacks.results.length === 2);
+    expect(callbacks.results).toEqual(["hola", "hola"]);
   });
 
   test("un 422 del servidor es falta de voz, no un fallo técnico", async () => {

@@ -201,7 +201,7 @@ describe("useVoice", () => {
     expect(result.current.status.hint).toContain("ChatGPT");
   });
 
-  test("cancelar detiene la captura y vuelve al reposo", async () => {
+  test("terminar la captura pasa a transcripción", async () => {
     const mic = createFakeMic();
     const { result } = renderVoice(mic);
 
@@ -213,11 +213,11 @@ describe("useVoice", () => {
       result.current.start();
     });
     act(() => {
-      result.current.cancel();
+      result.current.finish();
     });
 
     expect(mic.stop).toHaveBeenCalledTimes(1);
-    expect(result.current.status.phase).toBe("idle");
+    expect(result.current.status.phase).toBe("transcribing");
   });
 
   test("libera el micrófono al desmontar", async () => {

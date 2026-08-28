@@ -59,7 +59,7 @@ function voiceController(): VoiceController {
     buttonLabel: voiceButtonLabel(status),
     engine: null,
     start: vi.fn(),
-    cancel: vi.fn(),
+    finish: vi.fn(),
     reset: vi.fn(),
   };
 }
@@ -122,6 +122,7 @@ function renderHome(overrides: Partial<HomeViewProps> = {}) {
     conversation: conversation(),
     health: health(),
     session: session(),
+    tts: { speaking: false, stop: vi.fn() },
     voice: voiceController(),
     ...overrides,
   };
@@ -258,6 +259,23 @@ describe("HomeView", () => {
     expect(screen.queryByText("O escríbele aquí abajo.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Hablar con Pi" })).toBeInTheDocument();
     expect(screen.getByLabelText("Escribe a Pi")).toBeEnabled();
+  });
+
+  test("permite parar la voz mientras Pi lee una respuesta", () => {
+    const stop = vi.fn();
+    renderHome({
+      tts: { speaking: true, stop },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Parar voz" }));
+
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  test("oculta la parada cuando Pi no esta hablando", () => {
+    renderHome({ conversation: conversation({ turns: [succeededTurn] }) });
+
+    expect(screen.queryByRole("button", { name: "Parar voz" })).not.toBeInTheDocument();
   });
 
   // Dos líneas seguidas diciendo lo mismo bajo el campo eran ruido, y la del

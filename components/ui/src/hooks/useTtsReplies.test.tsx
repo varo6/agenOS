@@ -1,4 +1,4 @@
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { useTtsReplies } from "./useTtsReplies";
@@ -62,7 +62,7 @@ describe("useTtsReplies", () => {
     expect(speak).not.toHaveBeenCalled();
   });
 
-  test("lee cada respuesta nueva una sola vez", () => {
+  test("lee cada respuesta nueva una sola vez", async () => {
     const speak = vi.fn(() => Promise.resolve({ ok: true as const, engine: "espeak-ng" as const, voice: "es" }));
     const getBridge = () => ({
       speak,
@@ -77,12 +77,61 @@ describe("useTtsReplies", () => {
       initialProps: { turns: [] as PiTurnState[] },
     });
 
-    view.rerender({ turns: [first] });
-    view.rerender({ turns: [first] });
-    view.rerender({ turns: [first, second] });
+    await act(async () => view.rerender({ turns: [first] }));
+    await act(async () => view.rerender({ turns: [first] }));
+    await act(async () => view.rerender({ turns: [first, second] }));
 
     expect(speak).toHaveBeenCalledTimes(2);
     expect(speak).toHaveBeenNthCalledWith(1, "primera");
     expect(speak).toHaveBeenNthCalledWith(2, "segunda");
+  });
+
+  test("expone la lectura en curso y permite pararla", async () => {
+    let finishSpeaking!: (outcome: { ok: true; engine: "espeak-ng"; voice: string }) => void;
+    const speak = vi.fn(() => new Promise<{ ok: true; engine: "espeak-ng"; voice: string }>((resolve) => {
+      finishSpeaking = resolve;
+    }));
+    const stop = vi.fn(() => Promise.resolve());
+    const getBridge = () => ({
+      speak,
+      stop,
+      status: vi.fn(),
+      isAvailable: () => true,
+    });
+    const view = renderHook(({ turns }) => useTtsReplies({ turns, getBridge }), {
+      initialProps: { turns: [] as PiTurnState[] },
+    });
+
+    act(() => view.rerender({ turns: [turn("new", "respuesta")] }));
+    expect(view.result.current.speaking).toBe(true);
+
+    act(() => view.result.current.stop());
+    expect(stop).toHaveBeenCalledOnce();
+    expect(view.result.current.speaking).toBe(false);
+
+    await act(async () => finishSpeaking({ ok: true, engine: "espeak-ng", voice: "es" }));
+    expect(view.result.current.speaking).toBe(false);
+  });
+
+  test("oculta el control cuando la lectura termina sola", async () => {
+    let finishSpeaking!: (outcome: { ok: true; engine: "espeak-ng"; voice: string }) => void;
+    const speak = vi.fn(() => new Promise<{ ok: true; engine: "espeak-ng"; voice: string }>((resolve) => {
+      finishSpeaking = resolve;
+    }));
+    const getBridge = () => ({
+      speak,
+      stop: vi.fn(() => Promise.resolve()),
+      status: vi.fn(),
+      isAvailable: () => true,
+    });
+    const view = renderHook(({ turns }) => useTtsReplies({ turns, getBridge }), {
+      initialProps: { turns: [] as PiTurnState[] },
+    });
+
+    act(() => view.rerender({ turns: [turn("new", "respuesta")] }));
+    expect(view.result.current.speaking).toBe(true);
+
+    await act(async () => finishSpeaking({ ok: true, engine: "espeak-ng", voice: "es" }));
+    expect(view.result.current.speaking).toBe(false);
   });
 });

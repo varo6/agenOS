@@ -22,12 +22,15 @@ export const PI_IPC_CHANNELS = {
   sendMessage: "agenos-pi:send-message",
   startTurn: "agenos-pi:start-turn",
   getTurn: "agenos-pi:get-turn",
+  cancelTurn: "agenos-pi:cancel-turn",
   getLatestTurn: "agenos-pi:get-latest-turn",
   listTurns: "agenos-pi:list-turns",
 } as const;
 
 export const SPEECH_IPC_CHANNELS = {
   transcribeOnce: "agenos-speech:transcribe-once",
+  /** Cierra el microfono y procesa el audio capturado hasta ese instante. */
+  finish: "agenos-speech:finish",
   /**
    * Aborta la captura viva: mata grabador y VAD, suelta el micrófono y hace que
    * la transcripción en curso no llegue nunca. Sin esto, cancelar desde la

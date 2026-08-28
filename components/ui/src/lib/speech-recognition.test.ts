@@ -8,14 +8,17 @@ import type { SpeechTranscriptionOutcome } from "./speech-bridge";
 
 const originalWindow = globalThis.window;
 
-/** Monta un puente nativo falso y cuenta las cancelaciones que recibe. */
+/** Monta un puente nativo falso y cuenta cómo se cierra la captura. */
 function setNativeBridge(transcribeOnce: () => Promise<SpeechTranscriptionOutcome>) {
-  const state = { cancels: 0 };
+  const state = { finishes: 0, cancels: 0 };
 
   globalThis.window = {
     agenosSpeech: {
       isAvailable: () => true,
       transcribeOnce,
+      finish: async () => {
+        state.finishes += 1;
+      },
       cancel: async () => {
         state.cancels += 1;
       },
@@ -135,7 +138,7 @@ describe("speech-recognition", () => {
     expect(ended).toBe(1);
   });
 
-  test("cancelar aborta la captura del proceso principal y no transcribe", async () => {
+  test("stop termina la captura nativa para procesarla", async () => {
     let resolveCapture: ((outcome: SpeechTranscriptionOutcome) => void) | null = null;
     const bridge = setNativeBridge(
       () => new Promise<SpeechTranscriptionOutcome>((resolve) => {
@@ -155,15 +158,42 @@ describe("speech-recognition", () => {
     controller.start();
     controller.stop();
 
-    // Cancelar tiene que llegar al proceso principal, no quedarse en el renderer.
-    expect(bridge.cancels).toBe(1);
+    expect(bridge.finishes).toBe(1);
+    expect(bridge.cancels).toBe(0);
 
-    resolveCapture?.({ ok: false, code: "cancelled", message: "Captura cancelada." });
+    resolveCapture?.({
+      ok: true,
+      transcript: "enciende las luces",
+      engine: "whisper.cpp",
+      language: "es",
+      model: "modelo",
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(transcripts).toEqual([]);
-    // Cancelar es una decisión de la persona: no se pinta ningún error.
+    expect(transcripts).toEqual(["enciende las luces"]);
     expect(errors).toEqual([]);
+  });
+
+  test("dispose sí cancela una captura nativa pendiente", async () => {
+    let resolveCapture: ((outcome: SpeechTranscriptionOutcome) => void) | null = null;
+    const bridge = setNativeBridge(
+      () => new Promise<SpeechTranscriptionOutcome>((resolve) => {
+        resolveCapture = resolve;
+      }),
+    );
+    const controller = createSpeechRecognitionController({
+      onResult: () => {},
+      onError: () => {},
+      onEnd: () => {},
+    });
+
+    controller.start();
+    controller.dispose();
+
+    expect(bridge.cancels).toBe(1);
+    expect(bridge.finishes).toBe(0);
+    resolveCapture?.({ ok: false, code: "cancelled", message: "Captura cancelada." });
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
   test("una captura sin voz avisa sin desactivar el micrófono", async () => {

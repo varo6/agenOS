@@ -272,6 +272,16 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  const cancelTurnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)\/cancel$/);
+  if (cancelTurnMatch && method === "POST") {
+    try {
+      sendJson(response, 200, await piHarness.cancelTurn(decodeURIComponent(cancelTurnMatch[1] ?? "")));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   const turnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)$/);
   if (turnMatch && method === "GET") {
     try {

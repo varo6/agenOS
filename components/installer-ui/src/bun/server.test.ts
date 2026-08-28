@@ -176,6 +176,21 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
         completedTools: [],
       },
     }),
+    cancelTurn: async (turnId: string) => ({
+      turnId,
+      status: "cancelled" as const,
+      source: "text" as const,
+      input: "hola",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      finishedAt: "2026-07-03T12:00:01.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "he",
+        currentTool: null,
+        completedTools: [],
+      },
+      reply: "he",
+    }),
     getTurn: (turnId: string) => ({
       turnId,
       status: "succeeded" as const,
@@ -521,8 +536,41 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("returns 202 when a power action is accepted", async () => {
+    const actions: unknown[] = [];
+    const handler = createHandler({
+      runMaintenance: async (action) => {
+        actions.push(action);
+        return {
+          ok: true,
+          message: "El sistema ha aceptado la orden de apagado.",
+        };
+      },
+    });
+
+    const response = await handler.fetch(
+      new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "poweroff" }),
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(actions).toEqual(["poweroff"]);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      message: "El sistema ha aceptado la orden de apagado.",
+    });
+  });
+
   test("returns 400 when maintenance receives an invalid action", async () => {
-    const handler = createHandler();
+    const actions: unknown[] = [];
+    const handler = createHandler({
+      runMaintenance: async (action) => {
+        actions.push(action);
+        return { ok: true };
+      },
+    });
 
     const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
       method: "POST",
@@ -530,9 +578,10 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(400);
+    expect(actions).toEqual([]);
     expect(await jsonPayload(response)).toEqual({
       ok: false,
-      message: "La acción debe ser terminal.",
+      message: "La acción debe ser una de: terminal, poweroff, reboot.",
     });
   });
 
@@ -621,6 +670,22 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(400);
+  });
+
+  test("cancels an async pi turn through the packaged API", async () => {
+    const handler = createHandler();
+    const response = await handler.fetch(
+      new Request("http://localhost/api/pi/turns/turn%2Fabc/cancel", {
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      turnId: "turn/abc",
+      status: "cancelled",
+      reply: "he",
+    });
   });
 
   // Empezar de nuevo no es borrar el historial: el harness tambien tira la

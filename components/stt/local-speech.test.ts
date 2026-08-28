@@ -214,6 +214,28 @@ describe("createLocalSpeechService", () => {
     expect(service.isCapturing()).toBe(false);
   });
 
+  test("terminar la captura procesa el audio recibido", async () => {
+    const { runtime, spawned, transcribed, spawnFn } = fakeRuntime();
+    const tempDir = await mkdtemp(join(tmpdir(), "agenos-stt-test-"));
+    const service = createLocalSpeechService(runtime, { spawnFn, tempDir });
+
+    const pending = service.transcribeOnce();
+    await Bun.sleep(10);
+    const analyzer = spawned[1];
+    await writeFile(analyzer.args[analyzer.args.indexOf("--out") + 1], new Uint8Array([82]));
+
+    service.finish();
+    expect(spawned[0].child.killed).toBe(true);
+    expect(spawned[0].child.signalCode).toBe("SIGTERM");
+    expect(spawned[1].child.killed).toBe(false);
+
+    finishAnalyzer(analyzer.child, 0, '{"event":"done","speech":true,"reason":"eof","durationMs":900,"speechMs":700}');
+    const result = await pending;
+
+    expect(result.ok).toBe(true);
+    expect(transcribed).toHaveLength(1);
+  });
+
   test("tras cancelar se puede empezar otra captura", async () => {
     const { runtime, spawned, spawnFn } = fakeRuntime();
     const tempDir = await mkdtemp(join(tmpdir(), "agenos-stt-test-"));

@@ -142,6 +142,49 @@ describe("createSystemClient", () => {
     expect(requests[0][0]).toBe("http://127.0.0.1:4173/api/installer/switch-mode");
   });
 
+  test("carries power actions over IPC and turns a refusal into an error", async () => {
+    const actions = [];
+    globalThis.fetch = async () => {
+      throw new Error("fetch should not be called when IPC is available");
+    };
+
+    globalThis.window = {
+      location: new URL("file:///tmp/system/index.html"),
+      agenosSystem: {
+        isAvailable: () => true,
+        getPreflight: async () => ({}),
+        runMaintenance: async (action) => {
+          actions.push(action);
+          return action === "poweroff"
+            ? {
+                ok: true,
+                message: "El sistema ha aceptado la orden de apagado.",
+              }
+            : { ok: false, message: "El helper salió con código 126." };
+        },
+        switchMode: async () => ({ ok: true }),
+        getRuntimeInfo: async () => ({
+          mode: "ipc",
+          host: "electron",
+          gpu: "on",
+          version: "0.1.0",
+        }),
+      },
+    };
+
+    const client = createSystemClient();
+
+    await expect(client.runMaintenance("poweroff")).resolves.toEqual({
+      ok: true,
+      message: "El sistema ha aceptado la orden de apagado.",
+    });
+
+    // Un `ok: false` del servicio no puede llegar a la pantalla como si fuese
+    // un apagado en marcha: se convierte en error y el panel lo cuenta.
+    await expect(client.runMaintenance("reboot")).rejects.toThrow("El helper salió con código 126.");
+    expect(actions).toEqual(["poweroff", "reboot"]);
+  });
+
   test("sends shell session token when bootstrap data is injected", async () => {
     const requests = [];
     globalThis.fetch = async (url, init) => {

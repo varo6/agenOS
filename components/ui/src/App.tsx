@@ -94,7 +94,7 @@ export default function App() {
     blockedReason,
     agentIssue: alert?.hint ?? null,
   });
-  useTtsReplies({ turns: conversation.turns });
+  const tts = useTtsReplies({ turns: conversation.turns });
 
   const actions = useShellActions({
     session,
@@ -181,6 +181,7 @@ export default function App() {
           conversation={conversation}
           health={health}
           session={session}
+          tts={tts}
           voice={voice}
         />
       )}

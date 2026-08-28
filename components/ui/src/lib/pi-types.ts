@@ -22,7 +22,7 @@ export type PiTurnProgress = {
   completedTools: string[];
 };
 
-export type PiTurnStatus = "processing" | "succeeded" | "failed";
+export type PiTurnStatus = "processing" | "succeeded" | "cancelled" | "failed";
 
 export type PiTurnState = {
   turnId: string;

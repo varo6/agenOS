@@ -155,6 +155,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
   getTurn(turnId: string): Promise<PiTurnState> {
     return invokePi<PiTurnState>(PI_IPC_CHANNELS.getTurn, { turnId });
   },
+  cancelTurn(turnId: string): Promise<PiTurnState> {
+    return invokePi<PiTurnState>(PI_IPC_CHANNELS.cancelTurn, { turnId });
+  },
   getLatestTurn(): Promise<PiTurnState | null> {
     return invokePi<PiTurnState | null>(PI_IPC_CHANNELS.getLatestTurn);
   },
@@ -167,6 +170,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
 contextBridge.exposeInMainWorld("agenosSpeech", {
   transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
     return invokePi<SpeechTranscriptionOutcome>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  },
+  async finish(): Promise<void> {
+    await invokePi<void>(SPEECH_IPC_CHANNELS.finish);
   },
   async cancel(): Promise<void> {
     await invokePi<void>(SPEECH_IPC_CHANNELS.cancel);

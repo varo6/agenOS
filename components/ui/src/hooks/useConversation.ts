@@ -26,6 +26,7 @@ export type Conversation = {
   draft: string;
   setDraft: (value: string) => void;
   send: (message: string, source: PiChatSource) => Promise<void>;
+  stop: () => Promise<void>;
   restore: () => Promise<void>;
   /** Cierra el hilo actual y empieza uno nuevo, también para Pi. */
   startNew: () => Promise<void>;
@@ -175,7 +176,7 @@ export function useConversation({
     (turn: PiTurnState) => {
       setActiveTurnId(null);
 
-      if (turn.status === "succeeded") {
+      if (turn.status === "succeeded" || turn.status === "cancelled") {
         if (turn.modelId) {
           guards.current.onModelId(turn.modelId);
         }
@@ -215,6 +216,23 @@ export function useConversation({
         setState("error");
         alert.raise(error, { kind: "lostTurn" });
       }
+    }
+  }, [activeTurnId, alert, applyFinishedTurn, guards, piClient, upsertTurn]);
+
+  const stop = useCallback(async () => {
+    if (!activeTurnId) {
+      return;
+    }
+
+    try {
+      const turn = await piClient.cancelTurn(activeTurnId);
+      upsertTurn(turn);
+      if (turn.status !== "processing") {
+        applyFinishedTurn(turn);
+        guards.current.onSettled();
+      }
+    } catch (error) {
+      alert.raise(error);
     }
   }, [activeTurnId, alert, applyFinishedTurn, guards, piClient, upsertTurn]);
 
@@ -329,5 +347,5 @@ export function useConversation({
     [activeTurnId, turns],
   );
 
-  return { turns, activeTurn, state, draft, setDraft, send, restore, startNew, resetError };
+  return { turns, activeTurn, state, draft, setDraft, send, stop, restore, startNew, resetError };
 }

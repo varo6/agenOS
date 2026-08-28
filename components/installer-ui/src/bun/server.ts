@@ -58,7 +58,7 @@ import { HttpError, json, methodNotAllowed, options, readJsonBody, rejectUntrust
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
-import { isMaintenanceAction, isShellMode } from "./installer/runtime";
+import { INVALID_MAINTENANCE_ACTION_MESSAGE, isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
@@ -85,6 +85,7 @@ type PiHarnessApi = {
   startNewConversation(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
   startChat(request: PiChatRequest): PiTurnState;
+  cancelTurn(turnId: string): Promise<PiTurnState>;
   getTurn(turnId: string): PiTurnState;
   getLatestTurn(): PiTurnState | null;
   listTurns(limit?: number): PiTurnState[];
@@ -364,6 +365,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     },
     startChat(request: PiChatRequest) {
       return getHarness().startChat(request);
+    },
+    cancelTurn(turnId: string) {
+      return getHarness().cancelTurn(turnId);
     },
     getTurn(turnId: string) {
       return getHarness().getTurn(turnId);
@@ -921,7 +925,7 @@ export function createInstallerApiHandler(
             return json(
               {
                 ok: false,
-                message: "La acción debe ser terminal.",
+                message: INVALID_MAINTENANCE_ACTION_MESSAGE,
               },
               {
                 status: 400,
@@ -1134,6 +1138,19 @@ export function createInstallerApiHandler(
 
           try {
             return json(deps.piHarness.getTurn(decodeURIComponent(turnMatch[1] ?? "")));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        const cancelTurnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)\/cancel$/);
+        if (cancelTurnMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            return json(await deps.piHarness.cancelTurn(decodeURIComponent(cancelTurnMatch[1] ?? "")));
           } catch (error) {
             return piErrorResponse(error);
           }

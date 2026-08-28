@@ -155,6 +155,7 @@ type PiAgentEventLike = {
 type PiAgentSessionLike = {
   subscribe(listener: (event: PiAgentEventLike) => void): () => void;
   prompt(text: string): Promise<void>;
+  abort?(): Promise<void>;
   dispose?(): void;
   state?: {
     messages?: PiMessageLike[];
@@ -725,6 +726,7 @@ export class PiHarness {
   private lastError: string | undefined;
   private readonly turns = new Map<string, PiTurnState>();
   private readonly turnWaiters = new Map<string, Deferred<PiChatResponse>>();
+  private readonly cancelledTurnIds = new Set<string>();
   private activeTurnId: string | undefined;
 
   constructor(dependencies: PiHarnessDependencies, options: PiHarnessOptions = {}) {
@@ -992,6 +994,25 @@ export class PiHarness {
     return snapshotTurn(turn);
   }
 
+  async cancelTurn(turnId: string): Promise<PiTurnState> {
+    const turn = this.turns.get(turnId);
+    if (!turn) {
+      throw new PiHarnessError(404, "Turno no encontrado.");
+    }
+    if (turn.status !== "processing") {
+      return snapshotTurn(turn);
+    }
+    if (this.activeTurnId !== turnId) {
+      throw new PiHarnessError(409, "Ese turno ya no es la respuesta activa.");
+    }
+
+    this.cancelledTurnIds.add(turnId);
+    turn.progress.currentTool = null;
+    delete turn.progress.currentToolMessage;
+    await this.session?.abort?.();
+    return snapshotTurn(this.turns.get(turnId) ?? turn);
+  }
+
   getLatestTurn(): PiTurnState | null {
     let latest: PiTurnState | undefined;
     for (const turn of this.turns.values()) {
@@ -1024,13 +1045,17 @@ export class PiHarness {
     let learningContext = emptyLearningContext();
     let unsubscribe = () => {};
 
+    let streamedReply = "";
+    let completedReply = "";
+    let toolReply = "";
+
     try {
       model = this.selectModel();
       learningContext = await this.resolveLearningContext(turn.input);
       const session = await this.ensureSession(model, learningContext);
-      let streamedReply = "";
-      let completedReply = "";
-      let toolReply = "";
+      if (this.cancelledTurnIds.has(turn.turnId)) {
+        throw new Error("Respuesta detenida.");
+      }
       unsubscribe = session.subscribe((event) => {
         if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
           streamedReply += event.assistantMessageEvent.delta ?? "";
@@ -1074,7 +1099,15 @@ export class PiHarness {
         }
       });
 
+      if (this.cancelledTurnIds.has(turn.turnId)) {
+        throw new Error("Respuesta detenida.");
+      }
+
       await session.prompt(turn.input);
+
+      if (this.cancelledTurnIds.has(turn.turnId)) {
+        throw new Error("Respuesta detenida.");
+      }
 
       const reply = (streamedReply || completedReply || toolReply || this.getLastAssistantReply(session)).trim();
       if (!reply) {
@@ -1107,6 +1140,20 @@ export class PiHarness {
         });
       }
     } catch (error) {
+      if (this.cancelledTurnIds.has(turn.turnId)) {
+        const partialReply = (streamedReply || completedReply || toolReply).trim();
+        turn.status = "cancelled";
+        turn.reply = partialReply || undefined;
+        turn.modelId = model?.id;
+        turn.progress.currentTool = null;
+        delete turn.progress.currentToolMessage;
+        turn.finishedAt = new Date(this.deps.now()).toISOString();
+        if (waiter) {
+          rejectDeferred(waiter, new PiHarnessError(409, "Respuesta detenida."));
+        }
+        return;
+      }
+
       const message = normalizeErrorMessage(error);
       this.lastError = message;
       this.recordChatTrace({
@@ -1136,6 +1183,7 @@ export class PiHarness {
       this.busy = false;
       this.activeTurnId = this.activeTurnId === turn.turnId ? undefined : this.activeTurnId;
       this.turnWaiters.delete(turn.turnId);
+      this.cancelledTurnIds.delete(turn.turnId);
       this.persistTurns();
     }
   }

@@ -30,6 +30,8 @@ export type CaptureOutcome =
 export type CaptureHandle = {
   /** Se resuelve cuando la captura termina, por la razon que sea. */
   done: Promise<CaptureOutcome>;
+  /** Cierra el microfono y deja que el VAD procese todo el audio recibido. */
+  finish(): void;
   /** Mata grabador y analizador. La promesa acaba en `cancelled`. */
   cancel(): void;
 };
@@ -121,8 +123,15 @@ export function startVadCapture(options: StartCaptureOptions): CaptureHandle {
   const baseTempDir = options.tempDir ?? tmpdir();
 
   let cancelled = false;
+  let finishing = false;
   let recorder: ChildProcess | null = null;
   let analyzer: ChildProcess | null = null;
+
+  const finishRecorder = () => {
+    if (recorder && recorder.exitCode === null && recorder.signalCode === null) {
+      recorder.kill("SIGTERM");
+    }
+  };
 
   const killAll = () => {
     for (const child of [recorder, analyzer]) {
@@ -160,6 +169,12 @@ export function startVadCapture(options: StartCaptureOptions): CaptureHandle {
       // final normal de la captura, no un error que deba tumbar el proceso.
       recorder.stdout?.on("error", () => {});
       analyzer.stdin?.on("error", () => {});
+
+      // `finish()` puede llegar mientras mkdtemp o spawn siguen pendientes.
+      // En ese caso cerramos arecord justo después de conectar la tubería.
+      if (finishing) {
+        finishRecorder();
+      }
 
       let recorderError = "";
       let analyzerError = "";
@@ -251,6 +266,10 @@ export function startVadCapture(options: StartCaptureOptions): CaptureHandle {
 
   return {
     done,
+    finish() {
+      finishing = true;
+      finishRecorder();
+    },
     cancel() {
       cancelled = true;
       killAll();

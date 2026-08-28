@@ -4,7 +4,7 @@
 
 El cambio de workspace deja de depender de respuestas optimistas y de un watcher que inspeccionaba cualquier evento. La navegación deliberada a un workspace vacío permanece allí, el cierre de la última ventana puede devolver a Home, y el workspace real de Sway se publica al renderer en tiempo real.
 
-Los workspaces vacíos muestran una barra nativa de Sway con el nombre y una explicación contextual. No se usan ventanas Electron auxiliares ni placeholders que puedan confundirse con ventanas de aplicación o fallar junto con el renderer.
+Los workspaces vacíos muestran la única barra superior del sistema con el nombre y una explicación contextual. No se usan ventanas Electron auxiliares ni placeholders que puedan confundirse con ventanas de aplicación o fallar junto con el renderer.
 
 ## Causas raíz confirmadas
 
@@ -32,9 +32,9 @@ El watcher ya no inspecciona ni cambia el foco al arrancar. Sway lo inicia con `
 
 ### Superficie para workspaces vacíos
 
-La configuración añade `swaybar`, que es una superficie layer-shell nativa gestionada por el propio compositor. Sus botones muestran el workspace real y el proceso `agenos-workspace-watch --status` publica una indicación como `Web · vacio hasta que abras el navegador · Ctrl+Alt+1: Home`.
+El único bloque `bar` de Sway usa Waybar como renderizador. Sus botones muestran el workspace real a la izquierda, el reloj `HH:MM` queda centrado respecto a la pantalla y `agenos-workspace-watch --status` publica a la derecha una indicación como `Web · vacio hasta que abras el navegador · Ctrl+Alt+1: Home`.
 
-Esta solución tiene menos estados de fallo que cinco BrowserWindows Electron: no depende del renderer, no crea falsas ventanas para la política de vacío y desaparece naturalmente detrás de una aplicación fullscreen.
+Esta solución no crea una segunda barra ni falsas ventanas para la política de vacío. Waybar se ejecuta desde `swaybar_command`, conserva una sola superficie superior y desaparece naturalmente detrás de una aplicación fullscreen.
 
 ### Foco confirmado en el broker
 
@@ -90,7 +90,7 @@ No se ejecutó ningún build de ISO ni se tocó ningún artefacto generado prohi
 
 ## Pendiente de validación en VM/hardware
 
-- Validar visualmente colores, altura y texto de swaybar con la versión exacta de Sway incluida en Debian 12. El host de desarrollo no tiene el binario `sway`, por lo que no fue posible ejecutar `sway --validate`.
+- Validar visualmente colores, altura, reloj centrado y texto de Waybar con las versiones exactas de Sway y Waybar incluidas en la imagen. El host de desarrollo no tiene esos binarios, por lo que no fue posible ejecutar la barra real.
 - Probar Ctrl+Alt+1..5 con workspaces vacíos y ocupados, incluidos cambios rápidos repetidos.
 - Cerrar la última ventana tiled y floating; comprobar que vuelve a Home, y cerrar una ventana en background mientras se permanece deliberadamente en otro workspace vacío.
 - Probar el ciclo completo de Pi abriendo browser, terminal y una aplicación genérica en workspaces explícitos.

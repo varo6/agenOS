@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
     sendMessage: vi.fn(),
     startTurn: vi.fn(),
     getTurn: vi.fn(),
+    cancelTurn: vi.fn(),
     getLatestTurn: vi.fn(),
     listTurns: vi.fn(),
   },
@@ -385,6 +386,41 @@ describe("App chat recovery", () => {
     });
     expect(await screen.findAllByText("Voy a configurar OpenClaw.")).not.toHaveLength(0);
     expect(screen.getByText("configura openclaw")).toBeInTheDocument();
+  });
+
+  test("stops the active Pi stream and leaves its partial text visible", async () => {
+    const processingTurn = {
+      turnId: "turn_stop",
+      status: "processing" as const,
+      source: "text" as const,
+      input: "cuéntame algo",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "Había una vez",
+        currentTool: null,
+        completedTools: [],
+      },
+    };
+    const cancelledTurn = {
+      ...processingTurn,
+      status: "cancelled" as const,
+      finishedAt: "2026-07-03T12:00:01.000Z",
+      reply: "Había una vez",
+    };
+
+    mocks.piClient.getStatus.mockResolvedValue({ ...disconnectedStatus, authState: "connected" });
+    mocks.agentAdminClient.getStatus.mockResolvedValue(readyAgentStatus);
+    mocks.piClient.listTurns.mockResolvedValue([processingTurn]);
+    mocks.piClient.getTurn.mockResolvedValue(processingTurn);
+    mocks.piClient.cancelTurn.mockResolvedValue(cancelledTurn);
+
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Parar respuesta" }));
+
+    await waitFor(() => expect(mocks.piClient.cancelTurn).toHaveBeenCalledWith("turn_stop"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Parar respuesta" })).not.toBeInTheDocument());
+    expect(screen.getAllByText("Había una vez").length).toBeGreaterThan(0);
   });
 
   test("escribir no vuelve a arrancar el shell ni a recargar el estado", async () => {

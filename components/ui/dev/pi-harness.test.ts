@@ -52,6 +52,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
   let promptImpl = async (text: string) => {
     emitAssistantReply(`respuesta:${text}`);
   };
+  let abortImpl = async () => {};
   let createSessionOptions: unknown;
   const openedApps: unknown[] = [];
   const traceRecords: unknown[] = [];
@@ -72,6 +73,9 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     },
     async prompt(text: string) {
       await promptImpl(text);
+    },
+    async abort() {
+      await abortImpl();
     },
     dispose() {},
   };
@@ -248,6 +252,9 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     getTraceRecords: () => traceRecords,
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
+    },
+    setAbortImpl(nextAbortImpl: typeof abortImpl) {
+      abortImpl = nextAbortImpl;
     },
     advanceTimers() {
       pendingTimers.splice(0).forEach((callback) => callback());
@@ -733,6 +740,38 @@ describe("PiHarness", () => {
     expect(finished.status).toBe("failed");
     expect(finished.error).toBe("authentication failed");
     expect(finished.errorStatus).toBe(401);
+    expect(harness.getStatus().busy).toBe(false);
+  });
+
+  test("cancelTurn aborts the Pi session and keeps the partial reply", async () => {
+    const { harness, authData, emitAssistantReply, setAbortImpl, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    const promptDeferred = createDeferred<void>();
+    const promptStarted = createDeferred<void>();
+    setPromptImpl(async () => {
+      emitAssistantReply("Respuesta a medias.");
+      promptStarted.resolve();
+      await promptDeferred.promise;
+    });
+    setAbortImpl(async () => promptDeferred.resolve());
+
+    const turn = harness.startChat({ message: "cuéntame algo", source: "text" });
+    await promptStarted.promise;
+    await harness.cancelTurn(turn.turnId);
+    await settleTurn();
+
+    expect(harness.getTurn(turn.turnId)).toMatchObject({
+      status: "cancelled",
+      reply: "Respuesta a medias.",
+      modelId: "gpt-5.6-sol",
+    });
     expect(harness.getStatus().busy).toBe(false);
   });
 

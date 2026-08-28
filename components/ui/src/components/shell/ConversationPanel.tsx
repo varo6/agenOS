@@ -32,7 +32,9 @@ function TurnCard({ turn }: { turn: PiTurnState }) {
           {turn.error ?? "Pi no pudo terminar esta respuesta."}
         </p>
       ) : (
-        <p className="mt-1 whitespace-pre-wrap text-base text-ink-muted">{turn.reply ?? ""}</p>
+        <p className="mt-1 whitespace-pre-wrap text-base text-ink-muted">
+          {turn.reply ?? (turn.status === "cancelled" ? "Respuesta detenida." : "")}
+        </p>
       )}
     </article>
   );

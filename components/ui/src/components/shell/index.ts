@@ -8,6 +8,7 @@ export {
   NewConversationButton,
   type NewConversationButtonProps,
 } from "./NewConversationButton";
+export { PowerPanel, type PowerPanelProps } from "./PowerPanel";
 export { SectionSwitch, type SectionSwitchProps, type ShellSection } from "./SectionSwitch";
 export { SystemAlertBanner, type SystemAlertBannerProps } from "./SystemAlertBanner";
 export { SystemView, type SystemViewProps } from "./SystemView";

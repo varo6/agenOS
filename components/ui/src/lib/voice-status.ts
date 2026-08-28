@@ -180,7 +180,7 @@ export function resolveVoiceStatus(input: VoiceStatusInput): VoiceStatus {
 export function voiceButtonLabel(status: VoiceStatus): string {
   switch (status.phase) {
     case "listening":
-      return "Escuchando, pulsa para cancelar";
+      return "Escuchando, pulsa para procesar el audio";
     case "transcribing":
       return "Estoy entendiéndote";
     case "thinking":

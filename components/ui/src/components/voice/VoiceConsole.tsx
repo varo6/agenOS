@@ -54,7 +54,7 @@ export type VoiceConsoleProps = {
   /** Etiqueta accesible del botón, dependiente de la fase. */
   buttonLabel: string;
   onActivate: () => void;
-  onCancel: () => void;
+  onFinish: () => void;
   size?: VoiceConsoleSize;
   className?: string;
 };
@@ -63,7 +63,7 @@ function VoiceConsoleComponent({
   status,
   buttonLabel,
   onActivate,
-  onCancel,
+  onFinish,
   size = "full",
   className,
 }: VoiceConsoleProps) {
@@ -103,7 +103,7 @@ function VoiceConsoleComponent({
         )}
         onClick={() => {
           if (status.phase === "listening") {
-            onCancel();
+            onFinish();
             return;
           }
 

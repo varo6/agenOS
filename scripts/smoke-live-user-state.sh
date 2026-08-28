@@ -8,6 +8,8 @@ BUILD_INSTALLER="${ROOT_DIR}/scripts/build-installer-ui.sh"
 CALAMARES_DESKTOP="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/lib/calamares/modules/agenosdesktop/main.py"
 LIVE_BOOT_CONFIG="${ROOT_DIR}/build/live-build/auto/config"
 SWAY_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/sway/config"
+WAYBAR_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/waybar/config.json"
+DESKTOP_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/desktop-installer.list.chroot"
 KEYBOARD_DEFAULTS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/default/keyboard"
 RUN_VM="${ROOT_DIR}/scripts/run-vm.sh"
 
@@ -51,8 +53,12 @@ require_literal "${RUN_VM}" "-L agenos-persist"
 require_literal "${RUN_VM}" "/home union"
 require_literal "${ROOT_DIR}/scripts/create-persistent-usb.sh" 'PERSISTENCE_LABEL="agenos-persist"'
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
-require_literal "${SWAY_CONFIG}" "agenos-workspace-watch"
 require_literal "${SWAY_CONFIG}" "seat * xcursor_theme Adwaita 24"
+require_literal "${SWAY_CONFIG}" "swaybar_command waybar"
+require_literal "${WAYBAR_CONFIG}" '"modules-center": ["clock"]'
+require_literal "${WAYBAR_CONFIG}" '"format": "{:%H:%M}"'
+require_literal "${WAYBAR_CONFIG}" '"exec": "/usr/local/bin/agenos-workspace-watch --status"'
+require_literal "${DESKTOP_PACKAGES}" "waybar"
 require_literal "${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-session" 'WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"'
 require_literal "${SWAY_CONFIG}" 'workspace 1:home'
 require_literal "${SWAY_CONFIG}" 'workspace 2:app'

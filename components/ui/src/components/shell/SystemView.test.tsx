@@ -190,6 +190,20 @@ describe("SystemView", () => {
     expect(screen.getByRole("button", { name: "Ocultar ajustes del portátil" })).toHaveAttribute("aria-expanded", "true");
   });
 
+  // Apagar y reiniciar viven con el resto de ajustes del equipo, y no sueltos
+  // en la pantalla: nadie los pulsa de paso.
+  test("apagar y reiniciar están en los ajustes del portátil, no antes", () => {
+    renderSystem();
+
+    expect(screen.queryByRole("button", { name: "Apagar el equipo" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Más ajustes" }));
+
+    expect(screen.getByRole("heading", { name: "Encendido" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apagar el equipo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reiniciar el equipo" })).toBeInTheDocument();
+  });
+
   // Los escritorios se fueron de la barra fija, pero siguen aquí y con nombre.
   test("los escritorios se cambian desde aquí y llevan su nombre escrito", () => {
     renderSystem();

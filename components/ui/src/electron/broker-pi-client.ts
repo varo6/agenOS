@@ -98,6 +98,9 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
     getTurn(turnId: string): Promise<PiTurnState> {
       return request(`/api/pi/turns/${encodeURIComponent(turnId)}`);
     },
+    cancelTurn(turnId: string): Promise<PiTurnState> {
+      return request(`/api/pi/turns/${encodeURIComponent(turnId)}/cancel`, { method: "POST" });
+    },
     getLatestTurn(): Promise<PiTurnState | null> {
       return request("/api/pi/turns/latest");
     },

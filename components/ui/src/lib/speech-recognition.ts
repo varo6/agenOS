@@ -78,6 +78,7 @@ export type SpeechRecognitionController = {
   supported: boolean;
   engine: "native" | "local-http" | "browser" | "none";
   start: () => boolean;
+  /** Termina de escuchar y procesa el audio capturado. */
   stop: () => void;
   dispose: () => void;
 };
@@ -254,7 +255,9 @@ function createNativeSpeechRecognitionController(
       return true;
     },
     stop() {
-      abort();
+      void bridge.finish().catch(() => {
+        // La promesa principal publicara el fallo si el puente se ha caido.
+      });
     },
     dispose() {
       disposed = true;

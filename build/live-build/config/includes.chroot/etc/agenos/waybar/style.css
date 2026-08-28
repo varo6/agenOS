@@ -1,0 +1,45 @@
+* {
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+  font-family: Sans;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+window#waybar {
+  background: #0d0b0a;
+  color: #f5eee8;
+}
+
+#workspaces button {
+  min-width: 42px;
+  padding: 0 12px;
+  border: 1px solid #3a302a;
+  background: #1a1512;
+  color: #b9aaa0;
+}
+
+#workspaces button.focused,
+#workspaces button.active {
+  border-color: #f0a464;
+  background: #d68c45;
+  color: #14100d;
+}
+
+#workspaces button.urgent {
+  border-color: #b91c1c;
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+#clock {
+  padding: 0 14px;
+  color: #f5eee8;
+  font-feature-settings: "tnum";
+}
+
+#custom-workspace-status {
+  padding: 0 12px;
+  color: #b9aaa0;
+}

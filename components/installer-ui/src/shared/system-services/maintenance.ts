@@ -2,7 +2,7 @@ import { openSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 import type { ApiMessageResponse, MaintenanceAction } from "../installer-types";
-import { appendHelperLog, currentUid, formatTimestamp, helperLogPathForUid } from "./runtime";
+import { appendHelperLog, currentUid, formatTimestamp, helperLogPathForUid, isPowerMaintenanceAction } from "./runtime";
 
 type SpawnedHelper = {
   waitForExit: (timeoutMs: number) => Promise<number | null>;
@@ -78,6 +78,20 @@ function defaultSpawnHelper(action: MaintenanceAction, uid: number): SpawnedHelp
   };
 }
 
+// Las acciones de energía esperan a que Polkit acepte o rechace la solicitud.
+const TERMINAL_WAIT_MS = 1_000;
+const POWER_WAIT_MS = 30_000;
+
+const MAINTENANCE_MESSAGES: Partial<Record<MaintenanceAction, string>> = {
+  terminal: "Acción terminal lanzada.",
+  poweroff: "El sistema ha aceptado la orden de apagado.",
+  reboot: "El sistema ha aceptado la orden de reinicio.",
+};
+
+function waitWindowMs(action: MaintenanceAction): number {
+  return isPowerMaintenanceAction(action) ? POWER_WAIT_MS : TERMINAL_WAIT_MS;
+}
+
 export function createMaintenanceService(dependencies: Partial<MaintenanceDependencies> = {}) {
   const deps: MaintenanceDependencies = {
     uid: dependencies.uid ?? currentUid,
@@ -91,7 +105,7 @@ export function createMaintenanceService(dependencies: Partial<MaintenanceDepend
 
     try {
       const helper = deps.spawnHelper(action, uid);
-      const returnCode = await helper.waitForExit(1000);
+      const returnCode = await helper.waitForExit(waitWindowMs(action));
       if (returnCode !== null && returnCode !== 0) {
         return {
           ok: false,
@@ -101,7 +115,7 @@ export function createMaintenanceService(dependencies: Partial<MaintenanceDepend
 
       return {
         ok: true,
-        message: `Acción ${action} lanzada.`,
+        message: MAINTENANCE_MESSAGES[action] ?? `Acción ${action} lanzada.`,
       };
     } catch (error) {
       return {

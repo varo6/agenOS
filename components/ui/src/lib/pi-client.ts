@@ -147,6 +147,10 @@ export function createPiClient() {
         return bridgeRequest(() => bridge.getTurn(turnId));
       },
 
+      cancelTurn(turnId: string): Promise<PiTurnState> {
+        return bridgeRequest(() => bridge.cancelTurn(turnId));
+      },
+
       getLatestTurn(): Promise<PiTurnState | null> {
         return bridgeRequest(() => bridge.getLatestTurn());
       },
@@ -234,6 +238,12 @@ export function createPiClient() {
 
     getTurn(turnId: string): Promise<PiTurnState> {
       return requestJson<PiTurnState>(`/api/pi/turns/${encodeURIComponent(turnId)}`);
+    },
+
+    cancelTurn(turnId: string): Promise<PiTurnState> {
+      return requestJson<PiTurnState>(`/api/pi/turns/${encodeURIComponent(turnId)}/cancel`, {
+        method: "POST",
+      });
     },
 
     getLatestTurn(): Promise<PiTurnState | null> {
