@@ -21,6 +21,7 @@ instancia los servicios reales.
 | `google_workspace` | `google-auth.ts` + `google-api.ts` | Gmail y Google Calendar de verdad: leer, enviar, responder, listar y crear citas. |
 | `browser_open`, `apps_open`, `apps_install`, `files_open` | varios | Abrir cosas para que las vea el usuario, e instalar paquetes Debian. |
 | `agent_task`, `openclaw_setup`, `learning_memory` | varios | Trabajo en segundo plano, configuración del backend y memoria aprendida. |
+| `improvements` | `improvements-tool.ts` | Las notas que el usuario ha marcado con «Guardar en memoria» bajo una respuesta que le gustó. Solo lectura: quien escribe es el destilador del broker. Ver `docs/architecture/improvements-memory.md`. |
 
 El comportamiento que se espera del modelo (qué tool elegir, cuándo pedir
 confirmación y la obligación de no afirmar acciones no realizadas) vive en

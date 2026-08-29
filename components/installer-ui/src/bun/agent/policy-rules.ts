@@ -209,6 +209,9 @@ const LOW_RISK_TOOLS = new Set([
   "google.read",
   "workspaces.focus",
   "memory.read",
+  // Solo lectura del almacen de mejoras: quien escribe ahi es el destilador
+  // del broker a partir del boton, nunca el modelo.
+  "improvements.read",
   "contacts.lookup",
   "tasks.enqueue",
   "tasks.read",

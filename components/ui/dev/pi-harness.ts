@@ -34,6 +34,12 @@ import {
   type LearnedContextResponse,
   type LearningMemoryClient,
 } from "../../agent/learning-memory-tool";
+import {
+  createHttpImprovementsClient,
+  createImprovementsModelTool,
+  type ImprovementsClient,
+} from "../../agent/improvements-tool";
+import type { ImprovementCatalog } from "../../agent/improvements-types";
 import { createAppTool, type AppLaunchOptions, type AppOpenResponse } from "../../agent/apps";
 import { createOpenBrowserModelTool } from "../../agent/browser-open-tool";
 import { createOpenFileModelTool } from "../../agent/file-open-tool";
@@ -97,7 +103,7 @@ const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
 const PI_DEVICE_AUTH_INSTRUCTIONS =
   "Abre el enlace en cualquier navegador, inicia sesion con ChatGPT y escribe el codigo mostrado.";
-const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"];
+const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"];
 // El primero es el modelo objetivo de Pi; el resto solo entra si el registro de
 // Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
 export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
@@ -105,6 +111,10 @@ export const DEFAULT_PI_THINKING_LEVEL = "low" as const;
 
 function emptyLearningContext(): LearnedContextResponse {
   return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
+}
+
+function emptyImprovementCatalog(): ImprovementCatalog {
+  return { text: "", entries: [], estimatedTokens: 0, tokenBudget: 0, truncated: false, total: 0 };
 }
 
 const unavailablePackageService: PackageInstallToolService = {
@@ -125,8 +135,10 @@ const unavailablePackageService: PackageInstallToolService = {
   }),
 };
 
-export function composePiSystemPrompt(learningContext: string): string {
-  return learningContext.trim() ? `${PI_SYSTEM_PROMPT}\n\n${learningContext.trim()}` : PI_SYSTEM_PROMPT;
+export function composePiSystemPrompt(learningContext: string, improvementCatalog = ""): string {
+  return [PI_SYSTEM_PROMPT, learningContext.trim(), improvementCatalog.trim()]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 type PiModelLike = {
@@ -247,6 +259,7 @@ type PiHarnessDependencies = {
   setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "codexLoginStatus" | "configureTelegram" | "testTelegram" | "enableTelegram">;
   agentTaskClient?: AgentTaskClient;
   learningMemoryClient?: LearningMemoryClient;
+  improvementsClient?: ImprovementsClient;
   traceRecorder?: HarnessTraceRecorder;
   modelPreference?: string[];
   modelTools?: string[];
@@ -637,6 +650,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
   const setupService = createOpenClawSetupService();
   const agentTaskClient = createHttpAgentTaskClient();
   const learningMemoryClient = createHttpLearningMemoryClient();
+  const improvementsClient = createHttpImprovementsClient();
   const traceRecorder = createHarnessTraceRecorder({ filePath: PI_TRACE_PATH });
 
   return {
@@ -687,6 +701,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
           createOpenClawSetupModelTool(setupService),
           createAgentTaskModelTool(agentTaskClient),
           createLearningMemoryModelTool(learningMemoryClient),
+          createImprovementsModelTool(improvementsClient),
         ]) as never,
         sessionManager: sessionManager as SessionManager,
         settingsManager,
@@ -699,6 +714,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
     setupService,
     agentTaskClient,
     learningMemoryClient,
+    improvementsClient,
     traceRecorder,
     // A standalone harness is deliberately capability-free. The broker is
     // the only runtime allowed to inject system-effecting custom tools.
@@ -721,6 +737,14 @@ export class PiHarness {
   private session: PiAgentSessionLike | undefined;
   private sessionModelId: string | undefined;
   private sessionContextKey: string | undefined;
+  /*
+   * El catalogo de mejoras se resuelve una vez por conversacion y se queda
+   * fijo mientras dura. Recalcularlo en cada mensaje cambiaria el prompt de
+   * sistema, y `ensureSession` tira la sesion del modelo cuando eso pasa: el
+   * hilo se reiniciaria a mitad de conversacion. Los cuerpos de las mejoras
+   * entran por la tool `improvements`, que no toca el prompt.
+   */
+  private conversationCatalog: ImprovementCatalog | undefined;
   private pendingAttemptId: string | undefined;
   private busy = false;
   private lastError: string | undefined;
@@ -1052,7 +1076,8 @@ export class PiHarness {
     try {
       model = this.selectModel();
       learningContext = await this.resolveLearningContext(turn.input);
-      const session = await this.ensureSession(model, learningContext);
+      const improvementCatalog = await this.resolveImprovementCatalog();
+      const session = await this.ensureSession(model, learningContext, improvementCatalog);
       if (this.cancelledTurnIds.has(turn.turnId)) {
         throw new Error("Respuesta detenida.");
       }
@@ -1211,7 +1236,10 @@ export class PiHarness {
     learningContext: LearnedContextResponse;
   }): void {
     try {
-      const systemPrompt = composePiSystemPrompt(input.learningContext.text);
+      const systemPrompt = composePiSystemPrompt(
+        input.learningContext.text,
+        this.conversationCatalog?.text ?? "",
+      );
       const record: HarnessTraceRecord = {
         schemaVersion: 1,
         traceId: input.traceId,
@@ -1342,8 +1370,12 @@ export class PiHarness {
     return preferred;
   }
 
-  private async ensureSession(model: PiModelLike, learningContext: LearnedContextResponse): Promise<PiAgentSessionLike> {
-    const contextKey = hashHarnessPrompt(learningContext.text);
+  private async ensureSession(
+    model: PiModelLike,
+    learningContext: LearnedContextResponse,
+    improvementCatalog: ImprovementCatalog,
+  ): Promise<PiAgentSessionLike> {
+    const contextKey = hashHarnessPrompt(`${learningContext.text}\n${improvementCatalog.text}`);
     if (this.session && this.sessionModelId === model.id && this.sessionContextKey === contextKey) {
       return this.session;
     }
@@ -1355,7 +1387,7 @@ export class PiHarness {
       sessionManager: this.sessionManager,
       tools: this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS,
       customTools: this.deps.customTools ?? this.defaultCustomTools(),
-      systemPrompt: composePiSystemPrompt(learningContext.text),
+      systemPrompt: composePiSystemPrompt(learningContext.text, improvementCatalog.text),
     });
 
     this.session = created.session;
@@ -1373,6 +1405,7 @@ export class PiHarness {
       createOpenClawSetupModelTool(this.deps.setupService),
       createAgentTaskModelTool(this.deps.agentTaskClient),
       createLearningMemoryModelTool(this.deps.learningMemoryClient),
+      createImprovementsModelTool(this.deps.improvementsClient),
     ];
   }
 
@@ -1385,6 +1418,7 @@ export class PiHarness {
     this.session = undefined;
     this.sessionModelId = undefined;
     this.sessionContextKey = undefined;
+    this.conversationCatalog = undefined;
     this.sessionManager = this.deps.createSessionManager("fresh");
   }
 
@@ -1394,6 +1428,26 @@ export class PiHarness {
     } catch {
       return emptyLearningContext();
     }
+  }
+
+  /**
+   * Catalogo de mejoras de la conversacion en curso.
+   *
+   * Se pide una sola vez y se cachea hasta que la conversacion se cierra. Si
+   * el broker no responde, la conversacion sigue sin catalogo: Pi contesta
+   * peor, pero contesta.
+   */
+  private async resolveImprovementCatalog(): Promise<ImprovementCatalog> {
+    if (this.conversationCatalog) {
+      return this.conversationCatalog;
+    }
+
+    try {
+      this.conversationCatalog = await this.deps.improvementsClient?.catalog() ?? emptyImprovementCatalog();
+    } catch {
+      this.conversationCatalog = emptyImprovementCatalog();
+    }
+    return this.conversationCatalog;
   }
 
   private getLastAssistantReply(session: PiAgentSessionLike): string {

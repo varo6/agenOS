@@ -232,7 +232,12 @@ export function HomeView({
            * buscar.
            */}
           <LatestReply onStop={() => void conversation.stop()} turns={conversation.turns} />
-          <ConversationPanel turns={conversation.turns} />
+          <ConversationPanel
+            onSaveToMemory={conversation.saveToMemory}
+            savedTurnIds={conversation.savedTurnIds}
+            savingTurnIds={conversation.savingTurnIds}
+            turns={conversation.turns}
+          />
 
           {/*
            * Solo con conversación empezada: en una pantalla vacía, empezar de

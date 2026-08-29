@@ -40,6 +40,7 @@ describe("broker-mediated Pi tools", () => {
       "openclaw_setup",
       "agent_task",
       "learning_memory",
+      "improvements",
     ]);
     // Las capacidades nativas del harness siguen fuera: todo efecto pasa por el
     // broker, incluida la shell, que se expone como computer_run y no como bash.

@@ -1,6 +1,7 @@
 import { createNetworkClient } from "../../../network/client";
 import { createAgentAdminClient } from "./agent-admin-client";
 import { createAgentClient } from "./agent-client";
+import { createImprovementsClient } from "./improvements-client";
 import { createPiClient } from "./pi-client";
 import { resolveWorkspaceSubscription } from "./workspace-source";
 
@@ -14,6 +15,7 @@ import { resolveWorkspaceSubscription } from "./workspace-source";
 export const piClient = createPiClient();
 export const agentClient = createAgentClient();
 export const agentAdminClient = createAgentAdminClient();
+export const improvementsClient = createImprovementsClient();
 export const networkClient = createNetworkClient();
 
 /*

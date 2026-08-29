@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { createAgentClient } from "../lib/agent-client";
 import { classifyAgentCommand } from "../lib/agent-command";
+import type { createImprovementsClient } from "../lib/improvements-client";
 import { PiClientError, type createPiClient } from "../lib/pi-client";
 import type { PiChatSource, PiTurnState } from "../lib/pi-types";
 import { turnPollDelayMs } from "../lib/turn-polling";
@@ -10,6 +11,7 @@ import type { AlertSink } from "./useSystemAlert";
 
 type PiClient = ReturnType<typeof createPiClient>;
 type AgentClient = ReturnType<typeof createAgentClient>;
+type ImprovementsClient = ReturnType<typeof createImprovementsClient>;
 
 const HISTORY_LIMIT = 20;
 /** Turnos que se conservan en memoria; el historial completo vive en el equipo. */
@@ -31,11 +33,17 @@ export type Conversation = {
   /** Cierra el hilo actual y empieza uno nuevo, también para Pi. */
   startNew: () => Promise<void>;
   resetError: () => void;
+  /** Turnos que el usuario ya ha marcado como buenos en esta pantalla. */
+  savedTurnIds: ReadonlySet<string>;
+  /** Marcas con la petición todavía en vuelo. */
+  savingTurnIds: ReadonlySet<string>;
+  saveToMemory: (turnId: string) => Promise<void>;
 };
 
 export type UseConversationOptions = {
   piClient: PiClient;
   agentClient: AgentClient;
+  improvementsClient: ImprovementsClient;
   alert: AlertSink;
   /** No hay internet: no se puede hablar con el modelo. */
   isOffline: () => boolean;
@@ -56,6 +64,7 @@ export type UseConversationOptions = {
 export function useConversation({
   piClient,
   agentClient,
+  improvementsClient,
   alert,
   isOffline,
   isDisconnected,
@@ -67,8 +76,18 @@ export function useConversation({
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [state, setState] = useState<ConversationState>("idle");
   const [draft, setDraft] = useState("");
+  const [savedTurnIds, setSavedTurnIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [savingTurnIds, setSavingTurnIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const guards = useLatest({ isOffline, isDisconnected, onUnauthorized, onModelId, onSettled });
+
+  /*
+   * Copia síncrona de las marcas de memoria. El estado de arriba es lo que se
+   * pinta; estas refs son lo que se consulta, porque dos pulsaciones seguidas
+   * ocurren antes de que React haya aplicado nada.
+   */
+  const pendingCaptures = useRef<Set<string>>(new Set());
+  const capturedTurns = useRef<Set<string>>(new Set());
 
   const upsertTurn = useCallback((turn: PiTurnState) => {
     setTurns((current) => {
@@ -335,8 +354,48 @@ export function useConversation({
     setActiveTurnId(null);
     setState("idle");
     setDraft("");
+    // Las marcas son de esta pantalla, no del equipo: sin turnos a la vista no
+    // hay nada que decir que ya se guardó.
+    pendingCaptures.current.clear();
+    capturedTurns.current.clear();
+    setSavedTurnIds(new Set());
+    setSavingTurnIds(new Set());
     alert.clear();
   }, [alert, piClient]);
+
+  /**
+   * "Guardar en memoria": el usuario dice que esta respuesta le ha servido.
+   *
+   * Contesta al instante porque el broker solo encola el trabajo. Un fallo no
+   * deja el turno marcado: fingir que se guardó sería perder la señal sin que
+   * nadie se entere, y el botón tiene que poder volver a pulsarse.
+   */
+  const saveToMemory = useCallback(
+    async (turnId: string) => {
+      if (pendingCaptures.current.has(turnId) || capturedTurns.current.has(turnId)) {
+        return;
+      }
+
+      pendingCaptures.current.add(turnId);
+      setSavingTurnIds((current) => new Set(current).add(turnId));
+
+      try {
+        await improvementsClient.captureTurn(turnId);
+        capturedTurns.current.add(turnId);
+        setSavedTurnIds((current) => new Set(current).add(turnId));
+      } catch (error) {
+        alert.raise(error);
+      } finally {
+        pendingCaptures.current.delete(turnId);
+        setSavingTurnIds((current) => {
+          const next = new Set(current);
+          next.delete(turnId);
+          return next;
+        });
+      }
+    },
+    [alert, improvementsClient],
+  );
 
   const resetError = useCallback(() => {
     setState((current) => (current === "error" ? "idle" : current));
@@ -347,5 +406,19 @@ export function useConversation({
     [activeTurnId, turns],
   );
 
-  return { turns, activeTurn, state, draft, setDraft, send, stop, restore, startNew, resetError };
+  return {
+    turns,
+    activeTurn,
+    state,
+    draft,
+    setDraft,
+    send,
+    stop,
+    restore,
+    startNew,
+    resetError,
+    savedTurnIds,
+    savingTurnIds,
+    saveToMemory,
+  };
 }

@@ -523,7 +523,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(options.tools).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -553,7 +553,7 @@ describe("PiHarness", () => {
       customTools?: Array<{ name: string }>;
     };
     const names = options.customTools?.map((tool) => tool.name) ?? [];
-    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"]);
   });
 
   test("injects bounded learned context and records exactly which memories were used", async () => {
