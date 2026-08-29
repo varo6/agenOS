@@ -176,6 +176,7 @@ export function serializeImprovementFile(improvement: Improvement): string {
     `triggers: ${serializeList(improvement.triggers)}`,
     `createdAt: ${serializeScalar(improvement.createdAt)}`,
     `updatedAt: ${serializeScalar(improvement.updatedAt)}`,
+    `confidence: ${improvement.confidence}`,
     ...(improvement.lastUsedAt ? [`lastUsedAt: ${serializeScalar(improvement.lastUsedAt)}`] : []),
     `sourceTurnIds: ${serializeList(improvement.sourceTurnIds)}`,
     `version: ${improvement.version}`,
@@ -226,6 +227,8 @@ export function parseImprovementFile(raw: string): Improvement | null {
   }
 
   const version = Number.parseInt(fields.get("version") ?? "1", 10);
+  const rawConfidence = unquote(fields.get("confidence"));
+  const confidence = rawConfidence === "high" || rawConfidence === "low" ? rawConfidence : "medium";
   const lastUsedAt = unquote(fields.get("lastUsedAt"));
   return {
     name,
@@ -237,6 +240,7 @@ export function parseImprovementFile(raw: string): Improvement | null {
     ...(lastUsedAt ? { lastUsedAt } : {}),
     sourceTurnIds: parseList(fields.get("sourceTurnIds") ?? ""),
     version: Number.isFinite(version) && version > 0 ? version : 1,
+    confidence,
     body: lines.slice(end + 1).join("\n").trim(),
   };
 }
@@ -585,6 +589,7 @@ export function createImprovementStore(options: ImprovementStoreOptions = {}): I
           ...sourceTurnIds.map((turnId) => cleanText(turnId, 100)),
         ])).filter(Boolean).slice(-MAX_SOURCE_TURN_IDS),
         version: (target?.version ?? 0) + 1,
+        confidence: draft.confidence,
         body,
       };
 

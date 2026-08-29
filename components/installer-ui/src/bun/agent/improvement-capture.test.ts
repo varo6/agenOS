@@ -24,6 +24,7 @@ function improvement(name: string): Improvement {
     updatedAt: "2026-01-01T00:00:00.000Z",
     sourceTurnIds: [],
     version: 1,
+    confidence: "medium",
     body: `Cuerpo de ${name}`,
   };
 }
@@ -35,6 +36,7 @@ type FakeStore = {
   get(name: string): Improvement | null;
   write(draft: ImprovementDraft, sourceTurnIds: string[]): Improvement;
   recordJob(job: ImprovementCaptureJob): void;
+  jobs(limit?: number): ImprovementCaptureJob[];
 };
 
 function createFakeStore(overrides: Partial<FakeStore> = {}): FakeStore {
@@ -50,13 +52,18 @@ function createFakeStore(overrides: Partial<FakeStore> = {}): FakeStore {
     recordJob(job) {
       store.recorded.push(job);
     },
+    jobs(limit = 20) {
+      return store.recorded.slice(-limit).reverse();
+    },
     ...overrides,
   };
   return store;
 }
 
 function draftFor(name: string): ImprovementDraft {
-  return { category: "web", name, title: `Titulo ${name}`, triggers: [name], body: "Haz esto." };
+  return {
+    category: "web", name, title: `Titulo ${name}`, triggers: [name], body: "Haz esto.", confidence: "medium", sourceTurnIds: [],
+  };
 }
 
 function distillerReturning(draft: ImprovementDraft | null, calls: unknown[] = []): ImprovementDistiller {
@@ -75,6 +82,23 @@ function service(options: Parameters<typeof createImprovementCaptureService>[0])
 }
 
 describe("createImprovementCaptureService", () => {
+  for (const count of [2, 3, 4]) {
+    test(`conserva el contexto necesario de una preferencia en ${count} turnos`, async () => {
+      const calls: Array<{ turns: ImprovementSourceTurn[] }> = [];
+      const turns = Array.from({ length: count }, (_, index) => turn(`t${index + 1}`, `paso ${index + 1}`));
+      const capture = service({
+        store: createFakeStore() as never,
+        distiller: distillerReturning({ ...draftFor(`preferencia-${count}`), sourceTurnIds: turns.map((item) => item.turnId) }, calls as unknown[]),
+        listTurns: () => turns,
+      });
+
+      capture.capture(`t${count}`);
+      await capture.drain();
+
+      expect(calls[0]?.turns.map((item) => item.turnId)).toEqual(turns.map((item) => item.turnId));
+    });
+  }
+
   test("responde al instante y destila despues", async () => {
     const store = createFakeStore();
     const capture = service({
@@ -95,18 +119,33 @@ describe("createImprovementCaptureService", () => {
     expect(capture.job(response.jobId)?.status).toBe("succeeded");
   });
 
-  test("le pasa al destilador el turno marcado y el anterior", async () => {
+  test("le pasa al destilador hasta cuatro turnos incluido el marcado", async () => {
     const calls: Array<{ turns: ImprovementSourceTurn[] }> = [];
     const capture = service({
       store: createFakeStore() as never,
       distiller: distillerReturning(draftFor("a"), calls as unknown[]),
-      listTurns: () => [turn("t0", "hola"), turn("t1", "reserva"), turn("t2", "gracias")],
+      listTurns: () => [turn("t0", "hola"), turn("t1", "juega"), turn("t2", "prefiero otra"), turn("t3", "abre esa"), turn("t4", "gracias")],
     });
 
-    capture.capture("t1");
+    capture.capture("t3");
     await capture.drain();
 
-    expect(calls[0]?.turns.map((item) => item.turnId)).toEqual(["t0", "t1"]);
+    expect(calls[0]?.turns.map((item) => item.turnId)).toEqual(["t0", "t1", "t2", "t3"]);
+  });
+
+  test("acota el texto sin expulsar ninguno de los cuatro turnos", async () => {
+    const calls: Array<{ turns: ImprovementSourceTurn[] }> = [];
+    const capture = service({
+      store: createFakeStore() as never,
+      distiller: distillerReturning(draftFor("acotada"), calls as unknown[]),
+      listTurns: () => ["t1", "t2", "t3", "t4"].map((id) => turn(id, "u".repeat(4_000), "p".repeat(4_000))),
+    });
+
+    capture.capture("t4");
+    await capture.drain();
+
+    expect(calls[0]?.turns).toHaveLength(4);
+    expect(calls[0]?.turns.reduce((sum, item) => sum + item.input.length + item.reply.length, 0)).toBeLessThanOrEqual(12_000);
   });
 
   test("ofrece las mejoras parecidas para que el destilador fusione", async () => {
@@ -212,5 +251,40 @@ describe("createImprovementCaptureService", () => {
     await capture.drain();
 
     expect(store.recorded.map((job) => job.status)).toEqual(["queued", "running", "succeeded"]);
+  });
+
+  test("solo atribuye a la mejora los turnos que el destilador considero necesarios", async () => {
+    const store = createFakeStore();
+    const selected = { ...draftFor("lichess-ajedrez"), sourceTurnIds: ["t1", "t3"] };
+    const capture = service({
+      store: store as never,
+      distiller: distillerReturning(selected),
+      listTurns: () => [turn("t0", "hola"), turn("t1", "juguemos"), turn("t2", "otra opcion"), turn("t3", "perfecto")],
+    });
+
+    capture.capture("t3");
+    await capture.drain();
+
+    expect(store.written[0]?.sourceTurnIds).toEqual(["t1", "t3"]);
+  });
+
+  test("recupera al arrancar trabajos queued y running", async () => {
+    const store = createFakeStore();
+    store.recorded.push(
+      { jobId: "done", turnId: "t0", status: "succeeded", createdAt: "2026-01-01T00:00:00.000Z" },
+      { jobId: "queued", turnId: "t1", status: "queued", createdAt: "2026-01-01T00:00:01.000Z" },
+      { jobId: "running", turnId: "t2", status: "running", createdAt: "2026-01-01T00:00:02.000Z" },
+    );
+    const capture = service({
+      store: store as never,
+      distiller: distillerReturning(draftFor("recuperada")),
+      listTurns: () => [turn("t1", "prefiero uno"), turn("t2", "prefiero dos")],
+    });
+
+    await capture.drain();
+
+    expect(capture.job("queued")?.status).toBe("succeeded");
+    expect(capture.job("running")?.status).toBe("succeeded");
+    expect(capture.job("done")?.status).toBe("succeeded");
   });
 });

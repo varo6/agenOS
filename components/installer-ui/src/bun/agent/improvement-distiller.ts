@@ -10,6 +10,7 @@ import {
   MAX_IMPROVEMENT_TITLE_LENGTH,
   MAX_IMPROVEMENT_TRIGGERS,
   type Improvement,
+  type ImprovementConfidence,
   type ImprovementDistiller,
   type ImprovementDraft,
   type ImprovementSourceTurn,
@@ -34,8 +35,16 @@ export type CodexImprovementDistillerOptions = {
 export const IMPROVEMENT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
-  required: ["category", "name", "title", "triggers", "body"],
+  required: ["abstain", "confidence", "sourceTurnIds", "category", "name", "title", "triggers", "body"],
   properties: {
+    abstain: { type: "boolean" },
+    confidence: { type: "string", enum: ["low", "medium", "high"] },
+    sourceTurnIds: {
+      type: "array",
+      minItems: 1,
+      maxItems: 4,
+      items: { type: "string", minLength: 1 },
+    },
     category: { type: "string", enum: IMPROVEMENT_CATEGORIES },
     name: { type: "string", pattern: "^[a-z0-9]+(-[a-z0-9]+){0,5}$" },
     title: { type: "string", minLength: 1, maxLength: MAX_IMPROVEMENT_TITLE_LENGTH },
@@ -124,22 +133,27 @@ export function createFallbackImprovementDistiller(options: { now?: () => Date }
 
   return {
     async distill(input) {
-      const lastTurn = input.turns.at(-1);
-      const userInput = cleanInlineText(lastTurn?.input ?? "", MAX_IMPROVEMENT_BODY_LENGTH);
-      const reply = cleanMarkdownText(lastTurn?.reply ?? "", 400);
-      if (!lastTurn || !userInput || !reply) {
+      const preferenceIndex = findPreferenceTurn(input.turns);
+      const preferenceTurn = preferenceIndex >= 0 ? input.turns[preferenceIndex] : undefined;
+      if (!preferenceTurn) {
         return null;
       }
 
-      const words = significantWords(userInput);
+      const correction = cleanInlineText(preferenceTurn.input, 240);
+      const originalTurn = input.turns.slice(0, preferenceIndex).reverse()
+        .find((turn) => turn.input.trim() && !hasPreferenceSignal(turn.input));
+      const original = cleanInlineText(originalTurn?.input ?? "una peticion parecida", 180);
+      const words = significantWords(`${original} ${correction}`);
       const triggers = words.length > 0 ? words : ["general"];
       const name = slugFromWords(words.slice(0, 4)) ?? "mejora-general";
       const draft = {
         category: "general",
         name,
-        title: userInput,
+        title: `Preferencia para ${original}`,
         triggers,
-        body: `Cuando te pida algo parecido a "${userInput}", resuelvelo como la vez que le gusto al usuario:\n\n${reply}`,
+        body: `Cuando te pida ${original}, aplica esta preferencia: ${correction}.`,
+        confidence: originalTurn ? "medium" : "low",
+        sourceTurnIds: [originalTurn?.turnId, preferenceTurn.turnId].filter((turnId): turnId is string => Boolean(turnId)),
       };
       return validateImprovementDraft(draft);
     },
@@ -150,7 +164,11 @@ export function validateImprovementDraft(value: unknown): ImprovementDraft | nul
   if (!value || typeof value !== "object") {
     return null;
   }
-  const draft = value as Partial<ImprovementDraft>;
+  const response = value as Partial<ImprovementDraft> & { abstain?: unknown };
+  if (response.abstain === true) {
+    return null;
+  }
+  const draft = response;
   if (!isImprovementCategory(draft.category) || !validName(draft.name)) {
     return null;
   }
@@ -172,18 +190,48 @@ export function validateImprovementDraft(value: unknown): ImprovementDraft | nul
     return null;
   }
 
+  const confidence: ImprovementConfidence = draft.confidence === "high" || draft.confidence === "low"
+    ? draft.confidence
+    : "medium";
+  const sourceTurnIds = Array.isArray(draft.sourceTurnIds)
+    ? Array.from(new Set(draft.sourceTurnIds.filter((turnId): turnId is string => typeof turnId === "string" && Boolean(turnId.trim())))).slice(-4)
+    : [];
+
   return {
     category: draft.category,
     name: draft.name,
     title,
     triggers,
     body,
+    confidence,
+    sourceTurnIds,
     ...(draft.replaces ? { replaces: draft.replaces } : {}),
   };
 }
 
+/** Descarta borradores que parecen una copia o una instantanea del momento. */
+export function isReusableImprovementDraft(
+  draft: ImprovementDraft,
+  turns: ImprovementSourceTurn[],
+): boolean {
+  const body = cleanInlineText(draft.body, MAX_IMPROVEMENT_BODY_LENGTH).toLowerCase();
+  if (/\b(?:disponible|disponibles)\s+(?:ahora|hoy|mañana)\b|\b(?:quedan|hay)\s+\d+\b|\b\d{1,2}:\d{2}\b|(?:€|\$|\b(?:eur|usd)\b)\s*\d/i.test(body)) {
+    return false;
+  }
+
+  for (const turn of turns) {
+    const words = cleanInlineText(turn.reply, 2_000).toLowerCase().split(/\s+/).filter(Boolean);
+    for (let index = 0; index + 12 <= words.length; index += 1) {
+      if (body.includes(words.slice(index, index + 12).join(" "))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 export function buildDistillerPrompt(input: { turns: ImprovementSourceTurn[]; related: Improvement[] }): string {
-  const turns = input.turns.slice(-2).map((turn, index, turnsSlice) => {
+  const turns = input.turns.slice(-4).map((turn, index, turnsSlice) => {
     const marked = index === turnsSlice.length - 1 ? " (marcado por el usuario)" : "";
     return [
       `Turno ${index + 1}${marked}`,
@@ -206,16 +254,21 @@ export function buildDistillerPrompt(input: { turns: ImprovementSourceTurn[]; re
   return [
     "Eres el destilador de mejoras de Pi.",
     "",
-    "El usuario ha pulsado \"Guardar en memoria\" bajo la ultima respuesta de Pi. Eso significa que le gusto como se resolvio y quiere que Pi lo recuerde para una peticion parecida.",
-    "Recibes hasta dos turnos; el ultimo es el marcado.",
+    "El usuario ha pulsado \"Guardar en memoria\" bajo la ultima respuesta de Pi. Debes inferir que parte reutilizable quiere conservar. El ultimo turno es el marcado.",
+    "Recibes hasta cuatro turnos. Usa solo los necesarios y devuelve sus turnId en sourceTurnIds.",
     "",
-    "Escribe una nota brevisima, en espanol, en segunda persona dirigida a Pi. Forma esperada: \"Cuando te pida X, haz Y\".",
+    "Reconstruye mentalmente cuatro piezas antes de responder: la peticion original, la correccion o preferencia, la solucion finalmente aceptada y la regla general que Pi debe aplicar en el futuro.",
+    "Guarda la regla general, no una cronica. Escribe una nota breve, en espanol y dirigida a Pi. Forma esperada: \"Cuando te pida X, haz Y\".",
     "El cuerpo debe ser Markdown plano, maximo 900 caracteres, idealmente 2-5 lineas de lista. No escribas preambulos ni repitas la conversacion.",
+    "No copies respuestas ni fragmentos largos. No guardes resultados temporales, precios, horas, disponibilidad, estados actuales ni detalles que solo valian en ese momento.",
+    "Una preferencia puede ser implicita. Ejemplo: usuario pide jugar al ajedrez, Pi abre Chess.com, usuario prefiere una alternativa open source y Pi abre Lichess. Regla: cuando quiera jugar al ajedrez, abre Lichess en vez de Chess.com.",
+    "Abstente con abstain=true solo si el contexto esta vacio o es incoherente, no contiene ninguna informacion util, o resulta realmente imposible identificar que quiere recordar. La duda o una confianza media no justifican abstenerse.",
+    "confidence es high, medium o low y se guarda para auditoria. Nunca uses la confianza para decidir por si sola si guardas.",
     `category debe ser obligatoriamente una de estas ocho: ${IMPROVEMENT_CATEGORIES.join(", ")}.`,
     "name debe ser un slug kebab-case, sin acentos, de 2-4 palabras, y describir la situacion (por ejemplo \"reservar-restaurante\"), no la respuesta concreta.",
     "triggers debe contener 3-8 palabras clave en minusculas y sin acentos por las que el usuario volveria a pedir esto.",
     "Si una mejora relacionada ya cubre lo mismo, devuelve replaces con su name y un body fusionado; no crees una nota duplicada.",
-    "Responde SOLO el JSON que cumple el esquema. No incluyas Markdown alrededor.",
+    "Si guardas, usa abstain=false. Si te abstienes, rellena los demas campos con valores validos y minimos; se ignoraran. Responde SOLO el JSON que cumple el esquema.",
     "",
     "Turnos:",
     turns || "Ningun turno.",
@@ -385,4 +438,19 @@ function slugFromWords(words: string[]): string | null {
 function isPromptControlAttempt(statement: string): boolean {
   return /\b(ignora(r)?|omite)\b.{0,40}\b(instrucciones|prompt|sistema)\b/i.test(statement)
     || /\b(system prompt|developer message|actua como sistema|revela tus instrucciones)\b/i.test(statement);
+}
+
+const PREFERENCE_SIGNAL = /\b(prefier(?:o|es|e)|mejor|en vez de|en lugar de|no uses?|no utilices?|usa esta|usa esto|utiliza esta|alternativa|rather than|instead of|i prefer|don't use|do not use|use this)\b/i;
+
+function hasPreferenceSignal(value: string): boolean {
+  return PREFERENCE_SIGNAL.test(value);
+}
+
+function findPreferenceTurn(turns: ImprovementSourceTurn[]): number {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (hasPreferenceSignal(turns[index]?.input ?? "")) {
+      return index;
+    }
+  }
+  return -1;
 }

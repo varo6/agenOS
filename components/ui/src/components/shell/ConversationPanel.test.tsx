@@ -27,6 +27,7 @@ function renderPanel(props: Partial<ConversationPanelProps> = {}) {
       onSaveToMemory={onSaveToMemory}
       savedTurnIds={new Set()}
       savingTurnIds={new Set()}
+      failedTurnIds={new Set()}
       turns={[]}
       {...props}
     />,
@@ -185,6 +186,19 @@ describe("ConversationPanel", () => {
       const status = screen.getByRole("status");
       expect(status).toHaveAttribute("aria-live", "polite");
       expect(status).toHaveTextContent("Guardado. Tendré en cuenta cómo resolví “abre Chrome”.");
+    });
+
+    test("un fallo se muestra con discreción y permite reintentar", () => {
+      const { onSaveToMemory } = renderPanel({
+        turns: [turn({ turnId: "t1", status: "succeeded", reply: "Hecho." })],
+        failedTurnIds: new Set(["t1"]),
+      });
+
+      expect(screen.getByText("No se pudo guardar. Puedes intentarlo de nuevo.")).toBeInTheDocument();
+      const button = screen.getByRole("button", { name: /Guardar en memoria/ });
+      expect(button).toBeEnabled();
+      fireEvent.click(button);
+      expect(onSaveToMemory).toHaveBeenCalledWith("t1");
     });
 
     test("el objetivo táctil no encoge por ser una acción secundaria", () => {

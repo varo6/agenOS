@@ -32,6 +32,7 @@ export const IMPROVEMENT_CATEGORIES = [
 ] as const;
 
 export type ImprovementCategory = (typeof IMPROVEMENT_CATEGORIES)[number];
+export type ImprovementConfidence = "low" | "medium" | "high";
 
 export function isImprovementCategory(value: unknown): value is ImprovementCategory {
   return typeof value === "string" && (IMPROVEMENT_CATEGORIES as readonly string[]).includes(value);
@@ -65,6 +66,8 @@ export type ImprovementFrontmatter = {
   sourceTurnIds: string[];
   /** Sube en cada fusion; sirve para ver si una nota se ha ido reescribiendo. */
   version: number;
+  /** Estimacion del destilador. Solo sirve para auditoria; no decide el guardado. */
+  confidence: ImprovementConfidence;
   /** Ultima vez que Pi la leyo de verdad. Rige el desalojo. */
   lastUsedAt?: string;
 };
@@ -108,6 +111,10 @@ export type ImprovementDraft = {
   title: string;
   triggers: string[];
   body: string;
+  /** Se conserva para auditoria. Incluso `medium` y `low` se guardan. */
+  confidence: ImprovementConfidence;
+  /** Subconjunto de los turnos recibidos que sustenta la regla. */
+  sourceTurnIds: string[];
   /**
    * Nombre de una mejora existente que este borrador sustituye. El destilador
    * solo puede fusionar dentro de la categoria que se le ofrecio.
@@ -147,8 +154,14 @@ export type ImprovementCaptureResponse = {
   message: string;
 };
 
+/** Respuesta de `GET /api/agent/improvements/capture/:jobId`. */
+export type ImprovementCaptureJobResponse = {
+  ok: true;
+  job: ImprovementCaptureJob;
+};
+
 /**
- * Destilador: convierte uno o dos turnos en un borrador de mejora.
+ * Destilador: convierte hasta cuatro turnos en un borrador de mejora.
  *
  * Es una interfaz y no una funcion concreta porque hay tres implementaciones
  * previstas: la real (`codex exec`), la de respaldo (sin modelo, cuando Codex

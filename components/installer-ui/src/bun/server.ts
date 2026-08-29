@@ -1391,12 +1391,19 @@ export function createInstallerApiHandler(
           if (!turnId) {
             return json({ ok: false, message: "Falta el turno que guardar." }, { status: 400 });
           }
-          /*
-           * 202 sin esperar al destilado: el usuario ha pulsado un boton cuyo
-           * resultado no se le va a ensenar nunca, asi que dejarlo mirando una
-           * pantalla mientras un modelo escribe una nota seria gratuito.
-           */
+          // 202 confirma la cola. La UI consulta el job antes de decir que se guardo.
           return json(deps.improvementCapture.capture(turnId), { status: 202 });
+        }
+
+        const captureJobMatch = url.pathname.match(/^\/api\/agent\/improvements\/capture\/([^/]+)$/);
+        if (captureJobMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const job = deps.improvementCapture.job(decodeURIComponent(captureJobMatch[1] ?? ""));
+          return job
+            ? json({ ok: true, job })
+            : json({ ok: false, message: "Trabajo de guardado no encontrado." }, { status: 404 });
         }
 
         if (url.pathname === "/api/agent/improvements/catalog") {

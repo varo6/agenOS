@@ -9,6 +9,7 @@ import {
   buildDistillerPrompt,
   createCodexImprovementDistiller,
   createFallbackImprovementDistiller,
+  isReusableImprovementDraft,
   validateImprovementDraft,
 } from "./improvement-distiller";
 
@@ -36,6 +37,8 @@ const validDraft: ImprovementDraft = {
   title: "Reservar mesa en restaurante",
   triggers: ["reservar", "mesa", "restaurante", "cena"],
   body: "Cuando te pida reservar mesa:\n- Busca opciones online.\n- Ensena horarios antes de confirmar.",
+  confidence: "high",
+  sourceTurnIds: ["turn_prev", "turn_marked"],
 };
 
 const sourceInput = {
@@ -143,6 +146,15 @@ describe("improvement distiller", () => {
     })).toBeNull();
   });
 
+  test("rejects copied replies and temporary results", () => {
+    const longReply = "He encontrado una opcion concreta con muchos detalles que solo pertenecen a esta respuesta y no deben guardarse nunca completos.";
+    const turns = [{ turnId: "t1", input: "busca algo", reply: longReply }];
+
+    expect(isReusableImprovementDraft({ ...validDraft, body: longReply }, turns)).toBe(false);
+    expect(isReusableImprovementDraft({ ...validDraft, body: "Usa esta opcion; hay 1432 plazas disponibles ahora." }, turns)).toBe(false);
+    expect(isReusableImprovementDraft({ ...validDraft, body: "Cuando quiera jugar al ajedrez, abre Lichess." }, turns)).toBe(true);
+  });
+
   test("returns null without spawning when Codex is absent", async () => {
     let spawned = false;
     const distiller = createCodexImprovementDistiller({
@@ -197,6 +209,7 @@ describe("improvement distiller", () => {
       updatedAt: "2026-08-28T09:00:00.000Z",
       sourceTurnIds: ["turn_old"],
       version: 1,
+      confidence: "medium",
       body: "Cuando te pida reservar restaurante, ensena opciones antes de confirmar.",
     }];
 
@@ -207,19 +220,42 @@ describe("improvement distiller", () => {
     expect(prompt).toContain("Reserva mesa para dos.");
     expect(prompt).toContain("reservar-restaurante");
     expect(prompt).toContain("Cuando te pida reservar restaurante");
+    expect(prompt).toContain("Chess.com");
+    expect(prompt).toContain("Lichess");
+    expect(prompt).toContain("La duda o una confianza media no justifican abstenerse");
   });
 
-  test("fallback distiller produces a valid deterministic draft", async () => {
+  test("fallback distiller only saves an explicit preference and never copies the reply", async () => {
     const distiller = createFallbackImprovementDistiller({
       now: () => new Date("2026-08-28T10:00:00.000Z"),
     });
+    const input = {
+      turns: [
+        { turnId: "t1", input: "Quiero jugar al ajedrez", reply: "Abro Chess.com." },
+        { turnId: "t2", input: "Prefiero una alternativa open source", reply: "He abierto Lichess y hay 1432 jugadores conectados." },
+      ],
+      related: [],
+    };
 
-    const result = await distiller.distill(sourceInput);
+    const result = await distiller.distill(input);
 
     expect(validateImprovementDraft(result)).toEqual(result);
     expect(result?.category).toBe("general");
-    expect(result?.name).toBe("reserva-mesa-dos");
-    expect(result?.triggers).toContain("reserva");
-    expect(result?.triggers).toContain("mesa");
+    expect(result?.triggers).toContain("ajedrez");
+    expect(result?.body).toContain("Prefiero una alternativa open source");
+    expect(result?.body).not.toContain("1432");
+    expect(result?.body).not.toContain(input.turns[1]!.reply);
+  });
+
+  test("fallback abstains without a clear preference signal", async () => {
+    const distiller = createFallbackImprovementDistiller();
+    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
+  });
+
+  test("the model can abstain only through the explicit decision", () => {
+    expect(validateImprovementDraft({
+      ...validDraft,
+      abstain: true,
+    })).toBeNull();
   });
 });

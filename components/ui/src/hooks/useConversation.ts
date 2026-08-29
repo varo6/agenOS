@@ -16,6 +16,7 @@ type ImprovementsClient = ReturnType<typeof createImprovementsClient>;
 const HISTORY_LIMIT = 20;
 /** Turnos que se conservan en memoria; el historial completo vive en el equipo. */
 const MAX_TURNS = 40;
+const CAPTURE_POLL_MS = 350;
 
 export type ConversationState = "idle" | "processing" | "error";
 
@@ -37,6 +38,8 @@ export type Conversation = {
   savedTurnIds: ReadonlySet<string>;
   /** Marcas con la petición todavía en vuelo. */
   savingTurnIds: ReadonlySet<string>;
+  /** Capturas que fallaron y se pueden reintentar. */
+  failedTurnIds: ReadonlySet<string>;
   saveToMemory: (turnId: string) => Promise<void>;
 };
 
@@ -78,6 +81,7 @@ export function useConversation({
   const [draft, setDraft] = useState("");
   const [savedTurnIds, setSavedTurnIds] = useState<ReadonlySet<string>>(() => new Set());
   const [savingTurnIds, setSavingTurnIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [failedTurnIds, setFailedTurnIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const guards = useLatest({ isOffline, isDisconnected, onUnauthorized, onModelId, onSettled });
 
@@ -360,15 +364,15 @@ export function useConversation({
     capturedTurns.current.clear();
     setSavedTurnIds(new Set());
     setSavingTurnIds(new Set());
+    setFailedTurnIds(new Set());
     alert.clear();
   }, [alert, piClient]);
 
   /**
    * "Guardar en memoria": el usuario dice que esta respuesta le ha servido.
    *
-   * Contesta al instante porque el broker solo encola el trabajo. Un fallo no
-   * deja el turno marcado: fingir que se guardó sería perder la señal sin que
-   * nadie se entere, y el botón tiene que poder volver a pulsarse.
+   * El broker acusa la cola al instante, pero la marca solo cambia a guardada
+   * cuando el trabajo confirma la escritura. Un fallo reactiva el botón.
    */
   const saveToMemory = useCallback(
     async (turnId: string) => {
@@ -378,13 +382,26 @@ export function useConversation({
 
       pendingCaptures.current.add(turnId);
       setSavingTurnIds((current) => new Set(current).add(turnId));
+      setFailedTurnIds((current) => {
+        const next = new Set(current);
+        next.delete(turnId);
+        return next;
+      });
 
       try {
-        await improvementsClient.captureTurn(turnId);
+        const accepted = await improvementsClient.captureTurn(turnId);
+        let job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
+        while (job.status === "queued" || job.status === "running") {
+          await new Promise((resolve) => window.setTimeout(resolve, CAPTURE_POLL_MS));
+          job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
+        }
+        if (job.status !== "succeeded") {
+          throw new Error(job.error ?? "No se pudo guardar. Inténtalo de nuevo.");
+        }
         capturedTurns.current.add(turnId);
         setSavedTurnIds((current) => new Set(current).add(turnId));
-      } catch (error) {
-        alert.raise(error);
+      } catch {
+        setFailedTurnIds((current) => new Set(current).add(turnId));
       } finally {
         pendingCaptures.current.delete(turnId);
         setSavingTurnIds((current) => {
@@ -419,6 +436,7 @@ export function useConversation({
     resetError,
     savedTurnIds,
     savingTurnIds,
+    failedTurnIds,
     saveToMemory,
   };
 }

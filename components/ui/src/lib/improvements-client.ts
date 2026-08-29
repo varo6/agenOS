@@ -1,4 +1,7 @@
-import type { ImprovementCaptureResponse } from "../../../agent/improvements-types";
+import type {
+  ImprovementCaptureJobResponse,
+  ImprovementCaptureResponse,
+} from "../../../agent/improvements-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -76,7 +79,7 @@ async function requestJson<T>(
  *
  * Solo manda el identificador del turno: el contenido de la mejora lo saca el
  * broker del historial del harness, para que no dependa de lo que diga esta
- * pantalla. La respuesta es un acuse inmediato; el destilado ocurre despues.
+ * pantalla. El POST es un acuse inmediato y el GET permite seguir el trabajo.
  */
 export function createImprovementsClient(options: ImprovementsClientOptions = {}) {
   const baseUrl = resolveHttpBase(options);
@@ -91,6 +94,13 @@ export function createImprovementsClient(options: ImprovementsClientOptions = {}
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ turnId }),
       });
+    },
+    getCaptureJob(jobId: string): Promise<ImprovementCaptureJobResponse> {
+      return requestJson<ImprovementCaptureJobResponse>(
+        doFetch,
+        baseUrl,
+        `/api/agent/improvements/capture/${encodeURIComponent(jobId)}`,
+      );
     },
   };
 }

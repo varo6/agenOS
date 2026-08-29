@@ -34,6 +34,8 @@ function draft(overrides: Partial<ImprovementDraft> = {}): ImprovementDraft {
     title: "Como reservar mesa en un restaurante",
     triggers: ["reservar", "mesa", "restaurante"],
     body: "Cuando te pida reservar mesa:\n- Usa TheFork.\n- Confirma la hora antes de enviar.",
+    confidence: "medium",
+    sourceTurnIds: [],
     ...overrides,
   };
 }
@@ -59,6 +61,7 @@ describe("formato del fichero", () => {
       lastUsedAt: "2026-03-03T10:00:00.000Z",
       sourceTurnIds: ["turn_a", "turn_b"],
       version: 3,
+      confidence: "high",
       body: "Primera linea.\n\n- Un punto\n- Otro punto",
     };
 

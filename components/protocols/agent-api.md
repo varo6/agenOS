@@ -137,6 +137,7 @@ POST /api/agent/learning/memories/:itemId             corrige una entrada por in
 DELETE /api/agent/learning/memories/:itemId           olvida una entrada por intención explícita del usuario
 GET  /api/agent/learning/context                      selección auditable (`query`, `tokenBudget`; máximo 512)
 POST /api/agent/improvements/capture                 { turnId } → 202 con el jobId del destilado
+GET  /api/agent/improvements/capture/:jobId          estado real: queued | running | succeeded | failed
 GET  /api/agent/improvements/catalog                 bloque para el prompt de sistema (`tokenBudget`)
 GET  /api/agent/improvements                         catálogo completo (`?category=` para filtrar)
 GET  /api/agent/improvements/search                  nombres que casan con una petición (`query`, `limit`)

@@ -16,6 +16,7 @@ function createAlert(): AlertSink {
 type Harness = {
   alert: AlertSink;
   captureTurn: ReturnType<typeof vi.fn>;
+  getCaptureJob: ReturnType<typeof vi.fn>;
   startNewConversation: ReturnType<typeof vi.fn>;
 };
 
@@ -24,17 +25,21 @@ type Harness = {
  * clientes se deja sin implementar a propósito para que un cambio que empiece
  * a usarlos aquí falle de forma ruidosa.
  */
-function setup(captureImpl?: () => Promise<unknown>) {
+function setup(
+  captureImpl?: () => Promise<unknown>,
+  jobImpl?: () => Promise<unknown>,
+) {
   const harness: Harness = {
     alert: createAlert(),
-    captureTurn: vi.fn(captureImpl ?? (() => Promise.resolve({ ok: true, jobId: "j1", status: "queued", message: "Lo tendré en cuenta." }))),
+    captureTurn: vi.fn(captureImpl ?? (() => Promise.resolve({ ok: true, jobId: "j1", status: "queued", message: "Guardando…" }))),
+    getCaptureJob: vi.fn(jobImpl ?? (() => Promise.resolve({ ok: true, job: { jobId: "j1", turnId: "turn_1", status: "succeeded", createdAt: "2026-01-01T00:00:00.000Z" } }))),
     startNewConversation: vi.fn(() => Promise.resolve()),
   };
 
   const options = {
     piClient: { startNewConversation: harness.startNewConversation },
     agentClient: {},
-    improvementsClient: { captureTurn: harness.captureTurn },
+    improvementsClient: { captureTurn: harness.captureTurn, getCaptureJob: harness.getCaptureJob },
     alert: harness.alert,
     isOffline: () => false,
     isDisconnected: () => false,
@@ -47,7 +52,7 @@ function setup(captureImpl?: () => Promise<unknown>) {
 }
 
 describe("useConversation: guardar en memoria", () => {
-  test("marca el turno cuando el broker acepta la captura", async () => {
+  test("marca el turno cuando el trabajo confirma la escritura", async () => {
     const { harness, result } = setup();
 
     await act(async () => {
@@ -55,14 +60,18 @@ describe("useConversation: guardar en memoria", () => {
     });
 
     expect(harness.captureTurn).toHaveBeenCalledWith("turn_1");
+    expect(harness.getCaptureJob).toHaveBeenCalledWith("j1");
     expect(result.current.savedTurnIds.has("turn_1")).toBe(true);
     expect(result.current.savingTurnIds.has("turn_1")).toBe(false);
   });
 
-  test("mientras vuela, el turno consta como en curso", async () => {
+  test("el 202 mantiene Guardando hasta que el trabajo confirma la escritura", async () => {
     let release = () => {};
-    const { result } = setup(() => new Promise((resolve) => {
-      release = () => resolve({ ok: true });
+    const { result } = setup(undefined, () => new Promise((resolve) => {
+      release = () => resolve({
+        ok: true,
+        job: { jobId: "j1", turnId: "turn_1", status: "succeeded", createdAt: "2026-01-01T00:00:00.000Z" },
+      });
     }));
 
     let pending: Promise<void> = Promise.resolve();
@@ -108,22 +117,30 @@ describe("useConversation: guardar en memoria", () => {
     expect(harness.captureTurn).toHaveBeenCalledTimes(1);
   });
 
-  test("un fallo avisa y deja el botón disponible para reintentar", async () => {
-    const { harness, result } = setup(() => Promise.reject(new Error("el broker no responde")));
+  test("un trabajo fallido se indica y deja el botón disponible para reintentar", async () => {
+    const { harness, result } = setup(undefined, () => Promise.resolve({
+      ok: true,
+      job: { jobId: "j1", turnId: "turn_1", status: "failed", createdAt: "2026-01-01T00:00:00.000Z", error: "fallo" },
+    }));
 
     await act(async () => {
       await result.current.saveToMemory("turn_1");
     });
 
-    expect(harness.alert.raise).toHaveBeenCalled();
     expect(result.current.savedTurnIds.has("turn_1")).toBe(false);
     expect(result.current.savingTurnIds.has("turn_1")).toBe(false);
+    expect(result.current.failedTurnIds.has("turn_1")).toBe(true);
 
     harness.captureTurn.mockResolvedValueOnce({ ok: true, jobId: "j2", status: "queued", message: "" });
+    harness.getCaptureJob.mockResolvedValueOnce({
+      ok: true,
+      job: { jobId: "j2", turnId: "turn_1", status: "succeeded", createdAt: "2026-01-01T00:00:00.000Z" },
+    });
     await act(async () => {
       await result.current.saveToMemory("turn_1");
     });
     expect(result.current.savedTurnIds.has("turn_1")).toBe(true);
+    expect(result.current.failedTurnIds.has("turn_1")).toBe(false);
   });
 
   test("empezar otra conversación borra las marcas de la pantalla", async () => {

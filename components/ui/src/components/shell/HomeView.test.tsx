@@ -97,6 +97,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     resetError: vi.fn(),
     savedTurnIds: new Set<string>(),
     savingTurnIds: new Set<string>(),
+    failedTurnIds: new Set<string>(),
     saveToMemory: vi.fn(),
     ...overrides,
   } as Conversation;

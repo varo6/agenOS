@@ -34,7 +34,7 @@ describe("createImprovementsClient", () => {
         ok: true,
         jobId: "job_k3m1",
         status: "queued",
-        message: "Lo tendre en cuenta.",
+        message: "Guardando…",
       }), { status: 202 }),
     );
 
@@ -44,7 +44,7 @@ describe("createImprovementsClient", () => {
       ok: true,
       jobId: "job_k3m1",
       status: "queued",
-      message: "Lo tendre en cuenta.",
+      message: "Guardando…",
     });
     expect(requests).toHaveLength(1);
     expect(requests[0].url).toBe("http://agent.test/api/agent/improvements/capture");
@@ -65,6 +65,19 @@ describe("createImprovementsClient", () => {
     await client.captureTurn("turn_1");
 
     expect(requests[0].url).toBe("http://192.168.1.40:4173/api/agent/improvements/capture");
+  });
+
+  test("consulta el estado del trabajo de captura", async () => {
+    const { fetchImpl, requests } = createFetch(() => new Response(JSON.stringify({
+      ok: true,
+      job: { jobId: "job/1", turnId: "turn_1", status: "running", createdAt: "2026-01-01T00:00:00.000Z" },
+    })));
+    const client = createImprovementsClient({ baseUrl: "http://agent.test", fetchImpl });
+
+    const result = await client.getCaptureJob("job/1");
+
+    expect(result.job.status).toBe("running");
+    expect(requests[0].url).toBe("http://agent.test/api/agent/improvements/capture/job%2F1");
   });
 
   test("propaga el mensaje del broker cuando la captura falla", async () => {

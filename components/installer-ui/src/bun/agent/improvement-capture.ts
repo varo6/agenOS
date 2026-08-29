@@ -5,18 +5,19 @@ import type {
   ImprovementSourceTurn,
 } from "../../../../agent/improvements-types";
 import type { createImprovementStore } from "./improvements";
+import { isReusableImprovementDraft } from "./improvement-distiller";
 
 type ImprovementStore = ReturnType<typeof createImprovementStore>;
 
 /**
  * Turnos que se le ensenan al destilador.
  *
- * Dos, no uno: el turno marcado suele ser la respuesta buena, pero lo que hace
- * falta para reconocer la situacion la proxima vez esta en lo que el usuario
- * pidio antes. Con solo el ultimo turno salen notas que describen la respuesta
- * y no el caso.
+ * Cuatro permiten reconstruir peticion, correccion y solucion aceptada sin
+ * mandar el historial completo al destilador.
  */
-const SOURCE_TURN_WINDOW = 2;
+const SOURCE_TURN_WINDOW = 4;
+const SOURCE_CONTEXT_MAX_CHARS = 12_000;
+const SOURCE_FIELD_MAX_CHARS = SOURCE_CONTEXT_MAX_CHARS / (SOURCE_TURN_WINDOW * 2);
 /** Dos destilados a la vez: cada uno es un proceso de modelo entero. */
 const DEFAULT_MAX_CONCURRENT = 2;
 const MAX_RETAINED_JOBS = 50;
@@ -81,7 +82,12 @@ export function createImprovementCaptureService(
     if (index === -1) {
       return [];
     }
-    return recent.slice(Math.max(0, index - (SOURCE_TURN_WINDOW - 1)), index + 1);
+    const window = recent.slice(Math.max(0, index - (SOURCE_TURN_WINDOW - 1)), index + 1);
+    return window.map((turn) => ({
+      ...turn,
+      input: turn.input.slice(0, SOURCE_FIELD_MAX_CHARS),
+      reply: turn.reply.slice(0, SOURCE_FIELD_MAX_CHARS),
+    }));
   }
 
   /**
@@ -107,15 +113,22 @@ export function createImprovementCaptureService(
 
     try {
       const related = relatedTo(turns);
-      const draft = await options.distiller.distill({ turns, related })
-        ?? await options.fallbackDistiller?.distill({ turns, related })
-        ?? null;
+      const primary = await options.distiller.distill({ turns, related });
+      const draft = primary && isReusableImprovementDraft(primary, turns)
+        ? primary
+        : await options.fallbackDistiller?.distill({ turns, related }) ?? null;
       if (!draft) {
         settle(job, { status: "failed", error: "No se pudo resumir esta conversacion." });
         return;
       }
+      if (!isReusableImprovementDraft(draft, turns)) {
+        settle(job, { status: "failed", error: "No se pudo extraer una preferencia reutilizable." });
+        return;
+      }
 
-      const written = options.store.write(draft, turns.map((turn) => turn.turnId));
+      const availableIds = new Set(turns.map((turn) => turn.turnId));
+      const sourceTurnIds = draft.sourceTurnIds.filter((turnId) => availableIds.has(turnId));
+      const written = options.store.write(draft, sourceTurnIds.length > 0 ? sourceTurnIds : turns.map((turn) => turn.turnId));
       settle(job, { status: "succeeded", name: written.name, category: written.category });
     } catch (error) {
       /*
@@ -145,6 +158,27 @@ export function createImprovementCaptureService(
     }
   }
 
+  const latestPersisted = new Map<string, ImprovementCaptureJob>();
+  for (const persisted of options.store.jobs(Number.MAX_SAFE_INTEGER)) {
+    if (!latestPersisted.has(persisted.jobId)) {
+      latestPersisted.set(persisted.jobId, persisted);
+    }
+  }
+  for (const persisted of [...latestPersisted.values()].reverse()) {
+    jobs.set(persisted.jobId, persisted);
+    if (persisted.status === "queued" || persisted.status === "running") {
+      const recovered: ImprovementCaptureJob = {
+        jobId: persisted.jobId,
+        turnId: persisted.turnId,
+        status: "queued",
+        createdAt: persisted.createdAt,
+      };
+      remember(recovered);
+      queue.push(recovered);
+    }
+  }
+  pump();
+
   return {
     capture(turnId: string): ImprovementCaptureResponse {
       const job: ImprovementCaptureJob = {
@@ -157,15 +191,11 @@ export function createImprovementCaptureService(
       queue.push(job);
       pump();
 
-      /*
-       * El mensaje habla de lo que el usuario acaba de hacer, no del trabajo
-       * que se ha encolado. Nadie tiene que enterarse de que hay un destilador.
-       */
       return {
         ok: true,
         jobId: job.jobId,
         status: job.status,
-        message: "Lo tendre en cuenta la proxima vez.",
+        message: "Guardando…",
       };
     },
     job(jobId: string) {

@@ -5,8 +5,9 @@ usuario lo pulsa cuando le ha gustado como Pi ha resuelto algo. A partir de ahi
 todo pasa por debajo: en conversaciones futuras, cuando pida algo parecido, Pi
 recupera esa nota y repite lo que funciono.
 
-El usuario nunca ve el mecanismo. No hay pantalla de edicion, ni confirmacion,
-ni espera: el boton responde al instante y el trabajo ocurre despues.
+El usuario nunca ve el destilador ni edita la nota. El boton muestra
+"Guardando..." mientras el trabajo corre y solo confirma cuando el fichero ya
+se ha escrito. Si falla, muestra un aviso corto y vuelve a quedar disponible.
 
 ## Por que no es la memoria aprendida que ya existe
 
@@ -39,6 +40,7 @@ title: Como reservar mesa en un restaurante
 triggers: [reservar, mesa, restaurante, cena, thefork]
 createdAt: 2026-08-28T09:12:04.000Z
 updatedAt: 2026-08-28T09:12:04.000Z
+confidence: high
 sourceTurnIds: [turn_k3m1, turn_k3m0]
 version: 1
 ---
@@ -101,10 +103,14 @@ que es lo unico que se paga en cada conversacion.
 1. La UI llama a `POST /api/agent/improvements/capture` con `{ turnId }`. No
    manda texto: el broker lee el turno del harness, y asi el contenido de la
    mejora no depende de lo que diga el cliente.
-2. El broker toma ese turno y el anterior, para que el destilador vea que
-   pregunto el usuario antes y no solo la respuesta final.
-3. Responde `202` con el `jobId`. La UI ya puede decir "Lo tendre en cuenta".
+2. El broker toma una ventana retrospectiva de hasta cuatro turnos, incluido el
+   marcado, con un techo de 12.000 caracteres. El destilador devuelve los
+   `sourceTurnIds` que uso y el almacen conserva solo esos.
+3. Responde `202` con el `jobId`. La UI mantiene "Guardando..." y consulta el
+   trabajo hasta que llega a `succeeded` o `failed`.
 4. El destilado corre en segundo plano, con como mucho dos trabajos a la vez.
+   Cada transicion queda en `jobs.ndjson`. Al arrancar, el broker reencola los
+   trabajos cuyo ultimo estado era `queued` o `running`.
 
 ### El destilador
 
@@ -112,21 +118,37 @@ que es lo unico que se paga en cada conversacion.
 JSON validado, `--sandbox read-only` porque solo tiene que escribir texto, y
 `--ephemeral` para no dejar sesiones. El broker valida ademas el JSON contra el
 contrato: categoria de la lista cerrada, `name` en kebab-case, cuerpo por
-debajo del limite.
+debajo del limite, confianza y turnos usados. La confianza es auditoria. Un
+valor medio o bajo no bloquea la escritura.
+
+El prompt obliga a reconstruir la peticion original, la correccion o
+preferencia, la solucion aceptada y una regla reutilizable. Por ejemplo, si Pi
+abre Chess.com, el usuario pide una alternativa open source y acepta Lichess,
+la nota indica que debe abrir Lichess en vez de Chess.com al jugar al ajedrez.
+No guarda la respuesta, precios, horas, disponibilidad ni otros resultados del
+momento. El broker tambien rechaza fragmentos largos copiados y patrones
+temporales evidentes.
+
+El modelo puede abstenerse, pero el prompt lo reserva para contexto vacio o
+incoherente, ausencia total de informacion util o imposibilidad real de saber
+que se quiere recordar.
 
 Se le pasan las mejoras existentes que mas se parecen, y puede devolver
 `replaces` para fusionar con una en vez de crear otra. Sin eso, marcar cinco
 veces la misma preferencia dejaria cinco notas casi identicas en el catalogo.
 
-Si Codex no esta disponible o no ha iniciado sesion, entra el destilador de
-respaldo, que escribe una nota minima a partir del texto del turno sin llamar a
-ningun modelo. Perder la senal del usuario es peor que guardar una nota tosca.
+Si Codex no esta disponible o no produce una regla valida, entra el destilador
+de respaldo. Solo escribe cuando encuentra una señal explicita como
+"prefiero", "mejor", "en vez de", "no uses" o "usa esta". Construye la regla
+con las peticiones del usuario y nunca copia la respuesta de Pi. Sin una señal
+clara se abstiene.
 
 ## Endpoints
 
 | Metodo | Ruta | Que hace |
 | --- | --- | --- |
 | `POST` | `/api/agent/improvements/capture` | Encola el destilado de un turno. `202`. |
+| `GET` | `/api/agent/improvements/capture/:jobId` | Estado `queued`, `running`, `succeeded` o `failed`. |
 | `GET` | `/api/agent/improvements/catalog` | Bloque de catalogo para el prompt. |
 | `GET` | `/api/agent/improvements` | Lista las entradas del catalogo. |
 | `GET` | `/api/agent/improvements/search?query=` | Nombres que casan con una peticion. |

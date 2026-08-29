@@ -236,6 +236,7 @@ export function HomeView({
             onSaveToMemory={conversation.saveToMemory}
             savedTurnIds={conversation.savedTurnIds}
             savingTurnIds={conversation.savingTurnIds}
+            failedTurnIds={conversation.failedTurnIds}
             turns={conversation.turns}
           />
 

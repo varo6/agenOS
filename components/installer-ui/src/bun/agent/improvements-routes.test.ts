@@ -30,6 +30,8 @@ const draft: ImprovementDraft = {
   title: "Como reservar mesa",
   triggers: ["reservar", "mesa", "cena"],
   body: "Cuando te pida mesa, usa TheFork y confirma la hora.",
+  confidence: "high",
+  sourceTurnIds: ["turn_0", "turn_1"],
 };
 
 function get(path: string): Promise<Response> {
@@ -68,10 +70,15 @@ describe("rutas de mejoras", () => {
     const payload = await response.json() as { ok: boolean; jobId: string; message: string };
     expect(payload.ok).toBe(true);
     // El mensaje es para el usuario: no puede hablar de destilados ni de colas.
-    expect(payload.message).toBe("Lo tendre en cuenta la proxima vez.");
+    expect(payload.message).toBe("Guardando…");
+
+    const running = await get(`/api/agent/improvements/capture/${payload.jobId}`);
+    expect(running.status).toBe(200);
 
     await capture.drain();
     expect(capture.job(payload.jobId)?.status).toBe("succeeded");
+    const completed = await (await get(`/api/agent/improvements/capture/${payload.jobId}`)).json() as { job: { status: string } };
+    expect(completed.job.status).toBe("succeeded");
     expect(store.get("reservar-restaurante")?.body).toContain("TheFork");
     // Se guardan los dos turnos: el marcado y el anterior, que da el contexto.
     expect(store.get("reservar-restaurante")?.sourceTurnIds).toEqual(["turn_0", "turn_1"]);

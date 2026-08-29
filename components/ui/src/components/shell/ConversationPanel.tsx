@@ -12,6 +12,7 @@ export type ConversationPanelProps = {
   savedTurnIds: ReadonlySet<string>;
   /** Turnos con la marca todavía en vuelo. */
   savingTurnIds: ReadonlySet<string>;
+  failedTurnIds: ReadonlySet<string>;
   onSaveToMemory: (turnId: string) => void;
 };
 
@@ -38,6 +39,7 @@ type SaveToMemoryButtonProps = {
   turn: PiTurnState;
   saved: boolean;
   saving: boolean;
+  failed: boolean;
   onSave: (turnId: string) => void;
 };
 
@@ -45,10 +47,10 @@ type SaveToMemoryButtonProps = {
  * "Guardar en memoria": el gesto con el que el usuario dice que esta respuesta
  * le ha servido.
  *
- * No pregunta nada ni enseña lo que se guarda: responde y ya está. Por eso el
- * texto de después no es "Guardado" sino lo que de verdad va a pasar.
+ * No pregunta nada ni enseña la nota. Mantiene el estado de escritura visible
+ * y solo cambia el texto final cuando el broker confirma el fichero.
  */
-function SaveToMemoryButton({ turn, saved, saving, onSave }: SaveToMemoryButtonProps) {
+function SaveToMemoryButton({ turn, saved, saving, failed, onSave }: SaveToMemoryButtonProps) {
   const subject = summarizeInput(turn.input);
   const label = saved
     ? `Ya guardada en memoria la respuesta a “${subject}”`
@@ -82,6 +84,11 @@ function SaveToMemoryButton({ turn, saved, saving, onSave }: SaveToMemoryButtonP
       <p aria-live="polite" className="sr-only" role="status">
         {saved ? `Guardado. Tendré en cuenta cómo resolví “${subject}”.` : ""}
       </p>
+      {failed ? (
+        <p className="mt-1 text-sm text-danger" role="status">
+          No se pudo guardar. Puedes intentarlo de nuevo.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -90,10 +97,11 @@ type TurnCardProps = {
   turn: PiTurnState;
   saved: boolean;
   saving: boolean;
+  failed: boolean;
   onSaveToMemory: (turnId: string) => void;
 };
 
-function TurnCard({ turn, saved, saving, onSaveToMemory }: TurnCardProps) {
+function TurnCard({ turn, saved, saving, failed, onSaveToMemory }: TurnCardProps) {
   return (
     <article className="panel-inset p-4 sm:p-5">
       {/* Quién habla, en palabras normales: la etiqueta mono de antes se leía peor. */}
@@ -126,7 +134,7 @@ function TurnCard({ turn, saved, saving, onSaveToMemory }: TurnCardProps) {
        * quedó a medias o que falló enseñaría a Pi justo lo que no funcionó.
        */}
       {turn.status === "succeeded" && turn.reply ? (
-        <SaveToMemoryButton onSave={onSaveToMemory} saved={saved} saving={saving} turn={turn} />
+        <SaveToMemoryButton failed={failed} onSave={onSaveToMemory} saved={saved} saving={saving} turn={turn} />
       ) : null}
     </article>
   );
@@ -144,6 +152,7 @@ function ConversationPanelComponent({
   turns,
   savedTurnIds,
   savingTurnIds,
+  failedTurnIds,
   onSaveToMemory,
 }: ConversationPanelProps) {
   return (
@@ -167,6 +176,7 @@ function ConversationPanelComponent({
               onSaveToMemory={onSaveToMemory}
               saved={savedTurnIds.has(turn.turnId)}
               saving={savingTurnIds.has(turn.turnId)}
+              failed={failedTurnIds.has(turn.turnId)}
               turn={turn}
             />
           ))}
