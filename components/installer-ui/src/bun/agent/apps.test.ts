@@ -75,6 +75,48 @@ describe("app tool", () => {
     expect(calls).toEqual([["gtk-launch", ["org.videolan.VLC"]]]);
   });
 
+  test("rediscovers Sway when it appears after the app broker starts", async () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), "agenos-app-session-race-"));
+    const launchEnvs: NodeJS.ProcessEnv[] = [];
+    let treeReads = 0;
+    const tool = createAppTool({
+      env: { XDG_RUNTIME_DIR: runtimeDir },
+      commandExists: (command) => command === "foot" || command === "swaymsg",
+      spawnCommand: (_command, _args, options) => {
+        launchEnvs.push(options.env);
+      },
+      runCommand: async (_command, args) => {
+        if (args[0] === "-t") {
+          treeReads += 1;
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: treeReads === 1
+              ? JSON.stringify({ nodes: [] })
+              : JSON.stringify({ nodes: [{ id: 12, app_id: "foot", pid: 55 }] }),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
+      },
+      coldStartMs: 0,
+      pollIntervalMs: 1,
+    });
+
+    const beforeSway = await tool.openApp("terminal");
+    expect(beforeSway).toMatchObject({ ok: true, status: "unverified" });
+    expect(launchEnvs[0]?.WAYLAND_DISPLAY).toBeUndefined();
+    expect(launchEnvs[0]?.SWAYSOCK).toBeUndefined();
+
+    writeFileSync(join(runtimeDir, "wayland-1"), "");
+    writeFileSync(join(runtimeDir, "sway-ipc.1000.456.sock"), "");
+
+    const afterSway = await tool.openApp("terminal");
+    expect(afterSway).toMatchObject({ ok: true, status: "mapped" });
+    expect(launchEnvs[1]?.WAYLAND_DISPLAY).toBe("wayland-1");
+    expect(launchEnvs[1]?.SWAYSOCK).toBe(join(runtimeDir, "sway-ipc.1000.456.sock"));
+  });
+
   test("does not focus an empty workspace when an app never maps", async () => {
     const calls: Array<[string, string[]]> = [];
     const tool = createAppTool({

@@ -680,6 +680,7 @@ export function createInstallerApiHandler(
     installer: packageInstaller,
     toolRunner,
     confirmations,
+    openApp: (app) => appTool.openApp({ app, focus: true }),
   });
   const brokerPiTools = createBrokerPiTools({
     toolRunner,
@@ -1930,7 +1931,7 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { query?: unknown };
-          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", "ui");
+          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", undefined, "ui");
           const status = result.status === "confirmation_required"
             ? 409
             : result.status === "already_installed"

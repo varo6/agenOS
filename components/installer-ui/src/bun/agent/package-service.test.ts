@@ -31,7 +31,7 @@ function resolved(installed = false): PackageResolution {
 }
 
 describe("confirmed package installation flow", () => {
-  test("resolves, asks one friendly confirmation, streams progress, and executes once", async () => {
+  test("keeps confirmation available for a non-interactive source", async () => {
     const confirmations = createConfirmationStore({
       rootDir: mkdtempSync(join(tmpdir(), "agenos-package-confirm-")),
       idFactory: () => "conf_firefox",
@@ -62,9 +62,10 @@ describe("confirmed package installation flow", () => {
       installer: installer as never,
       toolRunner: runner,
       confirmations,
+      openApp: async (app) => ({ ok: true, message: `Abriendo ${app}.` }),
     });
 
-    await expect(service.requestInstall("firefox")).resolves.toMatchObject({
+    await expect(service.requestInstall("firefox", undefined, "openclaw")).resolves.toMatchObject({
       ok: false,
       status: "confirmation_required",
       confirmationId: "conf_firefox",
@@ -83,6 +84,8 @@ describe("confirmed package installation flow", () => {
       ok: true,
       status: "installed",
       packageName: "firefox-esr",
+      opened: { ok: true, message: "Abriendo Firefox ESR." },
+      message: expect.stringContaining("Abriendo Firefox ESR."),
     });
     expect(progress).toEqual(["Descargando los paquetes…"]);
     expect(installs).toHaveLength(1);
@@ -96,18 +99,25 @@ describe("confirmed package installation flow", () => {
 
   test("does not ask for confirmation or elevate when the package is already installed", async () => {
     const confirmations = createConfirmationStore({ rootDir: mkdtempSync(join(tmpdir(), "agenos-package-installed-")) });
+    const opened: string[] = [];
     const service = createPackageService({
       resolver: { resolve: async () => resolved(true), clearCache() {} },
       installer: { install: async () => { throw new Error("must not run"); } } as never,
       toolRunner: createToolRunner(),
       confirmations,
+      openApp: async (app) => {
+        opened.push(app);
+        return { ok: true, message: `Abriendo ${app}.` };
+      },
     });
 
     await expect(service.requestInstall("firefox")).resolves.toMatchObject({
       ok: true,
       status: "already_installed",
+      opened: { ok: true },
     });
     expect(confirmations.list()).toEqual([]);
+    expect(opened).toEqual(["Firefox ESR"]);
   });
 
   test("returns not found without creating a meaningless confirmation", async () => {

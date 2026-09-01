@@ -16,6 +16,7 @@ describe("privileged package installer adapter", () => {
     const progress: string[] = [];
     const installer = createPackageInstaller({
       catalog: { isInstalled: async () => false },
+      getuid: () => 1000,
       async runHelper(command, args, onOutput) {
         calls.push({ command, args });
         onOutput("Reading package lists... Done");
@@ -37,16 +38,60 @@ describe("privileged package installer adapter", () => {
       message: "Firefox ESR se ha instalado correctamente (firefox-esr).",
     });
     expect(calls).toEqual([{
-      command: "pkexec",
-      args: ["/usr/local/bin/agenos-shell-helper", "install-package", "firefox-esr"],
+      command: "sudo",
+      args: ["-n", "/usr/local/bin/agenos-shell-helper", "install-package", "firefox-esr"],
     }]);
     expect(progress).toEqual([
-      "Solicitando permiso para instalar el paquete…",
+      "Instalando el paquete con permisos del sistema…",
       "Comprobando el catálogo de paquetes…",
       "Descargando los paquetes…",
       "Instalando la aplicación…",
       "Instalación terminada.",
     ]);
+  });
+
+  test("falls back to pkexec only when passwordless sudo cannot elevate", async () => {
+    const calls: unknown[] = [];
+    const installer = createPackageInstaller({
+      catalog: { isInstalled: async () => false },
+      getuid: () => 1000,
+      async runHelper(command, args) {
+        calls.push({ command, args });
+        return command === "sudo"
+          ? { exitCode: 1, stdout: "", stderr: "sudo: a password is required" }
+          : { exitCode: 0, stdout: "AGENOS_PACKAGE_RESULT installed firefox-esr\n", stderr: "" };
+      },
+    });
+
+    await expect(installer.install(input)).resolves.toMatchObject({ ok: true, status: "installed" });
+    expect(calls).toEqual([
+      {
+        command: "sudo",
+        args: ["-n", "/usr/local/bin/agenos-shell-helper", "install-package", "firefox-esr"],
+      },
+      {
+        command: "pkexec",
+        args: ["/usr/local/bin/agenos-shell-helper", "install-package", "firefox-esr"],
+      },
+    ]);
+  });
+
+  test("runs the typed helper directly when the broker is root", async () => {
+    const calls: unknown[] = [];
+    const installer = createPackageInstaller({
+      catalog: { isInstalled: async () => false },
+      getuid: () => 0,
+      async runHelper(command, args) {
+        calls.push({ command, args });
+        return { exitCode: 0, stdout: "AGENOS_PACKAGE_RESULT installed firefox-esr\n", stderr: "" };
+      },
+    });
+
+    await expect(installer.install(input)).resolves.toMatchObject({ ok: true, status: "installed" });
+    expect(calls).toEqual([{
+      command: "/usr/local/bin/agenos-shell-helper",
+      args: ["install-package", "firefox-esr"],
+    }]);
   });
 
   test("returns already installed without invoking the privileged helper", async () => {
@@ -67,7 +112,7 @@ describe("privileged package installer adapter", () => {
     expect(helperCalls).toBe(0);
   });
 
-  test("rejects an injected package name before starting pkexec", async () => {
+  test("rejects an injected package name before starting a privileged helper", async () => {
     let helperCalls = 0;
     const installer = createPackageInstaller({
       catalog: { isInstalled: async () => false },

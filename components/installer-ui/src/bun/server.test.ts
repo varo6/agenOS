@@ -1200,7 +1200,7 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
   });
 
-  test("package endpoint resolves a human name and installs once only after confirmation", async () => {
+  test("package endpoint resolves and installs an explicit local request directly", async () => {
     const confirmations = createConfirmationStore({
       rootDir: mkdtempSync(join(tmpdir(), "agenos-server-package-")),
       idFactory: () => "conf_server_firefox",
@@ -1249,39 +1249,19 @@ describe("createInstallerApiHandler", () => {
       packageInstaller: packageInstaller as never,
     });
 
-    const proposed = await handler.fetch(new Request("http://localhost/api/agent/packages/install", {
+    const installed = await handler.fetch(new Request("http://localhost/api/agent/packages/install", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "firefox" }),
     }));
-    expect(proposed.status).toBe(409);
-    expect(await jsonPayload(proposed)).toMatchObject({
-      ok: false,
-      status: "confirmation_required",
-      confirmationId: "conf_server_firefox",
-      packageName: "firefox-esr",
-      message: "Voy a instalar Firefox ESR (firefox-esr). ¿Sigo?",
-    });
-    expect(installs).toEqual([]);
-
-    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
-      method: "POST",
-    }));
-    expect(confirmed.status).toBe(202);
-    expect(await jsonPayload(confirmed)).toMatchObject({
+    expect(installed.status).toBe(202);
+    expect(await jsonPayload(installed)).toMatchObject({
       ok: true,
-      execution: {
-        ok: true,
-        output: { status: "installed", packageName: "firefox-esr" },
-      },
+      status: "installed",
+      packageName: "firefox-esr",
     });
     expect(installs).toHaveLength(1);
-
-    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
-      method: "POST",
-    }));
-    expect(duplicate.status).toBe(409);
-    expect(installs).toHaveLength(1);
+    expect(confirmations.list()).toEqual([]);
   });
 
   test("agent files route opens paths through the broker runner", async () => {
