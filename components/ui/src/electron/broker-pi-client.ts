@@ -10,6 +10,7 @@ import type {
   PiPendingAttempt,
   PiStatusResponse,
   PiTurnState,
+  PiConfigurationRequest,
 } from "../lib/pi-types";
 
 export const DEFAULT_BROKER_BASE_URL = "http://127.0.0.1:4173";
@@ -67,6 +68,9 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
   return {
     getStatus(): Promise<PiStatusResponse> {
       return request("/api/pi/status");
+    },
+    setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse> {
+      return request("/api/pi/configuration", { method: "PUT", body: JSON.stringify(configuration) });
     },
     startAuth(method: PiAuthMethod = "device"): Promise<PiPendingAttempt> {
       return request("/api/pi/auth/start", { method: "POST", body: JSON.stringify({ method }) });

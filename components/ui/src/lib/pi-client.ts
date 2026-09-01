@@ -6,6 +6,7 @@ import type {
   PiPendingAttempt,
   PiStartAuthRequest,
   PiStatusResponse,
+  PiConfigurationRequest,
   PiTurnState,
 } from "./pi-types";
 import { getPiBridge } from "./pi-bridge";
@@ -110,6 +111,9 @@ export function createPiClient() {
       getStatus(): Promise<PiStatusResponse> {
         return bridgeRequest(() => bridge.getStatus());
       },
+      setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse> {
+        return bridgeRequest(() => bridge.setConfiguration(configuration));
+      },
 
       startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {
         return bridgeRequest(() => bridge.startAuth(method));
@@ -164,6 +168,13 @@ export function createPiClient() {
   return {
     getStatus(): Promise<PiStatusResponse> {
       return requestJson<PiStatusResponse>("/api/pi/status");
+    },
+    setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse> {
+      return requestJson<PiStatusResponse>("/api/pi/configuration", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configuration),
+      });
     },
 
     startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {

@@ -10,6 +10,7 @@ import {
   DEFAULT_PI_THINKING_LEVEL,
   PI_CUSTOM_MODELS,
   PI_PROVIDER_ID,
+  SELECTABLE_PI_MODELS,
   PI_SYSTEM_PROMPT,
   resolvePiHarnessPaths,
   type PiTurnStoreLike,
@@ -158,6 +159,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
       getAll() {
         return [
           { id: "gpt-5.6-sol", provider: "openai-codex" },
+          { id: "gpt-5.5", provider: "openai-codex" },
           { id: "gpt-5.5-instant", provider: "openai-codex" },
           { id: "gpt-5.4", provider: "openai-codex" },
           { id: "gpt-5.4-mini", provider: "openai-codex" },
@@ -284,6 +286,21 @@ describe("PiHarness", () => {
     expect(DEFAULT_PI_THINKING_LEVEL).toBe("low");
   });
 
+  test("changes the model and reasoning used by the next session", async () => {
+    const { harness, authData, getCreateSessionOptions } = createHarnessFixture();
+    authData.set("openai-codex", { type: "oauth", access: "token", refresh: "refresh", expires: Date.now() + 60_000 });
+
+    expect(harness.setConfiguration({ modelId: "gpt-5.5", reasoningLevel: "high" })).toMatchObject({
+      modelId: "gpt-5.5",
+      reasoningLevel: "high",
+    });
+    await harness.chat({ message: "hola", source: "text" });
+    expect(getCreateSessionOptions()).toMatchObject({
+      model: { id: "gpt-5.5" },
+      thinkingLevel: "high",
+    });
+  });
+
   // selectModel solo puede elegir ids que existan en el registro, y cuando no
   // existe ninguno cae al siguiente sin romper nada. Por eso una entrada
   // fantasma no se nota en runtime: Pi funciona, pero con otro modelo. Este
@@ -295,6 +312,7 @@ describe("PiHarness", () => {
 
     const missing = DEFAULT_PI_MODEL_PREFERENCE.filter((id) => !catalog.has(id));
     expect(missing).toEqual([]);
+    expect(SELECTABLE_PI_MODELS.filter((id) => !catalog.has(id))).toEqual([]);
   });
 
   test("the target model is the custom one, not something the fallback picked", () => {

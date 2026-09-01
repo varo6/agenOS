@@ -2,7 +2,7 @@
 
 ## Qué modelo usa Pi
 
-`gpt-5.6-sol` con esfuerzo de razonamiento `low`, sobre la suscripción de Codex
+`gpt-5.6-sol` con esfuerzo de razonamiento `low` por defecto, sobre la suscripción de Codex
 (proveedor `openai-codex`, OAuth). Ambos valores viven en
 `components/ui/dev/pi-harness.ts`:
 
@@ -10,6 +10,10 @@
 export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 export const DEFAULT_PI_THINKING_LEVEL = "low" as const;
 ```
+
+La pantalla Sistema permite elegir `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna` o `gpt-5.5`, y usar razonamiento `off`, `low`, `medium` o `high`.
+El cambio recrea la sesión de Pi y se aplica al siguiente turno.
 
 La lista es una preferencia, no una imposición: `selectModel()` recorre los ids
 en orden y se queda con el primero que exista en el registro de modelos.
@@ -29,7 +33,7 @@ simplemente no encontraba el id, seguía bajando por la lista y acababa en
 
 Por eso el registro se crea ahora con `ModelRegistry.create(authStorage, path)` y
 `writePiCustomModels()` deja en `<agentDir>/models.json` la definición de
-`gpt-5.6-sol`. `mergeCustomModels` añade los ids nuevos al catálogo interno, así
+los tres modelos GPT-5.6. `mergeCustomModels` añade los ids nuevos al catálogo interno, así
 que el modelo pasa a ser elegible. Como `openai-codex` es un proveedor built-in,
 la definición no necesita `baseUrl` ni `apiKey`: hereda `api` y `baseUrl` del
 proveedor y la autenticación sigue saliendo del OAuth de `AuthStorage`.

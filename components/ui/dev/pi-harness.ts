@@ -52,6 +52,7 @@ import type {
   PiAuthAttemptStatus,
   PiChatRequest,
   PiChatResponse,
+  PiConfigurationRequest,
   PiPendingAttempt,
   PiStatusResponse,
   PiTurnState,
@@ -111,6 +112,8 @@ const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "fi
 // Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
 export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 export const DEFAULT_PI_THINKING_LEVEL = "low" as const;
+export const SELECTABLE_PI_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"] as const;
+export const SELECTABLE_PI_REASONING_LEVELS = ["off", "low", "medium", "high"] as const;
 
 // Modelos que la suscripcion de Codex sirve pero que el catalogo interno de
 // @mariozechner/pi-ai todavia no trae. Sin esto, selectModel no puede elegirlos:
@@ -131,6 +134,24 @@ export const PI_CUSTOM_MODELS = {
           name: "GPT-5.6-Sol",
           reasoning: true,
           thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-5.6-terra",
+          name: "GPT-5.6-Terra",
+          reasoning: true,
+          thinkingLevelMap: { minimal: "low" },
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+        {
+          id: "gpt-5.6-luna",
+          name: "GPT-5.6-Luna",
+          reasoning: true,
+          thinkingLevelMap: { minimal: "low" },
           input: ["text", "image"],
           contextWindow: 272000,
           maxTokens: 128000,
@@ -297,6 +318,7 @@ type PiHarnessDependencies = {
     tools?: string[];
     customTools?: PiCustomToolLike[];
     systemPrompt?: string;
+    thinkingLevel?: PiConfigurationRequest["reasoningLevel"];
   }) => Promise<{ session: PiAgentSessionLike }>;
   appTool: AppToolLike;
   setupService: Pick<OpenClawSetupService, "status" | "run" | "startCodexLogin" | "codexLoginStatus" | "configureTelegram" | "testTelegram" | "enableTelegram">;
@@ -714,7 +736,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
       }
     },
     turnStore: createFileTurnStore(PI_TURNS_PATH),
-    createAgentSession: async ({ model, sessionManager, tools, customTools, systemPrompt }) => {
+    createAgentSession: async ({ model, sessionManager, tools, customTools, systemPrompt, thinkingLevel }) => {
       const settingsManager = SettingsManager.inMemory();
       const resourceLoader = new DefaultResourceLoader({
         cwd: process.cwd(),
@@ -737,7 +759,7 @@ function createDefaultDependencies(): PiHarnessDependencies {
         authStorage,
         modelRegistry,
         model: model as never,
-        thinkingLevel: DEFAULT_PI_THINKING_LEVEL,
+        thinkingLevel: thinkingLevel ?? DEFAULT_PI_THINKING_LEVEL,
         tools: tools ?? FOREGROUND_MODEL_TOOLS,
         customTools: (customTools ?? [
           createOpenBrowserModelTool(),
@@ -798,10 +820,14 @@ export class PiHarness {
   private readonly turnWaiters = new Map<string, Deferred<PiChatResponse>>();
   private readonly cancelledTurnIds = new Set<string>();
   private activeTurnId: string | undefined;
+  private selectedModelId = DEFAULT_PI_MODEL_PREFERENCE[0];
+  private reasoningLevel: PiConfigurationRequest["reasoningLevel"] = DEFAULT_PI_THINKING_LEVEL;
+  private configurationExplicit = false;
 
   constructor(dependencies: PiHarnessDependencies, options: PiHarnessOptions = {}) {
     this.deps = dependencies;
     this.options = options;
+    this.selectedModelId = dependencies.modelPreference?.[0] ?? DEFAULT_PI_MODEL_PREFERENCE[0];
     this.sessionManager = this.deps.createSessionManager("resume");
     this.restoreTurns();
   }
@@ -865,6 +891,7 @@ export class PiHarness {
             : "disconnected",
       providerName: PI_PROVIDER_NAME,
       modelId: this.selectModel().id,
+      reasoningLevel: this.reasoningLevel,
       busy: this.busy,
       pendingAttempt: pendingAttempt?.status === "pending" ? toPendingAttempt(pendingAttempt) : undefined,
       turn: this.busy && this.activeTurn()
@@ -872,6 +899,27 @@ export class PiHarness {
         : undefined,
       error: this.lastError,
     };
+  }
+
+  setConfiguration(configuration: PiConfigurationRequest): PiStatusResponse {
+    if (this.busy) {
+      throw new PiHarnessError(409, "Espera a que termine el turno para cambiar el modelo.");
+    }
+    if (!SELECTABLE_PI_MODELS.includes(configuration.modelId)) {
+      throw new PiHarnessError(400, "El modelo seleccionado no esta disponible.");
+    }
+    if (!SELECTABLE_PI_REASONING_LEVELS.includes(configuration.reasoningLevel)) {
+      throw new PiHarnessError(400, "El nivel de razonamiento no es valido.");
+    }
+
+    this.selectedModelId = configuration.modelId;
+    this.reasoningLevel = configuration.reasoningLevel;
+    this.configurationExplicit = true;
+    this.session?.dispose?.();
+    this.session = undefined;
+    this.sessionModelId = undefined;
+    this.sessionContextKey = undefined;
+    return this.getStatus();
   }
 
   private activeTurn(): PiTurnState | undefined {
@@ -1401,7 +1449,10 @@ export class PiHarness {
       .filter((model) => model.provider === PI_PROVIDER_ID)
       .sort((left, right) => left.id.localeCompare(right.id));
 
-    const preference = this.deps.modelPreference ?? DEFAULT_PI_MODEL_PREFERENCE;
+    const configuredPreference = this.deps.modelPreference ?? DEFAULT_PI_MODEL_PREFERENCE;
+    const preference = this.configurationExplicit
+      ? [this.selectedModelId, ...configuredPreference.filter((id) => id !== this.selectedModelId)]
+      : configuredPreference;
     const wanted = preference.map(normalizeModelId);
     const preferred =
       wanted
@@ -1445,6 +1496,7 @@ export class PiHarness {
       tools: this.deps.modelTools ?? FOREGROUND_MODEL_TOOLS,
       customTools: this.deps.customTools ?? this.defaultCustomTools(),
       systemPrompt: composePiSystemPrompt(learningContext.text, improvementCatalog.text),
+      thinkingLevel: this.reasoningLevel,
     });
 
     this.session = created.session;

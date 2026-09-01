@@ -6,6 +6,8 @@ import type {
   PiAuthState,
   PiPendingAttempt,
   PiStatusResponse,
+  PiModelId,
+  PiReasoningLevel,
 } from "../lib/pi-types";
 import { useLatest } from "./useLatest";
 import type { AlertSink } from "./useSystemAlert";
@@ -20,6 +22,7 @@ export type PiSession = {
   authState: PiAuthState;
   providerName: string;
   modelId: string;
+  reasoningLevel: PiReasoningLevel;
   /** El servicio está atendiendo otra petición. */
   busy: boolean;
   pendingAttempt: PiPendingAttempt | null;
@@ -33,6 +36,7 @@ export type PiSession = {
   /** El servidor ha rechazado la sesión: la cuenta necesita reconectarse. */
   markUnauthorized: () => void;
   noteModelId: (modelId: string) => void;
+  setConfiguration: (modelId: PiModelId, reasoningLevel: PiReasoningLevel) => Promise<void>;
 };
 
 export type UsePiSessionOptions = {
@@ -52,6 +56,7 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
   const [authState, setAuthState] = useState<PiAuthState>("disconnected");
   const [providerName, setProviderName] = useState("ChatGPT/Codex");
   const [modelId, setModelId] = useState("gpt-5.6-sol");
+  const [reasoningLevel, setReasoningLevel] = useState<PiReasoningLevel>("low");
   const [busy, setBusy] = useState(false);
   const [pendingAttempt, setPendingAttempt] = useState<PiPendingAttempt | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -63,6 +68,7 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
     setReady(true);
     setProviderName(status.providerName);
     setModelId(status.modelId);
+    setReasoningLevel(status.reasoningLevel ?? "low");
     setBusy(status.busy);
     setPendingAttempt(status.pendingAttempt ?? null);
     setAuthState(status.authState);
@@ -187,6 +193,15 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
     setModelId(next);
   }, []);
 
+  const setConfiguration = useCallback(async (nextModelId: PiModelId, nextReasoningLevel: PiReasoningLevel) => {
+    try {
+      applyStatus(await client.setConfiguration({ modelId: nextModelId, reasoningLevel: nextReasoningLevel }));
+      alert.clear();
+    } catch (error) {
+      alert.raise(error);
+    }
+  }, [alert, applyStatus, client]);
+
   // Sondeo del intento de login en curso.
   const attemptId = pendingAttempt?.attemptId ?? null;
 
@@ -249,6 +264,7 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
     authState,
     providerName,
     modelId,
+    reasoningLevel,
     busy,
     pendingAttempt,
     manualCode,
@@ -260,5 +276,6 @@ export function usePiSession({ client, alert }: UsePiSessionOptions): PiSession 
     submitManualCode,
     markUnauthorized,
     noteModelId,
+    setConfiguration,
   };
 }

@@ -66,11 +66,15 @@ export function SystemView({
         busy={busy}
         manualCode={session.manualCode}
         modelId={session.modelId}
+        reasoningLevel={session.reasoningLevel}
         onCancelAuth={session.cancelAuth}
         onConnect={actions.connect}
         onLogout={actions.logout}
         onManualCodeChange={session.setManualCode}
         onRefresh={actions.refresh}
+        onConfigurationChange={(modelId, reasoningLevel) => {
+          void session.setConfiguration(modelId, reasoningLevel);
+        }}
         onSubmitManualCode={session.submitManualCode}
         pendingAttempt={session.pendingAttempt}
         providerName={session.providerName}

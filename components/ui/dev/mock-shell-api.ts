@@ -128,6 +128,15 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  if (url.pathname === "/api/pi/configuration" && method === "PUT") {
+    try {
+      sendJson(response, 200, piHarness.setConfiguration(await readJsonBody(request) as never));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/pi/auth/start" && method === "POST") {
     try {
       const payload = await readJsonBody(request);

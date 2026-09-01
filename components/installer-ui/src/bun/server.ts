@@ -78,12 +78,14 @@ import type {
   PiPendingAttempt,
   PiStatusResponse,
   PiTurnState,
+  PiConfigurationRequest,
 } from "../../../ui/src/lib/pi-types";
 import { createNetworkManagerService, type NetworkManagerService } from "../../../network/node/network-manager";
 import type { ConnectWifiRequest } from "../../../network/types";
 
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
+  setConfiguration(configuration: PiConfigurationRequest): PiStatusResponse;
   startAuth(method?: PiAuthMethod): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
@@ -1004,6 +1006,17 @@ export function createInstallerApiHandler(
 
           try {
             return json(deps.piHarness.getStatus());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/configuration") {
+          if (request.method !== "PUT") {
+            return methodNotAllowed(["PUT", "OPTIONS"]);
+          }
+          try {
+            return json(deps.piHarness.setConfiguration(await readJsonBody(request) as PiConfigurationRequest));
           } catch (error) {
             return piErrorResponse(error);
           }

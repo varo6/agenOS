@@ -26,6 +26,7 @@ import type {
   PiStartAuthRequest,
   PiStatusResponse,
   PiTurnState,
+  PiConfigurationRequest,
 } from "../lib/pi-types";
 
 type IpcEnvelope<T> =
@@ -127,6 +128,9 @@ contextBridge.exposeInMainWorld("agenosSystem", {
 contextBridge.exposeInMainWorld("agenosPi", {
   getStatus(): Promise<PiStatusResponse> {
     return invokePi<PiStatusResponse>(PI_IPC_CHANNELS.getStatus);
+  },
+  setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse> {
+    return invokePi<PiStatusResponse>(PI_IPC_CHANNELS.setConfiguration, configuration);
   },
   startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {
     return invokePi<PiPendingAttempt>(PI_IPC_CHANNELS.startAuth, { method });

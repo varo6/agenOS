@@ -299,6 +299,9 @@ function registerIpcHandlers(): void {
   ));
 
   ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
+  ipcMain.handle(PI_IPC_CHANNELS.setConfiguration, (_event, payload) => wrapPi(() => (
+    getPiClient().setConfiguration(payload)
+  )));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {
     const method = String(payload?.method ?? "device");
     if (method !== "device" && method !== "browser") {

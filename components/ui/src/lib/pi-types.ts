@@ -3,6 +3,8 @@ export const PI_DEV_HARNESS_ORIGIN = "http://127.0.0.1:4174";
 export type PiAuthState = "disconnected" | "authorizing" | "connected" | "error";
 export type PiAuthMethod = "device" | "browser";
 export type PiChatSource = "text" | "voice";
+export type PiModelId = "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-5.5";
+export type PiReasoningLevel = "off" | "low" | "medium" | "high";
 export type PiAuthAttemptStatus = "pending" | "success" | "error" | "expired" | "cancelled";
 
 export type PiPendingAttempt = {
@@ -42,10 +44,16 @@ export type PiStatusResponse = {
   authState: PiAuthState;
   providerName: string;
   modelId: string;
+  reasoningLevel?: PiReasoningLevel;
   busy: boolean;
   pendingAttempt?: PiPendingAttempt;
   turn?: PiTurnProgress;
   error?: string;
+};
+
+export type PiConfigurationRequest = {
+  modelId: PiModelId;
+  reasoningLevel: PiReasoningLevel;
 };
 
 export type PiAuthAttemptResponse = {

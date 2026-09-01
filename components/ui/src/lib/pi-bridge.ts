@@ -4,11 +4,13 @@ import type {
   PiPendingAttempt,
   PiStartAuthRequest,
   PiStatusResponse,
+  PiConfigurationRequest,
   PiTurnState,
 } from "./pi-types";
 
 export type AgenosPiBridge = {
   getStatus(): Promise<PiStatusResponse>;
+  setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse>;
   startAuth(method?: PiStartAuthRequest["method"]): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): Promise<void>;
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse>;
