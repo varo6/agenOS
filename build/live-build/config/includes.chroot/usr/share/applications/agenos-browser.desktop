@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Navegador
+GenericName=Navegador web
+Comment=Chromium con el perfil persistente de AgenOS
+Exec=/usr/local/bin/agenos-browser %U
+Icon=chromium
+Terminal=false
+StartupNotify=true
+StartupWMClass=Chromium
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;

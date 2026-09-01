@@ -1,11 +1,13 @@
 import { memo, useMemo } from "react";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, Square } from "lucide-react";
 
 import { describeTurnActivity } from "../../lib/agent-activity";
 import type { PiTurnState } from "../../lib/pi-types";
+import { Button } from "../ui";
 
 export type LatestReplyProps = {
   turns: PiTurnState[];
+  onStop?: () => void;
 };
 
 /**
@@ -17,7 +19,7 @@ export type LatestReplyProps = {
  * un rótulo tipo "última respuesta" gastaría una línea para decir lo que la
  * posición ya dice.
  */
-function LatestReplyComponent({ turns }: LatestReplyProps) {
+function LatestReplyComponent({ turns, onStop }: LatestReplyProps) {
   const latest = turns.length > 0 ? turns[turns.length - 1] : null;
 
   /*
@@ -51,10 +53,24 @@ function LatestReplyComponent({ turns }: LatestReplyProps) {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <p className="eyebrow">Pi</p>
         {latest.status === "processing" ? (
-          <span className="inline-flex items-center gap-2 text-sm text-accent-light">
-            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
-            {describeTurnActivity(latest.progress) ?? "Pi está trabajando…"}
-          </span>
+          <>
+            <span className="inline-flex items-center gap-2 text-sm text-accent-light">
+              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
+              {describeTurnActivity(latest.progress) ?? "Pi está trabajando…"}
+            </span>
+            {onStop ? (
+              <Button
+                className="ml-auto"
+                icon={<Square aria-hidden="true" className="h-3.5 w-3.5 fill-current" />}
+                onClick={onStop}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                Parar respuesta
+              </Button>
+            ) : null}
+          </>
         ) : null}
       </div>
 
@@ -86,9 +102,11 @@ function LatestReplyComponent({ turns }: LatestReplyProps) {
           </p>
         ) : (
           <p className="whitespace-pre-wrap text-lg leading-relaxed text-ink sm:text-xl">
-            {latest.reply || (
+            {latest.reply || (latest.status === "cancelled" ? (
+              <span className="text-ink-muted">Respuesta detenida.</span>
+            ) : (
               <span className="text-ink-muted">Pi ha terminado sin decir nada.</span>
-            )}
+            ))}
           </p>
         )}
       </div>

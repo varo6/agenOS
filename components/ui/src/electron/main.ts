@@ -299,6 +299,9 @@ function registerIpcHandlers(): void {
   ));
 
   ipcMain.handle(PI_IPC_CHANNELS.getStatus, () => wrapPi(() => getPiClient().getStatus()));
+  ipcMain.handle(PI_IPC_CHANNELS.setConfiguration, (_event, payload) => wrapPi(() => (
+    getPiClient().setConfiguration(payload)
+  )));
   ipcMain.handle(PI_IPC_CHANNELS.startAuth, (_event, payload: { method?: unknown }) => wrapPi(async () => {
     const method = String(payload?.method ?? "device");
     if (method !== "device" && method !== "browser") {
@@ -351,12 +354,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle(PI_IPC_CHANNELS.getTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
     getPiClient().getTurn(String(payload.turnId ?? ""))
   )));
+  ipcMain.handle(PI_IPC_CHANNELS.cancelTurn, (_event, payload: { turnId?: unknown }) => wrapPi(() => (
+    getPiClient().cancelTurn(String(payload.turnId ?? ""))
+  )));
   ipcMain.handle(PI_IPC_CHANNELS.getLatestTurn, () => wrapPi(() => getPiClient().getLatestTurn()));
   ipcMain.handle(PI_IPC_CHANNELS.listTurns, (_event, payload: { limit?: unknown }) => wrapPi(() => (
     getPiClient().listTurns(typeof payload?.limit === "number" ? payload.limit : undefined)
   )));
 
   ipcMain.handle(SPEECH_IPC_CHANNELS.transcribeOnce, () => wrapPi(() => transcribeOnce()));
+  ipcMain.handle(SPEECH_IPC_CHANNELS.finish, () => wrapPi(() => {
+    localSpeech.finish();
+  }));
   ipcMain.handle(SPEECH_IPC_CHANNELS.cancel, () => wrapPi(() => {
     localSpeech.cancel();
   }));

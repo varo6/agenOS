@@ -1,4 +1,5 @@
 import type { WebController } from "./web-control";
+import { screenshotToolContent, type ToolContent } from "./screenshot-tool-content";
 
 type ToolUpdateCallback = (update: {
   content: Array<{ type: "text"; text: string }>;
@@ -18,7 +19,7 @@ type PiCustomToolLike = {
     signal?: AbortSignal,
     onUpdate?: ToolUpdateCallback,
     ctx?: unknown,
-  ): Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
+  ): Promise<{ content: ToolContent[]; details: unknown }>;
 };
 
 const WEB_CONTROL_TOOL_PARAMETERS = {
@@ -94,10 +95,11 @@ export function createWebControlModelTool(controller: WebController): PiCustomTo
       "La sesión del usuario ya está iniciada en el navegador. Si ves una pantalla de inicio de sesión, pídele que la complete él y nunca inventes ni escribas credenciales.",
       "Para el correo y el calendario del usuario usa google_workspace, que es más fiable que manejar la web.",
       "Antes de enviar un formulario, publicar o comprar algo en nombre del usuario, enséñale exactamente qué vas a enviar y espera su sí.",
+      "El snapshot de texto es tu vía principal: úsalo siempre para decidir. Reserva screenshot para cuando el texto no baste (un mapa, un gráfico, un captcha o una página que no devuelve texto) y dile al usuario para qué lo miras.",
       "Nunca afirmes haber leído, enviado o comprado nada sin que este tool te haya devuelto ok.",
     ],
     parameters: WEB_CONTROL_TOOL_PARAMETERS,
-    async execute(_toolCallId, params, _signal, onUpdate) {
+    async execute(_toolCallId, params, _signal, onUpdate, ctx) {
       const action = asText(params.action) || "snapshot";
 
       try {
@@ -200,7 +202,7 @@ export function createWebControlModelTool(controller: WebController): PiCustomTo
 
           case "screenshot": {
             const result = await controller.screenshot(asText(params.path));
-            return { content: [{ type: "text", text: result.message }], details: result };
+            return { content: await screenshotToolContent(result, { ctx }), details: result };
           }
 
           default:

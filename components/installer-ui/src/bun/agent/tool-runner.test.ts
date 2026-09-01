@@ -83,7 +83,7 @@ describe("agent tool runner", () => {
     expect(created).toHaveLength(1);
   });
 
-  test("creates a friendly package confirmation only for validated resolved input", async () => {
+  test("executes an explicit local package request and still validates its resolved input", async () => {
     const created: unknown[] = [];
     const runner = createToolRunner({
       confirmations: {
@@ -108,16 +108,24 @@ describe("agent tool runner", () => {
       source: "ui",
       tool: "packages.install",
       input: validInput,
+      explicitUserIntent: true,
+    })).resolves.toMatchObject({
+      ok: true,
+      decision: "allow",
+      output: { ok: true, status: "installed" },
+    });
+    expect(created).toEqual([]);
+
+    await expect(runner.run({
+      source: "openclaw",
+      tool: "packages.install",
+      input: validInput,
     })).resolves.toMatchObject({
       ok: false,
       decision: "confirm",
       confirmationId: "conf_firefox",
     });
-    expect(created).toEqual([expect.objectContaining({
-      tool: "packages.install",
-      summary: "Voy a instalar Firefox ESR (firefox-esr), ¿sigo?",
-      input: validInput,
-    })]);
+    expect(created).toHaveLength(1);
 
     await expect(runner.run({
       source: "ui",

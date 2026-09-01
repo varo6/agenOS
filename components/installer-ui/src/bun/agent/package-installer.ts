@@ -24,6 +24,10 @@ export type PackageInstallResult = {
   packageName?: string;
   displayName?: string;
   message: string;
+  opened?: {
+    ok: boolean;
+    message?: string;
+  };
 };
 
 type HelperResult = {
@@ -42,6 +46,7 @@ export type PackageInstallerOptions = {
   catalog: Pick<AptCatalog, "isInstalled">;
   runHelper?: PackageHelperRunner;
   helperPath?: string;
+  getuid?: () => number;
 };
 
 const RESULT_PREFIX = "AGENOS_PACKAGE_RESULT";
@@ -49,6 +54,7 @@ const RESULT_PREFIX = "AGENOS_PACKAGE_RESULT";
 export function createPackageInstaller(options: PackageInstallerOptions) {
   const runHelper = options.runHelper ?? spawnHelper;
   const helperPath = options.helperPath ?? "/usr/local/bin/agenos-shell-helper";
+  const getuid = options.getuid ?? process.getuid?.bind(process);
 
   return {
     async install(input: unknown, onProgress?: (message: string) => void): Promise<PackageInstallResult> {
@@ -66,12 +72,23 @@ export function createPackageInstaller(options: PackageInstallerOptions) {
       }
 
       const report = progressReporter(onProgress);
-      report("Solicitando permiso para instalar el paquete…");
-      const result = await runHelper(
-        "pkexec",
-        [helperPath, "install-package", packageInput.packageName],
-        (line) => report(progressMessage(line)),
-      );
+      report("Instalando el paquete con permisos del sistema…");
+      const helperArgs = [helperPath, "install-package", packageInput.packageName];
+      let result = getuid?.() === 0
+        ? await runHelper(helperPath, helperArgs.slice(1), (line) => report(progressMessage(line)))
+        : await runHelper("sudo", ["-n", ...helperArgs], (line) => report(progressMessage(line)));
+
+      // El USB live concede sudo sin contraseña al usuario agenos. Esa era la
+      // ruta fiable antes del broker. Conservamos pkexec como respaldo para una
+      // instalación en disco que no tenga esa regla de sudoers.
+      if (getuid?.() !== 0 && sudoCouldNotElevate(result)) {
+        report("Probando el permiso alternativo del sistema…");
+        result = await runHelper(
+          "pkexec",
+          helperArgs,
+          (line) => report(progressMessage(line)),
+        );
+      }
       const combined = `${result.stdout}\n${result.stderr}`;
       const marker = parseResultMarker(combined, packageInput.packageName);
 
@@ -117,6 +134,23 @@ export function createPackageInstaller(options: PackageInstallerOptions) {
       };
     },
   };
+}
+
+function sudoCouldNotElevate(result: HelperResult): boolean {
+  if (result.exitCode === 0) {
+    return false;
+  }
+  const output = `${result.stderr}\n${result.stdout}`.toLowerCase();
+  return output.includes("sudo") && (
+    output.includes("password")
+    || output.includes("not found")
+    || output.includes("no such file")
+    || output.includes("enoent")
+    || output.includes("not in the sudoers")
+    || output.includes("a terminal is required")
+    || output.includes("authentication")
+    || output.includes("permission denied")
+  );
 }
 
 export function parsePackageInstallInput(input: unknown): PackageInstallInput | null {

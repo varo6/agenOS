@@ -128,6 +128,15 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
     return true;
   }
 
+  if (url.pathname === "/api/pi/configuration" && method === "PUT") {
+    try {
+      sendJson(response, 200, piHarness.setConfiguration(await readJsonBody(request) as never));
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
   if (url.pathname === "/api/pi/auth/start" && method === "POST") {
     try {
       const payload = await readJsonBody(request);
@@ -266,6 +275,16 @@ async function handleDevApi(request: IncomingMessage, response: ServerResponse):
   if (url.pathname === "/api/pi/turns/latest" && method === "GET") {
     try {
       sendJson(response, 200, piHarness.getLatestTurn());
+    } catch (error) {
+      sendPiError(response, error);
+    }
+    return true;
+  }
+
+  const cancelTurnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)\/cancel$/);
+  if (cancelTurnMatch && method === "POST") {
+    try {
+      sendJson(response, 200, await piHarness.cancelTurn(decodeURIComponent(cancelTurnMatch[1] ?? "")));
     } catch (error) {
       sendPiError(response, error);
     }

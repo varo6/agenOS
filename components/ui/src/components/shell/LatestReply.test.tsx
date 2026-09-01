@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, test, vi } from "vitest";
 
 import { LatestReply } from "./LatestReply";
 import type { PiTurnState } from "../../lib/pi-types";
@@ -61,6 +61,21 @@ describe("LatestReply", () => {
 
     expect(screen.getByText("Pi está abriendo una aplicación…")).toBeInTheDocument();
     expect(screen.getByText("Voy a abrirlo.")).toBeInTheDocument();
+  });
+
+  test("permite parar la respuesta que está en curso", () => {
+    const onStop = vi.fn();
+    render(<LatestReply onStop={onStop} turns={[turn({ turnId: "t1", status: "processing" })]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Parar respuesta" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  test("conserva el texto recibido cuando se detiene la respuesta", () => {
+    render(<LatestReply turns={[turn({ turnId: "t1", status: "cancelled", reply: "Hasta aquí." })]} />);
+
+    expect(screen.getByText("Hasta aquí.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Parar respuesta" })).not.toBeInTheDocument();
   });
 
   test("un turno en curso sin texto todavía no finge una respuesta", () => {

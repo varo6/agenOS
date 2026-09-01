@@ -26,6 +26,7 @@ import type {
   PiStartAuthRequest,
   PiStatusResponse,
   PiTurnState,
+  PiConfigurationRequest,
 } from "../lib/pi-types";
 
 type IpcEnvelope<T> =
@@ -128,6 +129,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
   getStatus(): Promise<PiStatusResponse> {
     return invokePi<PiStatusResponse>(PI_IPC_CHANNELS.getStatus);
   },
+  setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse> {
+    return invokePi<PiStatusResponse>(PI_IPC_CHANNELS.setConfiguration, configuration);
+  },
   startAuth(method: PiStartAuthRequest["method"] = "device"): Promise<PiPendingAttempt> {
     return invokePi<PiPendingAttempt>(PI_IPC_CHANNELS.startAuth, { method });
   },
@@ -155,6 +159,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
   getTurn(turnId: string): Promise<PiTurnState> {
     return invokePi<PiTurnState>(PI_IPC_CHANNELS.getTurn, { turnId });
   },
+  cancelTurn(turnId: string): Promise<PiTurnState> {
+    return invokePi<PiTurnState>(PI_IPC_CHANNELS.cancelTurn, { turnId });
+  },
   getLatestTurn(): Promise<PiTurnState | null> {
     return invokePi<PiTurnState | null>(PI_IPC_CHANNELS.getLatestTurn);
   },
@@ -167,6 +174,9 @@ contextBridge.exposeInMainWorld("agenosPi", {
 contextBridge.exposeInMainWorld("agenosSpeech", {
   transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
     return invokePi<SpeechTranscriptionOutcome>(SPEECH_IPC_CHANNELS.transcribeOnce);
+  },
+  async finish(): Promise<void> {
+    await invokePi<void>(SPEECH_IPC_CHANNELS.finish);
   },
   async cancel(): Promise<void> {
     await invokePi<void>(SPEECH_IPC_CHANNELS.cancel);

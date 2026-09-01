@@ -25,6 +25,7 @@ import { runShellCommand } from "../../../agent/shell";
 import { createFileTool } from "../../../agent/files";
 import { createFilesContentService } from "../../../agent/files-content";
 import { createWebController } from "../../../agent/web-control";
+import { createPlaywrightWebController } from "./agent/web-control-playwright";
 import { createDesktopController } from "../../../agent/desktop-control";
 import { createGoogleAuth } from "../../../agent/google-auth";
 import { createGoogleApi } from "../../../agent/google-api";
@@ -35,6 +36,12 @@ import { createAgentAdminService } from "./agent/admin";
 import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { createLearnedMemoryStore } from "./agent/learned-memory";
+import { createImprovementStore } from "./agent/improvements";
+import { createImprovementCaptureService } from "./agent/improvement-capture";
+import {
+  createFallbackImprovementDistiller,
+  createPiImprovementDistiller,
+} from "./agent/improvement-distiller";
 import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
 import { createOpenClawSetupService } from "./agent/setup";
@@ -43,6 +50,10 @@ import { createToolRunner, type ToolRunResult } from "./agent/tool-runner";
 import { createLocalWorkerAuth } from "./agent/worker/local-auth";
 import { createLocalUiAuth } from "./agent/ui-auth";
 import { createBrokerPiTools } from "./agent/broker-pi-tools";
+import {
+  createWebControlVisualTracer,
+  type WebControlVisualTracer,
+} from "./agent/web-control-visual-trace";
 import { createAptCatalog, createPackageResolver } from "./agent/package-resolver";
 import { createPackageInstaller } from "./agent/package-installer";
 import { createPackageService } from "./agent/package-service";
@@ -53,11 +64,12 @@ import { HttpError, json, methodNotAllowed, options, readJsonBody, rejectUntrust
 import { discoverDisks } from "./installer/disks";
 import { launchClassic, launchGuided } from "./installer/launch";
 import { readPreflightPayload } from "./installer/preflight";
-import { isMaintenanceAction, isShellMode } from "./installer/runtime";
+import { INVALID_MAINTENANCE_ACTION_MESSAGE, isMaintenanceAction, isShellMode } from "./installer/runtime";
 import { validateProfile } from "./installer/validate-profile";
 import { runMaintenance } from "./system/maintenance";
 import { createPiHarness, PiHarnessError, PI_PROVIDER_NAME } from "../../../ui/dev/pi-harness";
 import type { HarnessTraceRecord } from "../../../agent/harness-trace";
+import { isImprovementCategory } from "../../../agent/improvements-types";
 import type {
   PiAuthAttemptResponse,
   PiAuthMethod,
@@ -66,12 +78,14 @@ import type {
   PiPendingAttempt,
   PiStatusResponse,
   PiTurnState,
+  PiConfigurationRequest,
 } from "../../../ui/src/lib/pi-types";
 import { createNetworkManagerService, type NetworkManagerService } from "../../../network/node/network-manager";
 import type { ConnectWifiRequest } from "../../../network/types";
 
 type PiHarnessApi = {
   getStatus(): PiStatusResponse;
+  setConfiguration(configuration: PiConfigurationRequest): PiStatusResponse;
   startAuth(method?: PiAuthMethod): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): PiAuthAttemptResponse | null;
   getAuthAttempt(attemptId: string): PiAuthAttemptResponse;
@@ -80,6 +94,7 @@ type PiHarnessApi = {
   startNewConversation(): void;
   chat(request: PiChatRequest): Promise<PiChatResponse>;
   startChat(request: PiChatRequest): PiTurnState;
+  cancelTurn(turnId: string): Promise<PiTurnState>;
   getTurn(turnId: string): PiTurnState;
   getLatestTurn(): PiTurnState | null;
   listTurns(limit?: number): PiTurnState[];
@@ -100,11 +115,14 @@ export type InstallerApiDependencies = {
   memoryStore: ReturnType<typeof createMemoryStore>;
   learnedMemory: ReturnType<typeof createLearnedMemoryStore>;
   selfImprovement: ReturnType<typeof createSelfImprovementLoop>;
+  improvements: ReturnType<typeof createImprovementStore>;
+  improvementCapture: ReturnType<typeof createImprovementCaptureService>;
   taskQueue: ReturnType<typeof createTaskQueue>;
   appTool: ReturnType<typeof createAppTool>;
   browserTool: ReturnType<typeof createBrowserTool>;
   fileTool: ReturnType<typeof createFileTool>;
   webController: ReturnType<typeof createWebController>;
+  webControlVisualTracer: WebControlVisualTracer;
   desktopController: ReturnType<typeof createDesktopController>;
   googleAuth: ReturnType<typeof createGoogleAuth>;
   googleApi: ReturnType<typeof createGoogleApi>;
@@ -335,6 +353,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
         };
       }
     },
+    setConfiguration(configuration: PiConfigurationRequest) {
+      return getHarness().setConfiguration(configuration);
+    },
     startAuth(method?: PiAuthMethod) {
       return getHarness().startAuth(method);
     },
@@ -358,6 +379,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
     },
     startChat(request: PiChatRequest) {
       return getHarness().startChat(request);
+    },
+    cancelTurn(turnId: string) {
+      return getHarness().cancelTurn(turnId);
     },
     getTurn(turnId: string) {
       return getHarness().getTurn(turnId);
@@ -384,7 +408,7 @@ function asText(value: unknown): string {
 type WebControllerLike = ReturnType<typeof createWebController>;
 type DesktopControllerLike = ReturnType<typeof createDesktopController>;
 
-function runWebControl(controller: WebControllerLike, record: Record<string, unknown>) {
+async function runWebControl(controller: WebControllerLike, record: Record<string, unknown>): Promise<unknown> {
   switch (asText(record.action)) {
     case "open":
       return controller.open(asText(record.url));
@@ -502,11 +526,14 @@ export function createInstallerApiHandler(
   // El controlador web se engancha al Chromium del usuario; si no hay ninguno
   // escuchando, lo arranca con el mismo lanzador que browser_open, de modo que
   // el agente reutiliza el perfil y las sesiones ya iniciadas.
-  const webController = dependencies.webController ?? createWebController({
+  const webController = dependencies.webController ?? createPlaywrightWebController({
     ensureBrowser: async (url) => {
       const launch = await launchBrowserUrl(url ?? "about:blank", { focus: true });
       return { ok: Boolean(launch.ok), message: launch.message };
     },
+  });
+  const webControlVisualTracer = dependencies.webControlVisualTracer ?? createWebControlVisualTracer({
+    controller: webController,
   });
   const desktopController = dependencies.desktopController ?? createDesktopController();
   const googleAuth = dependencies.googleAuth ?? createGoogleAuth();
@@ -538,7 +565,14 @@ export function createInstallerApiHandler(
         ? filesContent.append(asText(record.path), asText(record.content))
         : filesContent.write(asText(record.path), asText(record.content));
     },
-    "web.control": (input) => runWebControl(webController, asRecord(input)),
+    "web.control": (input, context) => {
+      const record = asRecord(input);
+      return webControlVisualTracer.run(
+        record,
+        { correlationId: context.correlationId },
+        () => runWebControl(webController, record),
+      );
+    },
     "desktop.inspect": () => desktopController.inspect(),
     "desktop.capabilities": () => desktopController.capabilities(),
     "desktop.screenshot": (input) => desktopController.screenshot(asText(asRecord(input).path) || undefined),
@@ -651,6 +685,7 @@ export function createInstallerApiHandler(
     installer: packageInstaller,
     toolRunner,
     confirmations,
+    openApp: (app) => appTool.openApp({ app, focus: true }),
   });
   const brokerPiTools = createBrokerPiTools({
     toolRunner,
@@ -672,6 +707,49 @@ export function createInstallerApiHandler(
       || join(homedir(), ".agenos", "broker", "ui-token"),
   });
   const supportBundle = dependencies.supportBundle ?? (() => createSupportBundle({ agentAdmin }));
+  const piHarness = dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({
+    setupService: setup,
+    ...brokerPiTools,
+  }));
+  const improvements = dependencies.improvements ?? createImprovementStore();
+  /*
+   * Solo lectura: el modelo consulta las mejoras, pero quien las escribe es el
+   * destilador que dispara el boton. `read` sella el uso, y por eso es la
+   * lectura la que mantiene viva una mejora frente al desalojo.
+   */
+  effectHandlers["improvements.read"] = (input) => {
+    const record = input && typeof input === "object"
+      ? input as { action?: unknown; name?: unknown; query?: unknown; category?: unknown; limit?: unknown; tokenBudget?: unknown }
+      : {};
+    if (record.action === "catalog") {
+      return improvements.catalog(typeof record.tokenBudget === "number" ? record.tokenBudget : undefined);
+    }
+    if (record.action === "search") {
+      return improvements.search(
+        typeof record.query === "string" ? record.query : "",
+        typeof record.limit === "number" ? record.limit : undefined,
+      );
+    }
+    if (record.action === "read") {
+      return improvements.read(typeof record.name === "string" ? record.name : "");
+    }
+    return improvements.list(isImprovementCategory(record.category) ? record.category : undefined);
+  };
+  const improvementCapture = dependencies.improvementCapture ?? createImprovementCaptureService({
+    store: improvements,
+    distiller: createPiImprovementDistiller(),
+    fallbackDistiller: createFallbackImprovementDistiller(),
+    /*
+     * El texto de la mejora sale del historial del harness, no del cuerpo de la
+     * peticion: el navegador solo manda el turnId. Asi una pestana cualquiera
+     * no puede dictar lo que Pi va a recordar del usuario. Solo entran turnos
+     * terminados bien, porque marcar como buena una respuesta que no llego no
+     * significa nada.
+     */
+    listTurns: (limit) => piHarness.listTurns(limit)
+      .filter((turn) => turn.status === "succeeded" && Boolean(turn.reply))
+      .map((turn) => ({ turnId: turn.turnId, input: turn.input, reply: turn.reply ?? "" })),
+  });
   const deps: InstallerApiDependencies = {
     installerFrontendDistDir: dependencies.installerFrontendDistDir ?? resolve(import.meta.dir, "..", "dist"),
     systemFrontendDistDir: dependencies.systemFrontendDistDir ?? resolve(import.meta.dir, "..", "system-dist"),
@@ -682,19 +760,19 @@ export function createInstallerApiHandler(
     launchClassic: dependencies.launchClassic ?? launchClassic,
     switchMode: dependencies.switchMode ?? switchMode,
     runMaintenance: dependencies.runMaintenance ?? runMaintenance,
-    piHarness: dependencies.piHarness ?? createResilientPiHarness(() => (dependencies.createPiHarness ?? createPiHarness)({
-      setupService: setup,
-      ...brokerPiTools,
-    })),
+    piHarness,
     memoryStore,
     learnedMemory,
     selfImprovement,
+    improvements,
+    improvementCapture,
     taskQueue,
     appTool,
     browserTool,
     fileTool,
     filesContent,
     webController,
+    webControlVisualTracer,
     desktopController,
     googleAuth,
     googleApi,
@@ -904,7 +982,7 @@ export function createInstallerApiHandler(
             return json(
               {
                 ok: false,
-                message: "La acción debe ser terminal.",
+                message: INVALID_MAINTENANCE_ACTION_MESSAGE,
               },
               {
                 status: 400,
@@ -931,6 +1009,17 @@ export function createInstallerApiHandler(
 
           try {
             return json(deps.piHarness.getStatus());
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
+        if (url.pathname === "/api/pi/configuration") {
+          if (request.method !== "PUT") {
+            return methodNotAllowed(["PUT", "OPTIONS"]);
+          }
+          try {
+            return json(deps.piHarness.setConfiguration(await readJsonBody(request) as PiConfigurationRequest));
           } catch (error) {
             return piErrorResponse(error);
           }
@@ -1122,6 +1211,19 @@ export function createInstallerApiHandler(
           }
         }
 
+        const cancelTurnMatch = url.pathname.match(/^\/api\/pi\/turns\/([^/]+)\/cancel$/);
+        if (cancelTurnMatch) {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+
+          try {
+            return json(await deps.piHarness.cancelTurn(decodeURIComponent(cancelTurnMatch[1] ?? "")));
+          } catch (error) {
+            return piErrorResponse(error);
+          }
+        }
+
         if (url.pathname === "/api/speech/status") {
           if (request.method !== "GET") {
             return methodNotAllowed(["GET", "OPTIONS"]);
@@ -1291,6 +1393,88 @@ export function createInstallerApiHandler(
             return item ? json(item, { status: 202 }) : json({ ok: false, message: "Memoria aprendida no encontrada." }, { status: 404 });
           }
           return methodNotAllowed(["POST", "DELETE", "OPTIONS"]);
+        }
+
+        /*
+         * Mejoras del usuario. El orden importa: las tres rutas literales van
+         * antes que el patron de :name, que si no se las tragaria.
+         */
+        if (url.pathname === "/api/agent/improvements/capture") {
+          if (request.method !== "POST") {
+            return methodNotAllowed(["POST", "OPTIONS"]);
+          }
+          const payload = await readJsonBody(request) as { turnId?: unknown };
+          const turnId = typeof payload.turnId === "string" ? payload.turnId.trim() : "";
+          if (!turnId) {
+            return json({ ok: false, message: "Falta el turno que guardar." }, { status: 400 });
+          }
+          // 202 confirma la cola. La UI consulta el job antes de decir que se guardo.
+          return json(deps.improvementCapture.capture(turnId), { status: 202 });
+        }
+
+        const captureJobMatch = url.pathname.match(/^\/api\/agent\/improvements\/capture\/([^/]+)$/);
+        if (captureJobMatch) {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const job = deps.improvementCapture.job(decodeURIComponent(captureJobMatch[1] ?? ""));
+          return job
+            ? json({ ok: true, job })
+            : json({ ok: false, message: "Trabajo de guardado no encontrado." }, { status: 404 });
+        }
+
+        if (url.pathname === "/api/agent/improvements/catalog") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const tokenBudget = Number(url.searchParams.get("tokenBudget") ?? "");
+          return json(deps.improvements.catalog(Number.isFinite(tokenBudget) && tokenBudget > 0 ? tokenBudget : undefined));
+        }
+
+        if (url.pathname === "/api/agent/improvements/search") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const limit = Number(url.searchParams.get("limit") ?? "");
+          return json(deps.improvements.search(
+            url.searchParams.get("query") ?? "",
+            Number.isFinite(limit) && limit > 0 ? limit : undefined,
+          ));
+        }
+
+        if (url.pathname === "/api/agent/improvements") {
+          if (request.method !== "GET") {
+            return methodNotAllowed(["GET", "OPTIONS"]);
+          }
+          const category = url.searchParams.get("category");
+          if (category === null) {
+            return json(deps.improvements.list());
+          }
+          if (!isImprovementCategory(category)) {
+            return json({ ok: false, message: "Categoria de mejora desconocida." }, { status: 400 });
+          }
+          return json(deps.improvements.list(category));
+        }
+
+        const improvementMatch = url.pathname.match(/^\/api\/agent\/improvements\/([^/]+)$/);
+        if (improvementMatch) {
+          const name = decodeURIComponent(improvementMatch[1] ?? "");
+          if (request.method === "GET") {
+            const improvement = deps.improvements.read(name);
+            return improvement
+              ? json(improvement)
+              : json({ ok: false, message: "No hay ninguna mejora con ese nombre." }, { status: 404 });
+          }
+          if (request.method === "DELETE") {
+            const payload = await readJsonBody(request) as { explicitUserIntent?: unknown };
+            if (payload.explicitUserIntent !== true) {
+              return json({ ok: false, message: "Olvidar una mejora requiere intencion explicita del usuario." }, { status: 403 });
+            }
+            return deps.improvements.forget(name)
+              ? json({ ok: true, message: "Mejora olvidada." }, { status: 202 })
+              : json({ ok: false, message: "No hay ninguna mejora con ese nombre." }, { status: 404 });
+          }
+          return methodNotAllowed(["GET", "DELETE", "OPTIONS"]);
         }
 
         if (url.pathname === "/api/agent/admin/status") {
@@ -1763,7 +1947,7 @@ export function createInstallerApiHandler(
             return methodNotAllowed(["POST", "OPTIONS"]);
           }
           const payload = await readJsonBody(request) as { query?: unknown };
-          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", "ui");
+          const result = await deps.packageService.requestInstall(typeof payload.query === "string" ? payload.query : "", undefined, "ui");
           const status = result.status === "confirmation_required"
             ? 409
             : result.status === "already_installed"
@@ -1823,6 +2007,9 @@ export function createInstallerApiHandler(
     },
     dispose() {
       deps.speech.dispose();
+      // La traza visual escribe en segundo plano; al parar el broker se le da
+      // la oportunidad de terminar en vez de dejar el paso a medias.
+      void webControlVisualTracer.flush();
     },
   };
 }

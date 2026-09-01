@@ -1,6 +1,11 @@
 export type FirmwareType = "UEFI" | "BIOS";
 export type ShellMode = "installer" | "system";
-export type MaintenanceAction = "terminal";
+/**
+ * Operaciones tipadas que el helper con privilegios sabe ejecutar. La lista es
+ * cerrada a propósito: la interfaz nunca manda un comando, manda uno de estos
+ * nombres y el helper decide qué es cada uno.
+ */
+export type MaintenanceAction = "terminal" | "poweroff" | "reboot";
 export type SystemBridgeMode = "ipc" | "http";
 export type SystemRuntimeHost = "electron" | "web";
 export type GpuState = "on" | "off";

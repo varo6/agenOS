@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { workspaceNameFor } from "./workspaces";
@@ -98,7 +98,50 @@ export type GraphicalLaunchRequest = {
   existingWindowGraceMs?: number;
   signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  /** Inyectable en tests; por defecto comprueba el disco real. */
+  pathExists?: (path: string) => boolean;
+  /**
+   * Por defecto la ventana se lanza en un scope propio de systemd. Solo se
+   * desactiva para procesos que deban morir con el broker.
+   */
+  escapeServiceCgroup?: boolean;
 };
+
+// Quien lanza estas ventanas es el broker, y systemd lo supervisa con el
+// KillMode por defecto (control-group): cualquier parada o reinicio de
+// agenos-agent-api.service arrastraria tambien a Chromium, y con el a la sesion
+// que el usuario acababa de iniciar. `spawn(detached)` solo cambia el grupo de
+// procesos, no el cgroup, asi que no basta.
+//
+// systemd-run --user --scope registra un scope transitorio y despues hace exec
+// del programa: el PID no cambia (la deteccion de ventana por pid sigue siendo
+// valida) pero el proceso ya vive fuera del cgroup del servicio. Si no hay
+// gestor de usuario disponible se lanza como siempre, porque quedarse sin
+// ventana seria peor que heredar el cgroup.
+export const TRANSIENT_SCOPE_COMMAND = "systemd-run";
+const TRANSIENT_SCOPE_ARGS = ["--user", "--scope", "--collect", "--quiet", "--"];
+
+export function resolveTransientScopePrefix(input: {
+  env: NodeJS.ProcessEnv;
+  commandExists: (command: string) => boolean;
+  pathExists?: (path: string) => boolean;
+}): string[] {
+  const runtimeDir = input.env.XDG_RUNTIME_DIR?.trim();
+  if (!runtimeDir) {
+    return [];
+  }
+
+  const pathExists = input.pathExists ?? ((path: string) => existsSync(path));
+  if (!pathExists(join(runtimeDir, "systemd", "private"))) {
+    return [];
+  }
+
+  if (!input.commandExists(TRANSIENT_SCOPE_COMMAND)) {
+    return [];
+  }
+
+  return [TRANSIENT_SCOPE_COMMAND, ...TRANSIENT_SCOPE_ARGS];
+}
 
 export function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (isAbsolute(command)) {
@@ -430,8 +473,20 @@ export async function launchGraphicalApplication(
     stderr = (stderr + chunkToString(chunk)).slice(-MAX_COMMAND_OUTPUT_BYTES);
   };
 
+  const scopePrefix = request.escapeServiceCgroup === false
+    ? []
+    : resolveTransientScopePrefix({
+      env: request.env,
+      commandExists,
+      pathExists: request.pathExists,
+    });
+  const spawnTarget = scopePrefix.length > 0 ? scopePrefix[0]! : request.command;
+  const spawnArgs = scopePrefix.length > 0
+    ? [...scopePrefix.slice(1), request.command, ...args]
+    : args;
+
   try {
-    const spawned = spawnCommand(request.command, args, { env: request.env });
+    const spawned = spawnCommand(spawnTarget, spawnArgs, { env: request.env });
     child = isSpawnedGraphicalProcess(spawned) ? spawned : undefined;
   } catch (error) {
     spawnError = error instanceof Error ? error.message : String(error);

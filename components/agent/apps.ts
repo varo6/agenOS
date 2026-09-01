@@ -74,6 +74,7 @@ export type AppToolOptions = {
     options?: BrowserLauncherOptions,
   ) => BrowserLaunchResult | Promise<BrowserLaunchResult> | void;
   env?: NodeJS.ProcessEnv;
+  resolveSessionEnv?: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
   homeDir?: string;
   desktopDirs?: string[];
   windowTimeoutMs?: number;
@@ -341,8 +342,10 @@ function appWindowCandidates(app: AppDefinition): Set<string> {
 }
 
 export function createAppTool(options: AppToolOptions = {}) {
-  const env = resolveGraphicalSessionEnv(options.env ?? process.env);
-  const commandExists = options.commandExists ?? ((command: string) => executableExists(command, env));
+  const baseEnv = options.env ?? process.env;
+  const resolveSessionEnv = options.resolveSessionEnv ?? resolveGraphicalSessionEnv;
+  const currentEnv = () => resolveSessionEnv(baseEnv);
+  const commandExists = options.commandExists ?? ((command: string) => executableExists(command, currentEnv()));
   const spawnCommand = options.spawnCommand;
   const runCommand = options.runCommand ?? defaultRunCommand;
 
@@ -354,6 +357,7 @@ export function createAppTool(options: AppToolOptions = {}) {
     focus: boolean,
     launchOptions: AppLaunchOptions,
   ): Promise<AppOpenResponse> {
+    const env = currentEnv();
     const result = await launchGraphicalApplication({
       command,
       args,
@@ -409,6 +413,7 @@ export function createAppTool(options: AppToolOptions = {}) {
 
       if (app.appId === "browser") {
         try {
+          const env = currentEnv();
           const browserLauncher = options.browserLauncher ?? launchBrowserUrl;
           const result = await browserLauncher("https://www.google.com", {
             commandExists,

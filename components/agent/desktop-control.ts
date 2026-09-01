@@ -17,6 +17,7 @@ export type DesktopControlDeps = {
   runCommand?: (command: string, args: string[], options?: { timeoutMs?: number }) => Promise<DesktopRunResult>;
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
+  resolveSessionEnv?: (env: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
   homeDir?: string;
   now?: () => number;
 };
@@ -459,13 +460,17 @@ function timestampFor(now: () => number): string {
 }
 
 export function createDesktopController(deps: DesktopControlDeps = {}) {
-  const env = resolveGraphicalSessionEnv(deps.env ?? process.env);
+  const baseEnv = deps.env ?? process.env;
+  const resolveSessionEnv = deps.resolveSessionEnv ?? resolveGraphicalSessionEnv;
+  const currentEnv = () => resolveSessionEnv(baseEnv);
   const commandExists = deps.commandExists ?? defaultCommandExists;
-  const runCommand = deps.runCommand ?? createDefaultDesktopRunCommand(env);
-  const homeDir = deps.homeDir ?? env.HOME ?? homedir();
+  const runCommand = deps.runCommand ?? ((command, args, options) => (
+    createDefaultDesktopRunCommand(currentEnv())(command, args, options)
+  ));
+  const homeDir = deps.homeDir ?? baseEnv.HOME ?? homedir();
   const now = deps.now ?? Date.now;
 
-  function hasGraphicalSession(): boolean {
+  function hasGraphicalSession(env = currentEnv()): boolean {
     return Boolean(env.WAYLAND_DISPLAY || env.SWAYSOCK);
   }
 
@@ -861,7 +866,8 @@ export function createDesktopController(deps: DesktopControlDeps = {}) {
   }
 
   async function capabilities(): Promise<DesktopCapabilitiesResult> {
-    const graphicalSession = hasGraphicalSession();
+    const env = currentEnv();
+    const graphicalSession = hasGraphicalSession(env);
     const commands: Record<DesktopCommandName, boolean> = {
       swaymsg: commandExists("swaymsg"),
       wtype: commandExists("wtype"),

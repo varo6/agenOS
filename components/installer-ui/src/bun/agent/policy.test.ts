@@ -56,7 +56,11 @@ describe("agent policy", () => {
     });
   });
 
-  test("always requires confirmation for a resolved package installation", () => {
+  test("installs directly for explicit local requests and confirms non-interactive requests", () => {
+    expect(decidePolicy({ tool: "packages.install", source: "ui", explicitUserIntent: true })).toMatchObject({
+      decision: "allow",
+      ruleId: "agent.packages.install.ui.allow",
+    });
     for (const source of ["ui", "openclaw", "system"] as const) {
       expect(decidePolicy({ tool: "packages.install", source })).toMatchObject({
         decision: "confirm",

@@ -111,8 +111,21 @@ export function isShellMode(value: unknown): value is ShellMode {
   return value === "installer" || value === "system";
 }
 
+/** Lista cerrada de acciones que pueden llegar al helper privilegiado. */
+export const MAINTENANCE_ACTIONS: readonly MaintenanceAction[] = ["terminal", "poweroff", "reboot"];
+
+type PowerMaintenanceAction = Extract<MaintenanceAction, "poweroff" | "reboot">;
+
+export const POWER_MAINTENANCE_ACTIONS: readonly PowerMaintenanceAction[] = ["poweroff", "reboot"];
+
+export const INVALID_MAINTENANCE_ACTION_MESSAGE = `La acción debe ser una de: ${MAINTENANCE_ACTIONS.join(", ")}.`;
+
 export function isMaintenanceAction(value: unknown): value is MaintenanceAction {
-  return value === "terminal";
+  return typeof value === "string" && MAINTENANCE_ACTIONS.includes(value as MaintenanceAction);
+}
+
+export function isPowerMaintenanceAction(value: unknown): value is PowerMaintenanceAction {
+  return typeof value === "string" && POWER_MAINTENANCE_ACTIONS.includes(value as PowerMaintenanceAction);
 }
 
 export function normalizeBridgeMode(value: string | undefined): SystemBridgeMode {
@@ -201,7 +214,10 @@ export function processIsRunning(pid: number): boolean {
   }
 }
 
-export function acquireSingleInstanceLock(uid: number = currentUid()): { acquired: boolean; release: () => void } {
+export function acquireSingleInstanceLock(uid: number = currentUid()): {
+  acquired: boolean;
+  release: () => void;
+} {
   const lockPath = guiLockPathForUid(uid);
   let existingPid = 0;
 

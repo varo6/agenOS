@@ -136,6 +136,13 @@ GET  /api/agent/learning/overview                    embudo agregado de propuest
 POST /api/agent/learning/memories/:itemId             corrige una entrada por intención explícita del usuario
 DELETE /api/agent/learning/memories/:itemId           olvida una entrada por intención explícita del usuario
 GET  /api/agent/learning/context                      selección auditable (`query`, `tokenBudget`; máximo 512)
+POST /api/agent/improvements/capture                 { turnId } → 202 con el jobId del destilado
+GET  /api/agent/improvements/capture/:jobId          estado real: queued | running | succeeded | failed
+GET  /api/agent/improvements/catalog                 bloque para el prompt de sistema (`tokenBudget`)
+GET  /api/agent/improvements                         catálogo completo (`?category=` para filtrar)
+GET  /api/agent/improvements/search                  nombres que casan con una petición (`query`, `limit`)
+GET  /api/agent/improvements/:name                   mejora completa; sella `lastUsedAt`
+DELETE /api/agent/improvements/:name                 olvida una mejora
 POST /api/agent/apps/open                            { app, workspace?, focus? }
 POST /api/agent/browser/open-url                     { url }
 POST /api/agent/files/open                           { path, workspace?, focus? }
@@ -147,7 +154,7 @@ GET  /api/agent/worker/health
 ```
 
 El Pi foreground solo recibe las custom tools mediadas `browser_open`, `apps_open`,
-`files_open`, `openclaw_setup`, `agent_task` y `learning_memory`. No recibe las tools nativas
+`files_open`, `openclaw_setup`, `agent_task`, `learning_memory` e `improvements`. No recibe las tools nativas
 `bash`, `edit`, `write`, `read`, `grep`, `find` o `ls`, porque permitirían efectos fuera de la
 decisión del broker.
 
@@ -171,6 +178,15 @@ y el presupuesto realmente inyectados; el texto de memoria no se copia a esa met
 el turno, el broker registra una señal `learning_context_used` con esos IDs. El endpoint `overview`
 deriva de ese historial cuántos turnos usaron memoria y cuántas veces se recuperó cada entrada. No
 afirma que la memoria mejorara la respuesta; esa eficacia necesita un verificador de tarea.
+
+Las mejoras del usuario son un almacén distinto del de memoria aprendida y con otro ciclo: las
+crea un gesto explícito, el botón «Guardar en memoria» bajo una respuesta, y no una señal
+automática. `capture` responde `202` sin esperar al destilado, porque el usuario no debe quedarse
+mirando una pantalla mientras un modelo escribe una nota que ni siquiera le van a enseñar. El
+cuerpo de una mejora entra en el turno solo cuando Pi lo pide con la tool `improvements`; lo que
+se inyecta al abrir conversación es el catálogo de títulos, acotado por presupuesto de tokens.
+Detalle completo del formato, la taxonomía cerrada y el desalojo en
+`docs/architecture/improvements-memory.md`.
 
 ## Sistema e instalador
 

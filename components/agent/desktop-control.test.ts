@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildKeyComboArgs,
   createDesktopController,
@@ -457,6 +460,34 @@ describe("createDesktopController: capturas", () => {
 });
 
 describe("createDesktopController: degradacion honesta", () => {
+  test("redescubre Sway si el broker arranca antes que la sesion grafica", async () => {
+    const runtimeDir = mkdtempSync(join(tmpdir(), "agenos-session-race-"));
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const controller = createDesktopController({
+      env: { XDG_RUNTIME_DIR: runtimeDir },
+      commandExists: () => true,
+      runCommand: swayRunner(calls),
+    });
+
+    const beforeSway = await controller.inspect();
+    expect(beforeSway.ok).toBe(false);
+    expect(beforeSway.message).toContain("sesion grafica");
+    expect(calls).toEqual([]);
+
+    writeFileSync(join(runtimeDir, "wayland-1"), "");
+    writeFileSync(join(runtimeDir, "sway-ipc.1000.123.sock"), "");
+
+    const afterSway = await controller.inspect();
+    expect(afterSway.ok).toBe(true);
+    expect(afterSway.windows.map((window) => window.appId)).toContain("libreoffice-writer");
+    expect(calls.map(({ command }) => command)).toEqual(["swaymsg", "swaymsg"]);
+
+    const capabilities = await controller.capabilities();
+    expect(capabilities.graphicalSession).toBe(true);
+    expect(capabilities.waylandDisplay).toBe("wayland-1");
+    expect(capabilities.swaySock).toBe(join(runtimeDir, "sway-ipc.1000.123.sock"));
+  });
+
   test("dice que paquete falta cuando no esta el binario", async () => {
     const calls: string[] = [];
     const controller = createDesktopController({

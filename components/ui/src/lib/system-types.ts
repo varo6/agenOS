@@ -1,6 +1,11 @@
 export type FirmwareType = "UEFI" | "BIOS";
 export type ShellMode = "installer" | "system";
-export type MaintenanceAction = "terminal";
+/**
+ * Acciones tipadas del helper con privilegios. Espejo de la lista cerrada de
+ * `installer-ui/src/shared/system-services/runtime`, que es quien las valida
+ * antes de que lleguen a `pkexec`.
+ */
+export type MaintenanceAction = "terminal" | "poweroff" | "reboot";
 export type SystemBridgeMode = "ipc" | "http";
 export type SystemRuntimeHost = "electron" | "web";
 export type GpuState = "on" | "off";

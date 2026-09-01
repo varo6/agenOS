@@ -1,12 +1,13 @@
 import { memo, type FormEvent } from "react";
 import { ArrowUpRight, Clipboard, ExternalLink, LogOut, RefreshCcw, XCircle } from "lucide-react";
 
-import type { PiAuthState, PiPendingAttempt } from "../../lib/pi-types";
+import type { PiAuthState, PiModelId, PiPendingAttempt, PiReasoningLevel } from "../../lib/pi-types";
 import { Button, Field, Panel, PanelInset } from "../ui";
 
 export type ConnectionPanelProps = {
   providerName: string;
   modelId: string;
+  reasoningLevel?: PiReasoningLevel;
   authState: PiAuthState;
   /** El servicio de Pi responde. */
   ready: boolean;
@@ -20,6 +21,7 @@ export type ConnectionPanelProps = {
   onCancelAuth: () => void;
   onLogout: () => void;
   onRefresh: () => void;
+  onConfigurationChange?: (modelId: PiModelId, reasoningLevel: PiReasoningLevel) => void;
   /**
    * Versión de paso: solo lo necesario para terminar de conectar. Se usa en
    * Inicio, donde este panel baja únicamente cuando hay un código que copiar y
@@ -51,6 +53,7 @@ function describeAuthState(authState: PiAuthState): string {
 function ConnectionPanelComponent({
   providerName,
   modelId,
+  reasoningLevel = "low",
   authState,
   ready,
   busy,
@@ -62,6 +65,7 @@ function ConnectionPanelComponent({
   onCancelAuth,
   onLogout,
   onRefresh,
+  onConfigurationChange,
   compact = false,
 }: ConnectionPanelProps) {
   const connectLabel = authState === "connected" ? "Reconectar ChatGPT" : "Conectar ChatGPT";
@@ -128,6 +132,39 @@ function ConnectionPanelComponent({
           </>
         )}
       </div>
+
+      {!compact && onConfigurationChange ? (
+        <PanelInset className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="flex flex-col gap-2">
+            <span className="eyebrow">Modelo</span>
+            <select
+              className="field-input"
+              disabled={!ready || busy}
+              onChange={(event) => onConfigurationChange(event.target.value as PiModelId, reasoningLevel)}
+              value={modelId}
+            >
+              <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+              <option value="gpt-5.6-terra">GPT-5.6 Terra</option>
+              <option value="gpt-5.6-luna">GPT-5.6 Luna</option>
+              <option value="gpt-5.5">GPT-5.5</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-2">
+            <span className="eyebrow">Razonamiento</span>
+            <select
+              className="field-input"
+              disabled={!ready || busy}
+              onChange={(event) => onConfigurationChange(modelId as PiModelId, event.target.value as PiReasoningLevel)}
+              value={reasoningLevel}
+            >
+              <option value="off">Sin razonamiento</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </PanelInset>
+      ) : null}
 
       {pendingAttempt ? (
         pendingAttempt.method === "device" ? (

@@ -34,7 +34,8 @@ Cobertura actual de tests: texto válido, micro demo válido, comando desconocid
 - Éxito: `202 { ok: true, message: "Acción terminal lanzada." }`
 - Error de validación: `400`
 - Error del helper o ejecución: `500`
-- Tipo público nuevo: `MaintenanceAction = "terminal"`
+- Tipo público: `MaintenanceAction = "terminal" | "poweroff" | "reboot"`
+- Apagar y reiniciar usan el mismo contrato y el mismo helper (`agenos-shell-helper poweroff` / `reboot`), y se piden desde Sistema → Más ajustes → Encendido, siempre con confirmación. El servicio espera a que `pkexec` resuelva antes de contestar, para que la interfaz no dé por hecho un apagado que nadie ha autorizado.
 - Intención local actual: `open_maintenance_terminal`
 - Transcripción demo pública: `abre terminal de mantenimiento`
 

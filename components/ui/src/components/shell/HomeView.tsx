@@ -1,3 +1,5 @@
+import { Square } from "lucide-react";
+
 import { cx } from "../../lib/cx";
 import { describeComposerBlock, resolveShellReadiness } from "../../lib/shell-state";
 import type { VoiceBlockedReason } from "../../lib/voice-status";
@@ -5,8 +7,10 @@ import type { AgentHealthController } from "../../hooks/useAgentHealth";
 import type { Conversation } from "../../hooks/useConversation";
 import type { PiSession } from "../../hooks/usePiSession";
 import type { ShellActions } from "../../hooks/useShellActions";
+import type { TtsRepliesController } from "../../hooks/useTtsReplies";
 import type { VoiceController } from "../../hooks/useVoice";
 import { AgentOnboardingPanel } from "../AgentOnboardingPanel";
+import { Button } from "../ui";
 import { VoiceConsole } from "../voice/VoiceConsole";
 import { Composer } from "./Composer";
 import { ConnectionPanel } from "./ConnectionPanel";
@@ -24,7 +28,26 @@ export type HomeViewProps = {
   /** Hay un turno en vuelo. */
   busy: boolean;
   actions: ShellActions;
+  tts: TtsRepliesController;
 };
+
+function StopTtsButton({ tts }: { tts: TtsRepliesController }) {
+  if (!tts.speaking) {
+    return null;
+  }
+
+  return (
+    <Button
+      className="self-center"
+      icon={<Square aria-hidden="true" className="h-4 w-4 fill-current" />}
+      onClick={tts.stop}
+      size="sm"
+      variant="secondary"
+    >
+      Parar voz
+    </Button>
+  );
+}
 
 /**
  * Pantalla principal: hablar con Pi.
@@ -43,6 +66,7 @@ export function HomeView({
   blockedReason,
   busy,
   actions,
+  tts,
 }: HomeViewProps) {
   const readiness = resolveShellReadiness({
     harnessAvailable: session.ready,
@@ -132,7 +156,7 @@ export function HomeView({
           <VoiceConsole
             buttonLabel={voice.buttonLabel}
             onActivate={voice.start}
-            onCancel={voice.cancel}
+            onFinish={voice.finish}
             status={voice.status}
           />
 
@@ -145,6 +169,8 @@ export function HomeView({
             onSubmit={actions.sendDraft}
             value={conversation.draft}
           />
+
+          <StopTtsButton tts={tts} />
         </>
       ) : (
         <>
@@ -168,7 +194,7 @@ export function HomeView({
                 buttonLabel={voice.buttonLabel}
                 className="shrink-0"
                 onActivate={voice.start}
-                onCancel={voice.cancel}
+                onFinish={voice.finish}
                 size="compact"
                 status={voice.status}
               />
@@ -195,6 +221,8 @@ export function HomeView({
             {composerHint ? null : (
               <p className="text-center text-base text-ink-muted">{voice.status.title}</p>
             )}
+
+            <StopTtsButton tts={tts} />
           </div>
 
           {/*
@@ -203,8 +231,14 @@ export function HomeView({
            * es deliberado: primero lo que acaba de pasar, después lo que hay que
            * buscar.
            */}
-          <LatestReply turns={conversation.turns} />
-          <ConversationPanel turns={conversation.turns} />
+          <LatestReply onStop={() => void conversation.stop()} turns={conversation.turns} />
+          <ConversationPanel
+            onSaveToMemory={conversation.saveToMemory}
+            savedTurnIds={conversation.savedTurnIds}
+            savingTurnIds={conversation.savingTurnIds}
+            failedTurnIds={conversation.failedTurnIds}
+            turns={conversation.turns}
+          />
 
           {/*
            * Solo con conversación empezada: en una pantalla vacía, empezar de

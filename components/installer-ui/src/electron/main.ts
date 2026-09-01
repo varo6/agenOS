@@ -14,6 +14,7 @@ import { createMaintenanceService } from "../shared/system-services/maintenance"
 import { createPreflightService } from "../shared/system-services/preflight";
 import { createSwitchModeService } from "../shared/system-services/switch-mode";
 import {
+  INVALID_MAINTENANCE_ACTION_MESSAGE,
   SYSTEM_IPC_CHANNELS,
   currentUid,
   isMaintenanceAction,
@@ -141,7 +142,7 @@ function registerIpcHandlers(): void {
     if (!isMaintenanceAction(action)) {
       return {
         ok: false,
-        message: "La acción debe ser terminal.",
+        message: INVALID_MAINTENANCE_ACTION_MESSAGE,
       };
     }
 

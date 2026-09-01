@@ -44,6 +44,28 @@ describe("system IPC services", () => {
     expect(effects).toEqual(["maintenance:terminal", "mode:installer"]);
   });
 
+  test("passes the typed power actions through to the privileged helper", async () => {
+    const effects: string[] = [];
+    const services = createSystemIpcServices({
+      maintenance: {
+        runMaintenance: async (action) => {
+          effects.push(`maintenance:${action}`);
+          return { ok: true, message: `Acción ${action} aceptada.` };
+        },
+      },
+    });
+
+    await expect(services.runMaintenance("poweroff")).resolves.toEqual({
+      ok: true,
+      message: "Acción poweroff aceptada.",
+    });
+    await expect(services.runMaintenance("reboot")).resolves.toEqual({
+      ok: true,
+      message: "Acción reboot aceptada.",
+    });
+    expect(effects).toEqual(["maintenance:poweroff", "maintenance:reboot"]);
+  });
+
   test("rejects invalid IPC payloads without invoking an effect", async () => {
     const effects: string[] = [];
     const services = createSystemIpcServices({
@@ -51,7 +73,11 @@ describe("system IPC services", () => {
       modeSwitch: { switchMode: async () => { effects.push("mode"); return { ok: true }; } },
     });
 
-    await expect(services.runMaintenance("reboot")).resolves.toMatchObject({ ok: false });
+    // Ni acciones que el helper no conoce, ni comandos, ni nada que no sea una
+    // de las cadenas de la lista cerrada.
+    for (const action of ["reload-shell", "suspend", "poweroff; id", "PowerOff", "", 1, null, { action: "poweroff" }]) {
+      await expect(services.runMaintenance(action)).resolves.toMatchObject({ ok: false });
+    }
     await expect(services.switchMode("demo")).resolves.toMatchObject({ ok: false });
     expect(effects).toEqual([]);
   });

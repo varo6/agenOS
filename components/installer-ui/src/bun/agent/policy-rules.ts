@@ -160,6 +160,16 @@ export const POLICY_RULES: PolicyRule[] = [
     matches: all(toolIs("admin.queue.clear"), sourceIs("ui")),
   },
   {
+    ruleId: "agent.packages.install.ui.allow",
+    tool: "packages.install",
+    source: "ui",
+    decision: "allow",
+    reason: "La petición explícita de la sesión local puede instalar el paquete validado sin una segunda confirmación.",
+    matches: (request) => request.tool === "packages.install"
+      && request.source === "ui"
+      && request.explicitUserIntent === true,
+  },
+  {
     ruleId: "agent.packages.install.confirm",
     tool: "packages.install",
     source: "*",
@@ -209,6 +219,9 @@ const LOW_RISK_TOOLS = new Set([
   "google.read",
   "workspaces.focus",
   "memory.read",
+  // Solo lectura del almacen de mejoras: quien escribe ahi es el destilador
+  // del broker a partir del boton, nunca el modelo.
+  "improvements.read",
   "contacts.lookup",
   "tasks.enqueue",
   "tasks.read",

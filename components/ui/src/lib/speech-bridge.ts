@@ -32,6 +32,8 @@ export type SpeechCapturePhase = "listening" | "speech" | "transcribing";
 
 export type AgenosSpeechBridge = {
   transcribeOnce(): Promise<SpeechTranscriptionOutcome>;
+  /** Cierra el microfono y transcribe el audio acumulado. */
+  finish(): Promise<void>;
   /**
    * Aborta la captura viva. Mata el grabador, suelta el micrófono y hace que la
    * llamada a `transcribeOnce` en curso resuelva con `cancelled`.

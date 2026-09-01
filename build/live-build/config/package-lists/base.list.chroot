@@ -32,3 +32,9 @@ efibootmgr
 # traves de chromium-common: si esa dependencia cambia, abrir un fichero falla
 # en silencio.
 xdg-utils
+
+# Sin reloj sincronizado, Google y cualquier otro servicio con tokens firmados
+# invalidan la sesion recien iniciada: un live que arranca con el RTC en hora
+# local va desfasado desde el primer segundo. Llega por Recommends de systemd,
+# pero aqui queda explicito para que un cambio de dependencias no lo quite.
+systemd-timesyncd

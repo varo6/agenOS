@@ -12,6 +12,10 @@ import {
   createLearningMemoryModelTool,
   type LearningMemoryClient,
 } from "../../../../agent/learning-memory-tool";
+import {
+  createImprovementsModelTool,
+  type ImprovementsClient,
+} from "../../../../agent/improvements-tool";
 import type { HarnessTraceRecord } from "../../../../agent/harness-trace";
 import {
   createOpenAppModelTool,
@@ -73,6 +77,19 @@ export function createBrokerPiTools(options: BrokerPiToolsOptions) {
     forget: (itemId) => output("memory.delete", { itemId }, true),
     context: (query, tokenBudget) => output("memory.read", { action: "context", query, tokenBudget }),
     captureTrace: options.captureTrace,
+  };
+
+  /*
+   * Solo lectura. El modelo no puede crear ni borrar mejoras: las escribe el
+   * destilador del broker cuando el usuario pulsa el boton, que es el unico
+   * gesto que significa "esto me ha gustado".
+   */
+  const improvementsClient: ImprovementsClient = {
+    catalog: (tokenBudget) => output("improvements.read", { action: "catalog", tokenBudget }),
+    list: (category) => output("improvements.read", { action: "list", category }),
+    search: (query, limit) => output("improvements.read", { action: "search", query, limit }),
+    read: (name) => output("improvements.read", { action: "read", name }),
+    forget: () => Promise.resolve(false),
   };
 
   // El servicio real vive en el backend; aqui solo se enrutan las llamadas por
@@ -187,6 +204,7 @@ export function createBrokerPiTools(options: BrokerPiToolsOptions) {
     createOpenClawSetupModelTool(setupService),
     createAgentTaskModelTool(agentTaskClient),
     createLearningMemoryModelTool(learningMemoryClient),
+    createImprovementsModelTool(improvementsClient),
   ];
 
   return {
@@ -194,5 +212,6 @@ export function createBrokerPiTools(options: BrokerPiToolsOptions) {
     customTools,
     agentTaskClient,
     learningMemoryClient,
+    improvementsClient,
   };
 }

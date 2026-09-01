@@ -9,7 +9,7 @@ export type PackageInstallToolResult = {
 };
 
 export type PackageInstallToolService = {
-  requestInstall(query: string): Promise<PackageInstallToolResult>;
+  requestInstall(query: string, onProgress?: (message: string) => void): Promise<PackageInstallToolResult>;
   confirmInstall(confirmationId: string, onProgress?: (message: string) => void): Promise<PackageInstallToolResult>;
   denyInstall(confirmationId: string): PackageInstallToolResult | Promise<PackageInstallToolResult>;
 };
@@ -60,11 +60,11 @@ export function createPackageInstallModelTool(service: PackageInstallToolService
   return {
     name: "apps_install",
     label: "Instalar aplicación",
-    description: "Resuelve nombres humanos contra el catálogo Debian e instala una aplicación mediante el broker después de una confirmación.",
-    promptSnippet: "apps_install: busca e instala aplicaciones Debian; siempre requiere una confirmación de un solo paso antes del cambio.",
+    description: "Resuelve nombres humanos contra el catálogo Debian e instala una aplicación mediante el broker local.",
+    promptSnippet: "apps_install: busca, instala y abre aplicaciones Debian pedidas explícitamente por el usuario.",
     promptGuidelines: [
-      "Cuando el usuario pida instalar una aplicación, llama action=request con el nombre que haya usado; no adivines tú el nombre del paquete Debian.",
-      "Si request devuelve confirmation_required, explica brevemente qué paquete eligió y formula exactamente su pregunta de confirmación.",
+      "Cuando el usuario pida instalar una aplicación, llama action=request con el nombre que haya usado; el broker valida el paquete y lo instala directamente en la sesión local.",
+      "Si una fuente no interactiva devuelve confirmation_required, explica brevemente qué paquete eligió y formula exactamente su pregunta de confirmación.",
       "No llames action=confirm en el mismo turno que action=request. Solo confirma en un turno posterior si el usuario responde afirmativamente de forma explícita.",
       "Si el usuario responde que no, llama action=deny. No vuelvas a solicitar la misma instalación.",
       "Durante confirm, comunica el progreso recibido y termina con el resultado exacto: instalado, ya estaba, no encontrado o fallo.",
@@ -78,7 +78,13 @@ export function createPackageInstallModelTool(service: PackageInstallToolService
           content: [{ type: "text", text: "Buscando el paquete correcto en Debian…" }],
           details: { ok: true, status: "resolving" },
         });
-        result = await service.requestInstall(typeof params.app === "string" ? params.app : "");
+        result = await service.requestInstall(
+          typeof params.app === "string" ? params.app : "",
+          (message) => onUpdate?.({
+            content: [{ type: "text", text: message }],
+            details: { ok: true, status: "installing", message },
+          }),
+        );
       } else if (action === "confirm") {
         if (!latestUserMessageIsAffirmative(context)) {
           result = {

@@ -13,6 +13,7 @@ import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPan
 import {
   agentAdminClient,
   agentClient,
+  improvementsClient,
   networkClient,
   piClient,
   workspaceSubscription,
@@ -63,6 +64,7 @@ export default function App() {
   const conversation = useConversation({
     piClient,
     agentClient,
+    improvementsClient,
     alert: sink,
     isOffline,
     isDisconnected,
@@ -94,7 +96,7 @@ export default function App() {
     blockedReason,
     agentIssue: alert?.hint ?? null,
   });
-  useTtsReplies({ turns: conversation.turns });
+  const tts = useTtsReplies({ turns: conversation.turns });
 
   const actions = useShellActions({
     session,
@@ -181,6 +183,7 @@ export default function App() {
           conversation={conversation}
           health={health}
           session={session}
+          tts={tts}
           voice={voice}
         />
       )}

@@ -49,6 +49,23 @@ describe("Electron Pi broker client", () => {
     );
   });
 
+  test("cancels a Pi turn through the broker", async () => {
+    let call: { url: string; method: string } | undefined;
+    const client = createBrokerPiClient({
+      readToken: () => "ui-token",
+      fetchImpl: (async (input, init) => {
+        call = { url: String(input), method: init?.method ?? "GET" };
+        return new Response(JSON.stringify({ status: "cancelled" }), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    await expect(client.cancelTurn("turn/abc")).resolves.toMatchObject({ status: "cancelled" });
+    expect(call).toEqual({
+      url: "http://127.0.0.1:4173/api/pi/turns/turn%2Fabc/cancel",
+      method: "POST",
+    });
+  });
+
   test("opens OAuth and external links through the broker instead of a local adapter", async () => {
     const calls: Array<{ url: string; body: string }> = [];
     const client = createBrokerPiClient({

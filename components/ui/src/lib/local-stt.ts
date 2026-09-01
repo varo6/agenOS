@@ -173,6 +173,7 @@ export function createLocalHttpSpeechController(
   let disposed = false;
   let listening = false;
   let cancelled = false;
+  let finishRequested = false;
   let activeRecorder: LocalSttRecorder | null = null;
   let activeStream: LocalSttMediaStream | null = null;
 
@@ -238,6 +239,9 @@ export function createLocalHttpSpeechController(
 
     try {
       activeStream = await requestStream();
+      if (disposed || cancelled) {
+        return;
+      }
       const recorder = createRecorder(activeStream);
       activeRecorder = recorder;
 
@@ -255,6 +259,9 @@ export function createLocalHttpSpeechController(
       recorder.start();
       callbacks.onPhase?.("listening");
       timer = setTimeout(() => stopRecorder(), maxDurationMs);
+      if (finishRequested) {
+        stopRecorder();
+      }
       await stopped;
 
       // Cancelar tira la grabacion entera: nunca se sube ni se transcribe.
@@ -289,7 +296,7 @@ export function createLocalHttpSpeechController(
     }
   }
 
-  /** Cancela: corta el grabador, suelta el microfono y descarta el audio. */
+  /** Cancela al destruir el controlador y descarta el audio. */
   const abort = () => {
     cancelled = true;
     stopRecorder();
@@ -305,11 +312,13 @@ export function createLocalHttpSpeechController(
       }
       listening = true;
       cancelled = false;
+      finishRequested = false;
       void run();
       return true;
     },
     stop() {
-      abort();
+      finishRequested = true;
+      stopRecorder();
     },
     dispose() {
       disposed = true;

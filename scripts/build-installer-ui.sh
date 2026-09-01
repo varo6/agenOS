@@ -13,6 +13,7 @@ SYSTEM_DIST_DIR="${SYSTEM_UI_DIR}/dist"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
 PI_AGENT_PACKAGE_DIR="${UI_DIR}/node_modules/@mariozechner/pi-coding-agent"
+PLAYWRIGHT_PACKAGE_DIR="${UI_DIR}/node_modules/playwright-core"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 
@@ -53,7 +54,7 @@ if [[ -f "${STAMP_FILE}" ]]; then
   CURRENT_STAMP="$(cat "${STAMP_FILE}")"
 fi
 
-if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" && -f "${OUTPUT_DIR}/pi-coding-agent/package.json" && -f "${OUTPUT_DIR}/api/pi-system-context.md" ]]; then
+if [[ "${CURRENT_STAMP}" == "${CURRENT_HASH}" && -x "${OUTPUT_DIR}/agenos-installer-ui" && -x "${OUTPUT_DIR}/agenos-system-ui" && -f "${OUTPUT_DIR}/dist/index.html" && -f "${OUTPUT_DIR}/system-dist/index.html" && -x "${OUTPUT_DIR}/electron-dist/electron" && -f "${OUTPUT_DIR}/pi-coding-agent/package.json" && -f "${OUTPUT_DIR}/node_modules/playwright-core/package.json" && -f "${OUTPUT_DIR}/api/pi-system-context.md" ]]; then
   echo "components/installer-ui sin cambios; se reutiliza el paquete empaquetado."
   exit 0
 fi
@@ -103,7 +104,12 @@ if [[ ! -f "${PI_AGENT_PACKAGE_DIR}/package.json" ]]; then
   exit 1
 fi
 
-mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/system-dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist" "${OUTPUT_DIR}/pi-coding-agent"
+if [[ ! -f "${PLAYWRIGHT_PACKAGE_DIR}/package.json" ]]; then
+  echo "No se encontró playwright-core en ${PLAYWRIGHT_PACKAGE_DIR}" >&2
+  exit 1
+fi
+
+mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/api" "${OUTPUT_DIR}/bin" "${OUTPUT_DIR}/dist" "${OUTPUT_DIR}/system-dist" "${OUTPUT_DIR}/electron-app" "${OUTPUT_DIR}/electron-dist" "${OUTPUT_DIR}/pi-coding-agent" "${OUTPUT_DIR}/node_modules/playwright-core"
 
 install -m 0755 "${PACKAGED_BUN}" "${OUTPUT_DIR}/bin/bun"
 install -m 0755 "${API_BUILD_DIR}/server.js" "${OUTPUT_DIR}/api/server.js"
@@ -114,6 +120,7 @@ rsync -a --delete "${SYSTEM_DIST_DIR}/" "${OUTPUT_DIR}/system-dist/"
 rsync -a --delete "${ELECTRON_APP_DIR}/" "${OUTPUT_DIR}/electron-app/"
 rsync -a --delete "${ELECTRON_DIST_DIR}/" "${OUTPUT_DIR}/electron-dist/"
 rsync -a --delete "${PI_AGENT_PACKAGE_DIR}/" "${OUTPUT_DIR}/pi-coding-agent/"
+rsync -a --delete "${PLAYWRIGHT_PACKAGE_DIR}/" "${OUTPUT_DIR}/node_modules/playwright-core/"
 
 BUILD_GENERATED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 BUILD_GIT_COMMIT="$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')"

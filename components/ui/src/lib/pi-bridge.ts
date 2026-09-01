@@ -4,11 +4,13 @@ import type {
   PiPendingAttempt,
   PiStartAuthRequest,
   PiStatusResponse,
+  PiConfigurationRequest,
   PiTurnState,
 } from "./pi-types";
 
 export type AgenosPiBridge = {
   getStatus(): Promise<PiStatusResponse>;
+  setConfiguration(configuration: PiConfigurationRequest): Promise<PiStatusResponse>;
   startAuth(method?: PiStartAuthRequest["method"]): Promise<PiPendingAttempt>;
   cancelAuth(attemptId?: string): Promise<void>;
   getAuthAttempt(attemptId: string): Promise<PiAuthAttemptResponse>;
@@ -18,6 +20,7 @@ export type AgenosPiBridge = {
   sendMessage(message: string, source: "text" | "voice"): Promise<PiChatResponse>;
   startTurn(message: string, source: "text" | "voice"): Promise<PiTurnState>;
   getTurn(turnId: string): Promise<PiTurnState>;
+  cancelTurn(turnId: string): Promise<PiTurnState>;
   getLatestTurn(): Promise<PiTurnState | null>;
   listTurns(limit?: number): Promise<PiTurnState[]>;
   isAvailable(): boolean;

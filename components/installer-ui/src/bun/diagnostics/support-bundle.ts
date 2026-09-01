@@ -67,6 +67,11 @@ const COMMANDS = [
   ["systemctl", ["status", "agenos-openclaw.service", "--no-pager", "--full"]],
   ["journalctl", ["-u", "agenos-agent-api.service", "-n", "120", "--no-pager"]],
   ["journalctl", ["-u", "agenos-openclaw.service", "-n", "120", "--no-pager"]],
+  // Estado que decide si lo que el usuario guarda sobrevive al apagado, y si su
+  // reloj permite que una sesion iniciada siga siendo valida.
+  ["findmnt", ["--noheadings", "--output", "TARGET,SOURCE,FSTYPE", "/home"]],
+  ["ls", ["-A", "/run/live/persistence"]],
+  ["timedatectl", ["show", "--property=NTPSynchronized", "--property=TimeUSec", "--property=Timezone"]],
 ] as const;
 
 export async function createSupportBundle(options: SupportBundleOptions = {}) {

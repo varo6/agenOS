@@ -3,7 +3,10 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.NOT_HANDLED;
     }
 
-    if (subject.local && subject.active) {
+    // El broker se ejecuta como agenos fuera del cgroup de la sesión gráfica.
+    // Polkit puede marcarlo como inactivo aunque el usuario esté delante. El
+    // helper solo admite operaciones tipadas y valida todos sus argumentos.
+    if (subject.user === "agenos" || (subject.local && subject.active)) {
         return polkit.Result.YES;
     }
 

@@ -26,7 +26,7 @@ export type VoiceController = {
   buttonLabel: string;
   engine: SpeechRecognitionController["engine"] | null;
   start: () => void;
-  cancel: () => void;
+  finish: () => void;
   /** Vuelve al reposo tras cerrar sesión o resolver un fallo. */
   reset: () => void;
 };
@@ -175,10 +175,10 @@ export function useVoice({
     }
   }, [canListen]);
 
-  const cancel = useCallback(() => {
+  const finish = useCallback(() => {
     controllerRef.current?.stop();
     setCapture((current) =>
-      current === "listening" || current === "transcribing" ? "idle" : current,
+      current === "listening" ? "transcribing" : current,
     );
   }, []);
 
@@ -192,7 +192,7 @@ export function useVoice({
     buttonLabel: voiceButtonLabel(status),
     engine,
     start,
-    cancel,
+    finish,
     reset,
   };
 }

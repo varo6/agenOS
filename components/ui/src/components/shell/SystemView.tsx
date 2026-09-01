@@ -16,6 +16,7 @@ import type { NetworkClient } from "../../../../network/client";
 import { ConnectionPanel } from "./ConnectionPanel";
 import { AudioSettingsPanel } from "./AudioSettingsPanel";
 import { DisplaySettingsPanel } from "./DisplaySettingsPanel";
+import { PowerPanel } from "./PowerPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 export type SystemViewProps = {
@@ -36,7 +37,7 @@ export type SystemViewProps = {
  *
  * Dos niveles a propósito. Arriba, lo que una persona puede necesitar tocar:
  * su cuenta y el escritorio en el que está. Debajo, plegado, todo lo técnico
- * —estado del servicio, administración e informe de soporte—, que sigue siendo
+ * (estado del servicio, administración e informe de soporte), que sigue siendo
  * alcanzable y funcional pero no le sale al paso a quien solo viene a
  * reconectar ChatGPT.
  */
@@ -65,11 +66,15 @@ export function SystemView({
         busy={busy}
         manualCode={session.manualCode}
         modelId={session.modelId}
+        reasoningLevel={session.reasoningLevel}
         onCancelAuth={session.cancelAuth}
         onConnect={actions.connect}
         onLogout={actions.logout}
         onManualCodeChange={session.setManualCode}
         onRefresh={actions.refresh}
+        onConfigurationChange={(modelId, reasoningLevel) => {
+          void session.setConfiguration(modelId, reasoningLevel);
+        }}
         onSubmitManualCode={session.submitManualCode}
         pendingAttempt={session.pendingAttempt}
         providerName={session.providerName}
@@ -90,6 +95,7 @@ export function SystemView({
           <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
           <DisplaySettingsPanel />
           <AudioSettingsPanel />
+          <PowerPanel />
         </section>
       ) : null}
 

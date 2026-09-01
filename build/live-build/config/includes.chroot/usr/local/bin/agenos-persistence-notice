@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+# El arranque live pide persistencia por etiqueta (build/live-build/auto/config:
+# persistence-label=agenos-persist), pero esa particion solo existe si el USB se
+# preparo con scripts/create-persistent-usb.sh. Sin ella /home vive en RAM: las
+# cuentas iniciadas, el perfil del navegador y la memoria del agente se pierden
+# al apagar, y hasta ahora el sistema no lo decia en ningun sitio.
+
+is_live_session() {
+  [ -e /run/live/medium ]
+}
+
+has_persistence() {
+  [ -d /run/live/persistence ] || return 1
+  [ -n "$(ls -A /run/live/persistence 2>/dev/null)" ]
+}
+
+is_live_session || exit 0
+has_persistence && exit 0
+
+logger -t agenos-persistence "live sin particion de persistencia: /home vive en RAM"
+
+if command -v notify-send >/dev/null 2>&1; then
+  notify-send --urgency=normal --expire-time=20000 \
+    "AgenOS esta en modo sin memoria" \
+    "Este USB no tiene particion de persistencia: las sesiones que inicies y los ficheros que guardes se perderan al apagar." \
+    || true
+fi
+
+exit 0

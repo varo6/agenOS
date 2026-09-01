@@ -161,6 +161,36 @@ describe("createPiClient", () => {
     }]);
   });
 
+  test("cancels a running turn with POST", async () => {
+    setWindowOrigin(PI_DEV_HARNESS_ORIGIN);
+
+    let request: { url: string; method: string } | undefined;
+    globalThis.fetch = async (input, init) => {
+      request = { url: String(input), method: String(init?.method ?? "GET") };
+      return new Response(JSON.stringify({
+        turnId: "turn/123",
+        status: "cancelled",
+        source: "text",
+        input: "hola",
+        startedAt: "2026-04-21T00:00:00.000Z",
+        finishedAt: "2026-04-21T00:00:01.000Z",
+        progress: {
+          startedAt: "2026-04-21T00:00:00.000Z",
+          streamedText: "Hola",
+          currentTool: null,
+          completedTools: [],
+        },
+        reply: "Hola",
+      }), { status: 200 });
+    };
+
+    await expect(createPiClient().cancelTurn("turn/123")).resolves.toMatchObject({ status: "cancelled" });
+    expect(request).toEqual({
+      url: `${PI_DEV_HARNESS_ORIGIN}/api/pi/turns/turn%2F123/cancel`,
+      method: "POST",
+    });
+  });
+
   test("sends chat messages", async () => {
     setWindowOrigin(PI_DEV_HARNESS_ORIGIN);
 

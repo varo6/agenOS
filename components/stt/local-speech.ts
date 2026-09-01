@@ -33,6 +33,8 @@ export type LocalSpeechService = {
   status(): { available: boolean; reason: string | null; model: string | null };
   /** Graba y transcribe. Devuelve un fallo tipado, nunca lanza. */
   transcribeOnce(onPhase?: (phase: CapturePhase | "transcribing") => void): Promise<LocalSpeechResult>;
+  /** Termina la captura viva y transcribe lo grabado hasta ese momento. */
+  finish(): void;
   /** Corta la captura viva. La llamada en curso resuelve con `cancelled`. */
   cancel(): void;
   isCapturing(): boolean;
@@ -141,6 +143,9 @@ export function createLocalSpeechService(
   return {
     status,
     transcribeOnce,
+    finish() {
+      active?.finish();
+    },
     cancel() {
       active?.cancel();
     },

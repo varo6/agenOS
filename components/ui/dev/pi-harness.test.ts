@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
+import { getModels } from "@mariozechner/pi-ai";
+
 import type { AgentTaskClient } from "../../agent/agent-task-tool";
 import type { LearningMemoryClient } from "../../agent/learning-memory-tool";
 import {
   createPiHarness,
   DEFAULT_PI_MODEL_PREFERENCE,
   DEFAULT_PI_THINKING_LEVEL,
+  PI_CUSTOM_MODELS,
+  PI_PROVIDER_ID,
+  SELECTABLE_PI_MODELS,
   PI_SYSTEM_PROMPT,
   resolvePiHarnessPaths,
   type PiTurnStoreLike,
@@ -52,6 +57,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
   let promptImpl = async (text: string) => {
     emitAssistantReply(`respuesta:${text}`);
   };
+  let abortImpl = async () => {};
   let createSessionOptions: unknown;
   const openedApps: unknown[] = [];
   const traceRecords: unknown[] = [];
@@ -72,6 +78,9 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     },
     async prompt(text: string) {
       await promptImpl(text);
+    },
+    async abort() {
+      await abortImpl();
     },
     dispose() {},
   };
@@ -150,6 +159,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
       getAll() {
         return [
           { id: "gpt-5.6-sol", provider: "openai-codex" },
+          { id: "gpt-5.5", provider: "openai-codex" },
           { id: "gpt-5.5-instant", provider: "openai-codex" },
           { id: "gpt-5.4", provider: "openai-codex" },
           { id: "gpt-5.4-mini", provider: "openai-codex" },
@@ -249,6 +259,9 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     setPromptImpl(nextPromptImpl: typeof promptImpl) {
       promptImpl = nextPromptImpl;
     },
+    setAbortImpl(nextAbortImpl: typeof abortImpl) {
+      abortImpl = nextAbortImpl;
+    },
     advanceTimers() {
       pendingTimers.splice(0).forEach((callback) => callback());
     },
@@ -273,6 +286,41 @@ describe("PiHarness", () => {
     expect(DEFAULT_PI_THINKING_LEVEL).toBe("low");
   });
 
+  test("changes the model and reasoning used by the next session", async () => {
+    const { harness, authData, getCreateSessionOptions } = createHarnessFixture();
+    authData.set("openai-codex", { type: "oauth", access: "token", refresh: "refresh", expires: Date.now() + 60_000 });
+
+    expect(harness.setConfiguration({ modelId: "gpt-5.5", reasoningLevel: "high" })).toMatchObject({
+      modelId: "gpt-5.5",
+      reasoningLevel: "high",
+    });
+    await harness.chat({ message: "hola", source: "text" });
+    expect(getCreateSessionOptions()).toMatchObject({
+      model: { id: "gpt-5.5" },
+      thinkingLevel: "high",
+    });
+  });
+
+  // selectModel solo puede elegir ids que existan en el registro, y cuando no
+  // existe ninguno cae al siguiente sin romper nada. Por eso una entrada
+  // fantasma no se nota en runtime: Pi funciona, pero con otro modelo. Este
+  // test es el unico sitio donde eso salta.
+  test("every preferred model id exists in the catalog the registry will load", () => {
+    const builtIn = getModels(PI_PROVIDER_ID).map((model) => model.id);
+    const custom = PI_CUSTOM_MODELS.providers[PI_PROVIDER_ID].models.map((model) => model.id);
+    const catalog = new Set([...builtIn, ...custom]);
+
+    const missing = DEFAULT_PI_MODEL_PREFERENCE.filter((id) => !catalog.has(id));
+    expect(missing).toEqual([]);
+    expect(SELECTABLE_PI_MODELS.filter((id) => !catalog.has(id))).toEqual([]);
+  });
+
+  test("the target model is the custom one, not something the fallback picked", () => {
+    const custom = PI_CUSTOM_MODELS.providers[PI_PROVIDER_ID].models.map((model) => model.id);
+    expect(custom).toContain(DEFAULT_PI_MODEL_PREFERENCE[0]);
+    expect(getModels(PI_PROVIDER_ID).map((model) => model.id)).not.toContain("gpt-5.6-sol");
+  });
+
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("browser_open");
@@ -294,6 +342,7 @@ describe("PiHarness", () => {
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
       turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
       sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
+      modelsPath: "/home/agenos/.agenos/ui-dev/pi/models.json",
     });
   });
 
@@ -305,6 +354,7 @@ describe("PiHarness", () => {
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
       turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
       sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
+      modelsPath: "/home/agenos/.agenos/ui-dev/pi/models.json",
     });
   });
 
@@ -516,7 +566,7 @@ describe("PiHarness", () => {
       }>;
     };
     const openAppTool = options.customTools?.find((tool) => tool.name === "apps_open");
-    expect(options.tools).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(options.tools).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"]);
     expect(openAppTool?.promptSnippet).toContain("Chrome");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("workspace");
     expect(JSON.stringify(openAppTool?.parameters)).toContain("focus");
@@ -546,7 +596,7 @@ describe("PiHarness", () => {
       customTools?: Array<{ name: string }>;
     };
     const names = options.customTools?.map((tool) => tool.name) ?? [];
-    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory"]);
+    expect(names).toEqual(["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"]);
   });
 
   test("injects bounded learned context and records exactly which memories were used", async () => {
@@ -733,6 +783,38 @@ describe("PiHarness", () => {
     expect(finished.status).toBe("failed");
     expect(finished.error).toBe("authentication failed");
     expect(finished.errorStatus).toBe(401);
+    expect(harness.getStatus().busy).toBe(false);
+  });
+
+  test("cancelTurn aborts the Pi session and keeps the partial reply", async () => {
+    const { harness, authData, emitAssistantReply, setAbortImpl, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth",
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"),
+      accountId: "acct_123",
+    });
+
+    const promptDeferred = createDeferred<void>();
+    const promptStarted = createDeferred<void>();
+    setPromptImpl(async () => {
+      emitAssistantReply("Respuesta a medias.");
+      promptStarted.resolve();
+      await promptDeferred.promise;
+    });
+    setAbortImpl(async () => promptDeferred.resolve());
+
+    const turn = harness.startChat({ message: "cuéntame algo", source: "text" });
+    await promptStarted.promise;
+    await harness.cancelTurn(turn.turnId);
+    await settleTurn();
+
+    expect(harness.getTurn(turn.turnId)).toMatchObject({
+      status: "cancelled",
+      reply: "Respuesta a medias.",
+      modelId: "gpt-5.6-sol",
+    });
     expect(harness.getStatus().busy).toBe(false);
   });
 

@@ -133,6 +133,13 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       modelId: "gpt-5.4-mini",
       busy: false,
     }),
+    setConfiguration: (configuration: { modelId: string; reasoningLevel: "off" | "low" | "medium" | "high" }) => ({
+      authState: "connected" as const,
+      providerName: "ChatGPT/Codex",
+      modelId: configuration.modelId,
+      reasoningLevel: configuration.reasoningLevel,
+      busy: false,
+    }),
     startAuth: async () => ({
       attemptId: "att_123",
       method: "browser" as const,
@@ -175,6 +182,21 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
         currentTool: null,
         completedTools: [],
       },
+    }),
+    cancelTurn: async (turnId: string) => ({
+      turnId,
+      status: "cancelled" as const,
+      source: "text" as const,
+      input: "hola",
+      startedAt: "2026-07-03T12:00:00.000Z",
+      finishedAt: "2026-07-03T12:00:01.000Z",
+      progress: {
+        startedAt: "2026-07-03T12:00:00.000Z",
+        streamedText: "he",
+        currentTool: null,
+        completedTools: [],
+      },
+      reply: "he",
     }),
     getTurn: (turnId: string) => ({
       turnId,
@@ -273,6 +295,52 @@ describe("createInstallerApiHandler", () => {
 
     expect(response.status).toBe(200);
     expect(await jsonPayload(response)).toEqual({ ok: true });
+  });
+
+  test("passes broker web control steps and correlation ids through visual tracing", async () => {
+    const traced: Array<{ input: Record<string, unknown>; correlationId?: string }> = [];
+    const webController = {
+      open: async (url: string) => ({ ok: true, message: "Página abierta.", url }),
+    } as never;
+    const webControlVisualTracer = {
+      async run(
+        input: Record<string, unknown>,
+        context: { correlationId?: string },
+        operation: () => unknown,
+      ) {
+        traced.push({ input, correlationId: context.correlationId });
+        return operation();
+      },
+      flush: async () => undefined,
+    } as never;
+    const handler = createHandler({
+      webController,
+      webControlVisualTracer,
+      workerAuth: {
+        authorizeWorkerRequest: () => ({ ok: true as const }),
+      } as never,
+    });
+
+    const response = await handler.fetch(new Request("http://localhost/api/agent/worker/tool-call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "openclaw",
+        correlationId: "corr_web_1",
+        tool: "web.control",
+        input: { action: "open", url: "https://example.test/page?secret=1" },
+      }),
+    }));
+
+    expect(response.status).toBe(202);
+    expect(await jsonPayload(response)).toMatchObject({
+      ok: true,
+      output: { ok: true, message: "Página abierta." },
+    });
+    expect(traced).toEqual([{
+      correlationId: "corr_web_1",
+      input: { action: "open", url: "https://example.test/page?secret=1" },
+    }]);
   });
 
   test("serves preflight data", async () => {
@@ -475,8 +543,41 @@ describe("createInstallerApiHandler", () => {
     });
   });
 
+  test("returns 202 when a power action is accepted", async () => {
+    const actions: unknown[] = [];
+    const handler = createHandler({
+      runMaintenance: async (action) => {
+        actions.push(action);
+        return {
+          ok: true,
+          message: "El sistema ha aceptado la orden de apagado.",
+        };
+      },
+    });
+
+    const response = await handler.fetch(
+      new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "poweroff" }),
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(actions).toEqual(["poweroff"]);
+    expect(await jsonPayload(response)).toEqual({
+      ok: true,
+      message: "El sistema ha aceptado la orden de apagado.",
+    });
+  });
+
   test("returns 400 when maintenance receives an invalid action", async () => {
-    const handler = createHandler();
+    const actions: unknown[] = [];
+    const handler = createHandler({
+      runMaintenance: async (action) => {
+        actions.push(action);
+        return { ok: true };
+      },
+    });
 
     const response = await handler.fetch(new Request(`http://localhost${INSTALLER_ROUTES.systemMaintenance}`, {
       method: "POST",
@@ -484,9 +585,10 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(400);
+    expect(actions).toEqual([]);
     expect(await jsonPayload(response)).toEqual({
       ok: false,
-      message: "La acción debe ser terminal.",
+      message: "La acción debe ser una de: terminal, poweroff, reboot.",
     });
   });
 
@@ -575,6 +677,22 @@ describe("createInstallerApiHandler", () => {
     }));
 
     expect(response.status).toBe(400);
+  });
+
+  test("cancels an async pi turn through the packaged API", async () => {
+    const handler = createHandler();
+    const response = await handler.fetch(
+      new Request("http://localhost/api/pi/turns/turn%2Fabc/cancel", {
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await jsonPayload(response)).toMatchObject({
+      turnId: "turn/abc",
+      status: "cancelled",
+      reply: "he",
+    });
   });
 
   // Empezar de nuevo no es borrar el historial: el harness tambien tira la
@@ -1089,7 +1207,7 @@ describe("createInstallerApiHandler", () => {
     expect(opened).toEqual([{ app: "Chrome", workspace: 3, focus: true }]);
   });
 
-  test("package endpoint resolves a human name and installs once only after confirmation", async () => {
+  test("package endpoint resolves and installs an explicit local request directly", async () => {
     const confirmations = createConfirmationStore({
       rootDir: mkdtempSync(join(tmpdir(), "agenos-server-package-")),
       idFactory: () => "conf_server_firefox",
@@ -1138,39 +1256,19 @@ describe("createInstallerApiHandler", () => {
       packageInstaller: packageInstaller as never,
     });
 
-    const proposed = await handler.fetch(new Request("http://localhost/api/agent/packages/install", {
+    const installed = await handler.fetch(new Request("http://localhost/api/agent/packages/install", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: "firefox" }),
     }));
-    expect(proposed.status).toBe(409);
-    expect(await jsonPayload(proposed)).toMatchObject({
-      ok: false,
-      status: "confirmation_required",
-      confirmationId: "conf_server_firefox",
-      packageName: "firefox-esr",
-      message: "Voy a instalar Firefox ESR (firefox-esr). ¿Sigo?",
-    });
-    expect(installs).toEqual([]);
-
-    const confirmed = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
-      method: "POST",
-    }));
-    expect(confirmed.status).toBe(202);
-    expect(await jsonPayload(confirmed)).toMatchObject({
+    expect(installed.status).toBe(202);
+    expect(await jsonPayload(installed)).toMatchObject({
       ok: true,
-      execution: {
-        ok: true,
-        output: { status: "installed", packageName: "firefox-esr" },
-      },
+      status: "installed",
+      packageName: "firefox-esr",
     });
     expect(installs).toHaveLength(1);
-
-    const duplicate = await handler.fetch(new Request("http://localhost/api/agent/confirmations/conf_server_firefox/confirm", {
-      method: "POST",
-    }));
-    expect(duplicate.status).toBe(409);
-    expect(installs).toHaveLength(1);
+    expect(confirmations.list()).toEqual([]);
   });
 
   test("agent files route opens paths through the broker runner", async () => {

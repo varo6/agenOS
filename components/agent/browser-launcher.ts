@@ -2,8 +2,10 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  executableExists,
   launchGraphicalApplication,
   resolveExecutable,
+  resolveTransientScopePrefix,
   type GraphicalLaunchResult,
   type RunCommand,
   type SpawnGraphicalCommand,
@@ -146,6 +148,13 @@ export function buildChromiumArgs(input: {
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
+    // Sin esto Chromium arranca cada vez como una sesion nueva y tira las
+    // cookies de sesion, que es con lo que muchas webs mantienen el login. El
+    // perfil persistia, pero el usuario volvia a aparecer desconectado en todo
+    // lo que no hubiera marcado "recordarme". Restaurar la sesion anterior es
+    // lo unico que las conserva; las cookies persistentes ya vivian en el
+    // perfil.
+    "--restore-last-session",
     `--ozone-platform=${input.platform}`,
     `--user-data-dir=${input.profileDir}`,
     `--remote-debugging-port=${debugPort}`,
@@ -201,7 +210,7 @@ export async function launchBrowserUrl(
     options.onProgress?.("Chromium usará renderizado por software para evitar una ventana negra en esta sesión.");
   }
 
-  const launchOnPlatform = async (targetPlatform: BrowserPlatform) => {
+  const launchOnPlatform = async (targetPlatform: BrowserPlatform, escapeServiceCgroup = true) => {
     const args = buildChromiumArgs({
       url,
       profileDir,
@@ -213,6 +222,7 @@ export async function launchBrowserUrl(
       command,
       args,
       env,
+      escapeServiceCgroup,
       label: "Chromium",
       workspace: options.workspace ?? 3,
       focus: options.focus !== false,
@@ -247,6 +257,26 @@ export async function launchBrowserUrl(
       message: fallback.launch.ok
         ? `El arranque Wayland falló; ${fallback.launch.message} Se usó XWayland como respaldo.`
         : `Chromium falló sobre Wayland y también sobre XWayland. ${fallback.launch.message}`,
+    };
+  }
+
+  // El scope de systemd es lo que hace que el navegador sobreviva a un reinicio
+  // del broker, pero no vale a cambio de no abrirlo: si el gestor de usuario
+  // acepta la conexión y aun así rechaza el scope, se reintenta sin él. El
+  // usuario conserva la ventana; solo pierde el aislamiento del cgroup.
+  const usedScope = resolveTransientScopePrefix({
+    env,
+    commandExists: options.commandExists ?? ((candidate: string) => executableExists(candidate, env)),
+  }).length > 0;
+  if (usedScope && launch.status === "failed") {
+    options.onProgress?.("Chromium no arrancó en su propio scope de systemd; reintentando sin él…");
+    const retry = await launchOnPlatform(actualPlatform, false);
+    args = retry.args;
+    launch = {
+      ...retry.launch,
+      message: retry.launch.ok
+        ? `${retry.launch.message} Se lanzó fuera del scope de systemd, así que se cerrará si se reinicia el broker.`
+        : retry.launch.message,
     };
   }
 

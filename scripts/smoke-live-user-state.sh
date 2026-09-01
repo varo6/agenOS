@@ -8,8 +8,19 @@ BUILD_INSTALLER="${ROOT_DIR}/scripts/build-installer-ui.sh"
 CALAMARES_DESKTOP="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/lib/calamares/modules/agenosdesktop/main.py"
 LIVE_BOOT_CONFIG="${ROOT_DIR}/build/live-build/auto/config"
 SWAY_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/sway/config"
+WAYBAR_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/waybar/config.json"
+DESKTOP_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/desktop-installer.list.chroot"
+BAR_LAUNCHER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-bar"
 KEYBOARD_DEFAULTS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/default/keyboard"
 RUN_VM="${ROOT_DIR}/scripts/run-vm.sh"
+AGENT_API_UNIT="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/systemd/system/agenos-agent-api.service"
+BROWSER_LAUNCHER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-browser"
+BROWSER_DESKTOP="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/share/applications/agenos-browser.desktop"
+MIMEAPPS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/xdg/mimeapps.list"
+SHELL_RUNNER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-shell-runner"
+PERSISTENCE_NOTICE="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-persistence-notice"
+BASE_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/base.list.chroot"
+CHROMIUM_POLICY="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/chromium/policies/managed/agenos-sessions.json"
 
 require_literal() {
   local file="$1"
@@ -51,8 +62,13 @@ require_literal "${RUN_VM}" "-L agenos-persist"
 require_literal "${RUN_VM}" "/home union"
 require_literal "${ROOT_DIR}/scripts/create-persistent-usb.sh" 'PERSISTENCE_LABEL="agenos-persist"'
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
-require_literal "${SWAY_CONFIG}" "agenos-workspace-watch"
 require_literal "${SWAY_CONFIG}" "seat * xcursor_theme Adwaita 24"
+require_literal "${SWAY_CONFIG}" "swaybar_command /usr/local/bin/agenos-bar"
+require_literal "${BAR_LAUNCHER}" "exec waybar"
+require_literal "${WAYBAR_CONFIG}" '"modules-center": ["clock"]'
+require_literal "${WAYBAR_CONFIG}" '"format": "{:%H:%M}"'
+require_literal "${WAYBAR_CONFIG}" '"exec": "/usr/local/bin/agenos-workspace-watch --status"'
+require_literal "${DESKTOP_PACKAGES}" "waybar"
 require_literal "${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-session" 'WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"'
 require_literal "${SWAY_CONFIG}" 'workspace 1:home'
 require_literal "${SWAY_CONFIG}" 'workspace 2:app'
@@ -62,5 +78,47 @@ require_literal "${SWAY_CONFIG}" 'workspace 5:work'
 require_literal "${KEYBOARD_DEFAULTS}" 'XKBLAYOUT="es"'
 require_literal "${RUN_VM}" "VM_LIVE_PERSISTENCE"
 require_literal "${RUN_VM}" "VM_PERSIST_DISK"
+
+# La sesion iniciada en el navegador tiene que sobrevivir a un reinicio del
+# broker y a cualquier via de apertura de URLs; si no, el usuario aparece
+# desconectado de sus cuentas sin haber cerrado nada.
+require_literal "${AGENT_API_UNIT}" "KillMode=process"
+require_literal "${BROWSER_LAUNCHER}" '.agenos/browser-profile'
+require_literal "${BROWSER_LAUNCHER}" "--password-store=basic"
+require_literal "${BROWSER_LAUNCHER}" "--restore-last-session"
+require_literal "${BROWSER_LAUNCHER}" "18800"
+
+# Sin restaurar la sesion anterior, Chromium tira las cookies de sesion en cada
+# arranque; sin la politica, bloquea cookies de terceros y no ofrece guardar
+# contrasenas. Las dos cosas se ven igual desde fuera: el usuario aparece
+# desconectado sin haber cerrado nada.
+require_literal "${CHROMIUM_POLICY}" '"DefaultCookiesSetting": 1'
+require_literal "${CHROMIUM_POLICY}" '"BlockThirdPartyCookies": false'
+require_literal "${CHROMIUM_POLICY}" '"PasswordManagerEnabled": true'
+require_literal "${BROWSER_DESKTOP}" "Exec=/usr/local/bin/agenos-browser %U"
+require_literal "${MIMEAPPS}" "x-scheme-handler/https=agenos-browser.desktop;"
+require_literal "${MIMEAPPS}" "text/html=agenos-browser.desktop;"
+require_literal "${BUILD_UI}" '${HOME:-/tmp}/.agenos/system-ui-profile'
+require_literal "${SHELL_RUNNER}" "agenos-persistence-notice"
+require_literal "${PERSISTENCE_NOTICE}" "/run/live/persistence"
+require_literal "${BASE_PACKAGES}" "systemd-timesyncd"
+
+if grep --quiet --fixed-strings -- "=chromium.desktop;" "${MIMEAPPS}"; then
+  echo "mimeapps.list vuelve a abrir URLs con el perfil por defecto de Chromium: ${MIMEAPPS}" >&2
+  exit 1
+fi
+
+if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${CHROMIUM_POLICY}"; then
+  echo "La politica de Chromium no es JSON valido: ${CHROMIUM_POLICY}" >&2
+  exit 1
+fi
+
+for script in "${BROWSER_LAUNCHER}" "${PERSISTENCE_NOTICE}"; do
+  if [[ ! -x "${script}" ]]; then
+    echo "Falta el bit de ejecucion en ${script}" >&2
+    exit 1
+  fi
+  sh -n "${script}"
+done
 
 echo "live user state smoke ok"
