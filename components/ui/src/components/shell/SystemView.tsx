@@ -15,6 +15,7 @@ import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnect
 import type { NetworkClient } from "../../../../network/client";
 import { ConnectionPanel } from "./ConnectionPanel";
 import { AudioSettingsPanel } from "./AudioSettingsPanel";
+import { RemoteServicesPanel } from "./RemoteServicesPanel";
 import { DisplaySettingsPanel } from "./DisplaySettingsPanel";
 import { PowerPanel } from "./PowerPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -95,6 +96,7 @@ export function SystemView({
           <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
           <DisplaySettingsPanel />
           <AudioSettingsPanel />
+          <RemoteServicesPanel />
           <PowerPanel />
         </section>
       ) : null}

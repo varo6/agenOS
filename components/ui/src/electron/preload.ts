@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import {
   PI_IPC_CHANNELS,
+  REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
   TTS_IPC_CHANNELS,
@@ -19,6 +20,7 @@ import type {
 } from "../lib/system-types";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
 import type { TextToSpeechOutcome, TextToSpeechStatus } from "../lib/tts-bridge";
+import type { RemoteSecretName, RemoteServicesPatch, RemoteServicesView } from "../lib/remote-bridge";
 import type {
   PiAuthAttemptResponse,
   PiChatResponse,
@@ -203,6 +205,19 @@ contextBridge.exposeInMainWorld("agenosTts", {
   },
   status(): Promise<TextToSpeechStatus> {
     return invokePi<TextToSpeechStatus>(TTS_IPC_CHANNELS.status);
+  },
+  isAvailable,
+});
+
+contextBridge.exposeInMainWorld("agenosRemote", {
+  get(): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.get);
+  },
+  update(patch: RemoteServicesPatch): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.update, patch);
+  },
+  setSecret(name: RemoteSecretName, value: string): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.setSecret, { name, value });
   },
   isAvailable,
 });

@@ -7,6 +7,7 @@ import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from ".
 import { loadPreferredFrontend } from "./frontend-loader";
 import {
   PI_IPC_CHANNELS,
+  REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
   TTS_IPC_CHANNELS,
@@ -19,9 +20,12 @@ import { createSystemIpcServices } from "./system-ipc-services";
 import { createDisplayService } from "./display-service";
 import { createAudioService } from "./audio-service";
 import { createLocalSpeechService, createSttRuntime } from "../../../stt";
-import { createLocalTtsService, createTtsRuntime } from "../../../tts";
+import { createTtsRuntime } from "../../../tts";
+import { createTtsService } from "../../../tts/service";
+import { createRemoteServicesStore, type RemoteSecretName, type RemoteServicesView } from "../../../remote";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
 import type { TextToSpeechOutcome, TextToSpeechStatus } from "../lib/tts-bridge";
+import type { RemoteServicesPatch } from "../lib/remote-bridge";
 
 const WINDOW_TITLE = "AgenOS";
 const BRIDGE_MODE = process.env.AGENOS_SYSTEM_BRIDGE_MODE?.trim().toLowerCase() === "http" ? "http" : "ipc";
@@ -214,13 +218,27 @@ function normalizeApiMessageResponse(response: ApiMessageResponse): ApiMessageRe
  * para que Electron y el servidor no puedan divergir. El modelo se queda
  * cargado en whisper-server entre transcripciones.
  */
+/**
+ * Interruptor persistente de los servicios de voz en la nube.
+ *
+ * Se crea una sola vez y se comparte con los dos runtimes: son ellos quienes
+ * deciden en cada peticion si va por la nube o por el motor local, asi que
+ * cambiar el interruptor no obliga a reiniciar nada.
+ */
+const remoteServices = createRemoteServicesStore();
 const sttRuntime = createSttRuntime({
   extraRoots: appPathCandidates("../whisper.cpp"),
   logger: (message) => console.log(`[stt] ${message}`),
+  remote: remoteServices,
 });
 const localSpeech = createLocalSpeechService(sttRuntime);
 const ttsRuntime = createTtsRuntime();
-const localTts = createLocalTtsService(ttsRuntime.settings, ttsRuntime.paths);
+const localTts = createTtsService({
+  settings: ttsRuntime.settings,
+  paths: ttsRuntime.paths,
+  remote: remoteServices,
+  logger: (message) => console.log(`[tts] ${message}`),
+});
 
 /** Avisa al renderer de en qué punto de la captura estamos. */
 function emitSpeechPhase(phase: SpeechCapturePhase): void {
@@ -254,7 +272,10 @@ async function transcribeOnce(): Promise<SpeechTranscriptionOutcome> {
 async function speakText(text: unknown): Promise<TextToSpeechOutcome> {
   const trimmed = typeof text === "string" ? text.trim() : "";
   if (!trimmed) {
-    return { ok: true, engine: "espeak-ng", voice: ttsRuntime.settings.voice };
+    // El motor sale del estado vivo del servicio: con Azure activo, decir
+    // "espeak-ng" aqui hacia que la interfaz mintiera sobre quien habla.
+    const status = localTts.status();
+    return { ok: true, engine: status.engine, voice: status.voice };
   }
 
   return localTts.speak(trimmed);
@@ -377,6 +398,33 @@ function registerIpcHandlers(): void {
     localTts.stop();
   }));
   ipcMain.handle(TTS_IPC_CHANNELS.status, () => wrapPi<TextToSpeechStatus>(() => localTts.status()));
+
+  ipcMain.handle(REMOTE_IPC_CHANNELS.get, () => wrapPi<RemoteServicesView>(() => remoteServices.describe()));
+  ipcMain.handle(REMOTE_IPC_CHANNELS.update, (_event, payload: unknown) => wrapPi<RemoteServicesView>(() => {
+    if (!payload || typeof payload !== "object") {
+      throw new BrokerApiError(400, "El cambio de ajustes remotos debe ser un objeto.");
+    }
+
+    remoteServices.update(payload as RemoteServicesPatch);
+    // Siempre la vista redactada: el snapshot lleva las claves en claro y
+    // devolverlo tal cual las filtraria al renderer.
+    return remoteServices.describe();
+  }));
+  ipcMain.handle(REMOTE_IPC_CHANNELS.setSecret, (_event, payload: { name?: unknown; value?: unknown }) => (
+    wrapPi<RemoteServicesView>(() => {
+      const name = String(payload?.name ?? "");
+      // Lista blanca explicita: el renderer no elige que fichero de secretos se
+      // toca, solo entre las dos claves que este panel conoce.
+      if (name !== "groqApiKey" && name !== "azureSpeechKey") {
+        throw new BrokerApiError(400, "La clave indicada no existe.");
+      }
+
+      // Vaciar el campo es la forma de borrar la clave guardada.
+      const raw = typeof payload?.value === "string" ? payload.value.trim() : "";
+      remoteServices.setSecret(name as RemoteSecretName, raw || null);
+      return remoteServices.describe();
+    })
+  ));
 
   ipcMain.handle(NETWORK_IPC_CHANNELS.getStatus, () => networkService.getStatus());
   ipcMain.handle(NETWORK_IPC_CHANNELS.scanWifi, () => networkService.scanWifi());

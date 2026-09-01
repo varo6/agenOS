@@ -1,13 +1,19 @@
+/**
+ * `espeak-ng` habla en el equipo; `azure` solo aparece si el usuario enciende
+ * la voz en la nube desde los ajustes.
+ */
+export type TtsEngineName = "espeak-ng" | "azure";
+
 export type TextToSpeechFailureCode = "unavailable" | "cancelled" | "synthesis-failed";
 
 export type TextToSpeechOutcome =
-  | { ok: true; engine: "espeak-ng"; voice: string }
+  | { ok: true; engine: TtsEngineName; voice: string }
   | { ok: false; code: TextToSpeechFailureCode; message: string };
 
 export type TextToSpeechStatus = {
   available: boolean;
   reason: string | null;
-  engine: "espeak-ng";
+  engine: TtsEngineName;
   voice: string;
 };
 
