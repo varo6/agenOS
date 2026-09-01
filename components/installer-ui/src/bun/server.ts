@@ -353,6 +353,9 @@ function createResilientPiHarness(factory: () => PiHarnessApi): PiHarnessApi {
         };
       }
     },
+    setConfiguration(configuration: PiConfigurationRequest) {
+      return getHarness().setConfiguration(configuration);
+    },
     startAuth(method?: PiAuthMethod) {
       return getHarness().startAuth(method);
     },

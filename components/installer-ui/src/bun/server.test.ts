@@ -133,6 +133,13 @@ function createHandler(overrides: Parameters<typeof createInstallerApiHandler>[0
       modelId: "gpt-5.4-mini",
       busy: false,
     }),
+    setConfiguration: (configuration: { modelId: string; reasoningLevel: "off" | "low" | "medium" | "high" }) => ({
+      authState: "connected" as const,
+      providerName: "ChatGPT/Codex",
+      modelId: configuration.modelId,
+      reasoningLevel: configuration.reasoningLevel,
+      busy: false,
+    }),
     startAuth: async () => ({
       attemptId: "att_123",
       method: "browser" as const,
