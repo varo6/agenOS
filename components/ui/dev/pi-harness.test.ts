@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
+import { getModels } from "@mariozechner/pi-ai";
+
 import type { AgentTaskClient } from "../../agent/agent-task-tool";
 import type { LearningMemoryClient } from "../../agent/learning-memory-tool";
 import {
   createPiHarness,
   DEFAULT_PI_MODEL_PREFERENCE,
   DEFAULT_PI_THINKING_LEVEL,
+  PI_CUSTOM_MODELS,
+  PI_PROVIDER_ID,
   PI_SYSTEM_PROMPT,
   resolvePiHarnessPaths,
   type PiTurnStoreLike,
@@ -280,6 +284,25 @@ describe("PiHarness", () => {
     expect(DEFAULT_PI_THINKING_LEVEL).toBe("low");
   });
 
+  // selectModel solo puede elegir ids que existan en el registro, y cuando no
+  // existe ninguno cae al siguiente sin romper nada. Por eso una entrada
+  // fantasma no se nota en runtime: Pi funciona, pero con otro modelo. Este
+  // test es el unico sitio donde eso salta.
+  test("every preferred model id exists in the catalog the registry will load", () => {
+    const builtIn = getModels(PI_PROVIDER_ID).map((model) => model.id);
+    const custom = PI_CUSTOM_MODELS.providers[PI_PROVIDER_ID].models.map((model) => model.id);
+    const catalog = new Set([...builtIn, ...custom]);
+
+    const missing = DEFAULT_PI_MODEL_PREFERENCE.filter((id) => !catalog.has(id));
+    expect(missing).toEqual([]);
+  });
+
+  test("the target model is the custom one, not something the fallback picked", () => {
+    const custom = PI_CUSTOM_MODELS.providers[PI_PROVIDER_ID].models.map((model) => model.id);
+    expect(custom).toContain(DEFAULT_PI_MODEL_PREFERENCE[0]);
+    expect(getModels(PI_PROVIDER_ID).map((model) => model.id)).not.toContain("gpt-5.6-sol");
+  });
+
   test("loads the foreground system prompt from markdown context", () => {
     expect(PI_SYSTEM_PROMPT).toContain("# AgenOS Pi foreground context");
     expect(PI_SYSTEM_PROMPT).toContain("browser_open");
@@ -301,6 +324,7 @@ describe("PiHarness", () => {
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
       turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
       sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
+      modelsPath: "/home/agenos/.agenos/ui-dev/pi/models.json",
     });
   });
 
@@ -312,6 +336,7 @@ describe("PiHarness", () => {
       tracePath: "/home/agenos/.agenos/ui-dev/pi/traces/pi-chat.ndjson",
       turnsPath: "/home/agenos/.agenos/ui-dev/pi/turns.json",
       sessionsDir: "/home/agenos/.agenos/ui-dev/pi/sessions",
+      modelsPath: "/home/agenos/.agenos/ui-dev/pi/models.json",
     });
   });
 

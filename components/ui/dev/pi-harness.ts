@@ -73,6 +73,7 @@ export type PiHarnessPaths = {
   tracePath: string;
   turnsPath: string;
   sessionsDir: string;
+  modelsPath: string;
 };
 
 export function resolvePiHarnessPaths(
@@ -88,6 +89,7 @@ export function resolvePiHarnessPaths(
     tracePath: join(agentDir, "traces", "pi-chat.ndjson"),
     turnsPath: join(agentDir, "turns.json"),
     sessionsDir: join(agentDir, "sessions"),
+    modelsPath: join(agentDir, "models.json"),
   };
 }
 
@@ -98,6 +100,7 @@ const PI_CODEX_DEVICE_DIR = PI_PATHS.codexDeviceDir;
 const PI_TRACE_PATH = PI_PATHS.tracePath;
 const PI_TURNS_PATH = PI_PATHS.turnsPath;
 const PI_SESSIONS_DIR = PI_PATHS.sessionsDir;
+const PI_MODELS_PATH = PI_PATHS.modelsPath;
 export const PI_SYSTEM_PROMPT = PI_SYSTEM_CONTEXT_MARKDOWN;
 const PI_AUTH_INSTRUCTIONS =
   "Completa el login de ChatGPT/Codex en este PC. Si el callback automatico no termina, pega aqui la URL final o el codigo.";
@@ -106,8 +109,48 @@ const PI_DEVICE_AUTH_INSTRUCTIONS =
 const FOREGROUND_MODEL_TOOLS = ["browser_open", "apps_open", "apps_install", "files_open", "openclaw_setup", "agent_task", "learning_memory", "improvements"];
 // El primero es el modelo objetivo de Pi; el resto solo entra si el registro de
 // Codex no lo expone en este equipo (selectModel cae al siguiente disponible).
-export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5-instant", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+export const DEFAULT_PI_MODEL_PREFERENCE = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
 export const DEFAULT_PI_THINKING_LEVEL = "low" as const;
+
+// Modelos que la suscripcion de Codex sirve pero que el catalogo interno de
+// @mariozechner/pi-ai todavia no trae. Sin esto, selectModel no puede elegirlos:
+// solo mira lo que hay en el registro, asi que un id desconocido caia en
+// silencio al siguiente de la lista y Pi acababa hablando por gpt-5.4 mientras
+// la interfaz mostraba, con razon, "gpt-5.4".
+//
+// Los campos que faltan (api, baseUrl) los hereda del proveedor openai-codex,
+// que es built-in; la autenticacion sigue siendo el OAuth de AuthStorage. No
+// declaramos "cost" a proposito: la suscripcion no factura por token y
+// preferimos ceros a inventarnos un precio.
+export const PI_CUSTOM_MODELS = {
+  providers: {
+    [PI_PROVIDER_ID]: {
+      models: [
+        {
+          id: "gpt-5.6-sol",
+          name: "GPT-5.6-Sol",
+          reasoning: true,
+          thinkingLevelMap: { xhigh: "xhigh", minimal: "low" },
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+  },
+} as const;
+
+/**
+ * Deja en disco el catalogo de modelos propios que lee ModelRegistry.create.
+ *
+ * Se reescribe en cada arranque a proposito: el modelo de Pi es una decision de
+ * producto, no una preferencia del usuario, y asi una imagen actualizada
+ * converge sola en vez de quedarse con el fichero de la version anterior.
+ */
+export function writePiCustomModels(path = PI_MODELS_PATH): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(PI_CUSTOM_MODELS, null, 2)}\n`, "utf8");
+}
 
 function emptyLearningContext(): LearnedContextResponse {
   return { text: "", itemIds: [], estimatedTokens: 0, tokenBudget: 256, truncated: false };
@@ -645,7 +688,10 @@ async function loginOpenAICodexDevice(options: CodexDeviceAuthOptions): Promise<
 
 function createDefaultDependencies(): PiHarnessDependencies {
   const authStorage = AuthStorage.create(PI_AUTH_PATH);
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  // inMemory() ignora models.json, asi que el catalogo se quedaba en el que trae
+  // pi-ai compilado. create() es lo que permite anadir gpt-5.6-sol.
+  writePiCustomModels();
+  const modelRegistry = ModelRegistry.create(authStorage, PI_MODELS_PATH);
   const appTool = createAppTool();
   const setupService = createOpenClawSetupService();
   const agentTaskClient = createHttpAgentTaskClient();
@@ -1356,15 +1402,26 @@ export class PiHarness {
       .sort((left, right) => left.id.localeCompare(right.id));
 
     const preference = this.deps.modelPreference ?? DEFAULT_PI_MODEL_PREFERENCE;
+    const wanted = preference.map(normalizeModelId);
     const preferred =
-      preference
-        .map(normalizeModelId)
-        .map((wanted) => models.find((model) => normalizeModelId(model.id) === wanted))
+      wanted
+        .map((id) => models.find((model) => normalizeModelId(model.id) === id))
         .find((model): model is PiModelLike => Boolean(model))
       ?? models[0];
 
     if (!preferred) {
       throw new PiHarnessError(500, "No hay modelos openai-codex disponibles.");
+    }
+
+    // El fallback sigue existiendo -- dejar a Pi sin sesion porque OpenAI retire
+    // un modelo seria peor -- pero deja de ser mudo. Que la interfaz mostrara
+    // "gpt-5.4" mientras la configuracion pedia otra cosa costo un rato de
+    // depuracion justamente porque esta caida no se anunciaba en ningun sitio.
+    const missing = wanted.slice(0, wanted.indexOf(normalizeModelId(preferred.id)));
+    if (missing.length > 0) {
+      console.warn(
+        `[pi] modelo preferido no disponible en el registro: ${missing.join(", ")}. Uso ${preferred.id}.`,
+      );
     }
 
     return preferred;
