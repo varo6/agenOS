@@ -29,10 +29,15 @@ output * bg #14100d solid_color
 # Una sola barra permanente. Waybar actua como renderizador del bloque de Sway:
 # mantiene los escritorios a la izquierda, centra el reloj contra la pantalla y
 # deja el estado del workspace a la derecha. No hay una segunda superficie.
+#
+# swaybar_command tiene que ser un unico ejecutable SIN argumentos: Sway 1.7 lo
+# lanza con execvp() usando la cadena entera como argv[0], asi que cualquier
+# "-c ..." aqui hace que el exec falle en silencio y el escritorio arranque sin
+# barra. Los argumentos de waybar viven dentro de /usr/local/bin/agenos-bar.
 bar {
   position top
   mode dock
-  swaybar_command waybar -c /etc/agenos/waybar/config.json -s /etc/agenos/waybar/style.css
+  swaybar_command /usr/local/bin/agenos-bar
 }
 
 # Los workspaces en sway se crean bajo demanda; un "workspace N" suelto aqui

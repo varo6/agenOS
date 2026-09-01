@@ -10,6 +10,7 @@ LIVE_BOOT_CONFIG="${ROOT_DIR}/build/live-build/auto/config"
 SWAY_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/sway/config"
 WAYBAR_CONFIG="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/agenos/waybar/config.json"
 DESKTOP_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/desktop-installer.list.chroot"
+BAR_LAUNCHER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-bar"
 KEYBOARD_DEFAULTS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/default/keyboard"
 RUN_VM="${ROOT_DIR}/scripts/run-vm.sh"
 
@@ -54,7 +55,8 @@ require_literal "${RUN_VM}" "/home union"
 require_literal "${ROOT_DIR}/scripts/create-persistent-usb.sh" 'PERSISTENCE_LABEL="agenos-persist"'
 require_literal "${SWAY_CONFIG}" "xkb_layout es"
 require_literal "${SWAY_CONFIG}" "seat * xcursor_theme Adwaita 24"
-require_literal "${SWAY_CONFIG}" "swaybar_command waybar"
+require_literal "${SWAY_CONFIG}" "swaybar_command /usr/local/bin/agenos-bar"
+require_literal "${BAR_LAUNCHER}" "exec waybar"
 require_literal "${WAYBAR_CONFIG}" '"modules-center": ["clock"]'
 require_literal "${WAYBAR_CONFIG}" '"format": "{:%H:%M}"'
 require_literal "${WAYBAR_CONFIG}" '"exec": "/usr/local/bin/agenos-workspace-watch --status"'

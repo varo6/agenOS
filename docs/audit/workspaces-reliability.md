@@ -36,6 +36,10 @@ El único bloque `bar` de Sway usa Waybar como renderizador. Sus botones muestra
 
 Esta solución no crea una segunda barra ni falsas ventanas para la política de vacío. Waybar se ejecuta desde `swaybar_command`, conserva una sola superficie superior y desaparece naturalmente detrás de una aplicación fullscreen.
 
+`swaybar_command` apunta a `/usr/local/bin/agenos-bar`, no a `waybar` con argumentos. Sway 1.7 lanza esa orden con `execvp()` usando la cadena entera como `argv[0]` y añadiendo `-b <bar_id>` (`sway/config/bar.c`, `invoke_swaybar`); no hay ningún shell de por medio. Con `swaybar_command waybar -c ... -s ...`, Sway buscaba un binario cuyo nombre era la línea completa, el `execvp` fallaba y el hijo terminaba en `_exit(EXIT_FAILURE)` **sin emitir ningún error**: el escritorio arrancaba sin barra y sin ninguna traza que lo explicara. El lanzador es un único ejecutable sin argumentos, guarda dentro las rutas de configuración y estilo, propaga `"$@"` para conservar el `-b <bar_id>` y cae a `swaybar` si Waybar no estuviera disponible.
+
+Los botones usan `{value}` y no `{name}`: `{name}` recorta el prefijo `N:` y dejaba `home` donde la barra nativa mostraba `1:home`, que es justo lo que conecta con `Ctrl+Alt+1..5`.
+
 ### Foco confirmado en el broker
 
 El servicio de workspaces ejecuta `swaymsg workspace <nombre>` de forma síncrona, valida la respuesta JSON de Sway y consulta `get_workspaces`. Solo devuelve `ok: true` si el workspace enfocado real coincide con el solicitado.
@@ -88,9 +92,17 @@ Resultado final: 6 tests Python, 189 tests Bun del backend, 82 tests Bun de UI/d
 
 No se ejecutó ningún build de ISO ni se tocó ningún artefacto generado prohibido.
 
+## Validación de la barra
+
+Ejecutada en un contenedor Debian bookworm con las versiones exactas de la imagen (sway 1.7, Waybar 0.9.17), con Sway sobre el backend `headless` y capturas con `grim`, usando los ficheros reales de `includes.chroot`:
+
+- Con `swaybar_command waybar -c ...` no existe ningún proceso de barra y Sway no registra ningún error. Ésta era la causa de la pantalla sin barra.
+- Con `swaybar_command /usr/local/bin/agenos-bar`, Waybar arranca (`Bar configured (width: 1280, height: 46)`), pinta los botones de workspace a la izquierda con el nombre completo, el reloj centrado y el texto de `agenos-workspace-watch --status` a la derecha, y reserva su zona exclusiva (las ventanas empiezan por debajo).
+- `swaymsg reload` deja exactamente un proceso de Waybar: Sway destruye el cliente anterior antes de relanzarlo, así que no se duplica la superficie.
+
 ## Pendiente de validación en VM/hardware
 
-- Validar visualmente colores, altura, reloj centrado y texto de Waybar con las versiones exactas de Sway y Waybar incluidas en la imagen. El host de desarrollo no tiene esos binarios, por lo que no fue posible ejecutar la barra real.
+- Confirmar en hardware real colores, altura y legibilidad a distancia sobre una pantalla física.
 - Probar Ctrl+Alt+1..5 con workspaces vacíos y ocupados, incluidos cambios rápidos repetidos.
 - Cerrar la última ventana tiled y floating; comprobar que vuelve a Home, y cerrar una ventana en background mientras se permanece deliberadamente en otro workspace vacío.
 - Probar el ciclo completo de Pi abriendo browser, terminal y una aplicación genérica en workspaces explícitos.

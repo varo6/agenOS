@@ -1,0 +1,31 @@
+#!/bin/sh
+# Lanzador de la barra superior.
+#
+# Sway 1.7 NO ejecuta swaybar_command a traves de un shell: hace execvp() con la
+# cadena entera como argv[0] y le anade "-b <bar_id>" (sway/config/bar.c,
+# invoke_swaybar). Poner argumentos directamente en swaybar_command significa
+# que Sway busca un binario llamado literalmente
+# "waybar -c /etc/agenos/waybar/config.json -s ...", el exec falla y el hijo
+# muere con _exit(EXIT_FAILURE) sin escribir ni una linea de error: el escritorio
+# arranca sin ninguna barra y sin ninguna pista de por que.
+#
+# Por eso swaybar_command apunta a este script -- un unico ejecutable, sin
+# argumentos -- y son los argumentos de waybar los que viven aqui dentro.
+# "$@" propaga el "-b <bar_id>" que anade Sway.
+#
+# Este fichero tiene que conservar el bit de ejecucion. A diferencia de
+# agenos-session o agenos-shell-runner, no se puede invocar con "sh ..." porque
+# eso volveria a meter argumentos en swaybar_command.
+set -eu
+
+CONFIG="/etc/agenos/waybar/config.json"
+STYLE="/etc/agenos/waybar/style.css"
+
+if command -v waybar >/dev/null 2>&1 && [ -r "${CONFIG}" ] && [ -r "${STYLE}" ]; then
+  exec waybar -c "${CONFIG}" -s "${STYLE}" "$@"
+fi
+
+# Ultimo recurso. La barra es el unico indicador permanente de "donde estoy":
+# es preferible la swaybar nativa sin tematizar que un escritorio sin barra.
+echo "agenos-bar: waybar o su configuracion no estan disponibles, uso swaybar" >&2
+exec swaybar "$@"
