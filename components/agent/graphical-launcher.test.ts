@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   launchGraphicalApplication,
   resolveExecutable,
+  resolveTransientScopePrefix,
   type CommandRunResult,
   type SpawnedGraphicalProcess,
 } from "./graphical-launcher";
@@ -173,5 +174,99 @@ describe("graphical launcher", () => {
     expect(result).toMatchObject({ ok: false, status: "timed-out" });
     expect(result.message).toContain("no apareció ninguna ventana en Sway");
     expect(progress.some((message) => message.includes("sigo esperando"))).toBe(true);
+  });
+});
+
+describe("transient scope", () => {
+  const userManagerAvailable = {
+    env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+    commandExists: (command: string) => command === "systemd-run",
+    pathExists: (path: string) => path === "/run/user/1000/systemd/private",
+  };
+
+  test("wraps the launch when there is a user systemd manager", () => {
+    expect(resolveTransientScopePrefix(userManagerAvailable)).toEqual([
+      "systemd-run",
+      "--user",
+      "--scope",
+      "--collect",
+      "--quiet",
+      "--",
+    ]);
+  });
+
+  test("launches without a scope when systemd-run or the user manager is missing", () => {
+    expect(resolveTransientScopePrefix({
+      ...userManagerAvailable,
+      commandExists: () => false,
+    })).toEqual([]);
+    expect(resolveTransientScopePrefix({
+      ...userManagerAvailable,
+      pathExists: () => false,
+    })).toEqual([]);
+    expect(resolveTransientScopePrefix({
+      ...userManagerAvailable,
+      env: {},
+    })).toEqual([]);
+  });
+
+  test("spawns the window inside its own scope but reports the real command", async () => {
+    const spawned: Array<[string, string[]]> = [];
+    const result = await launchGraphicalApplication({
+      command: "/usr/bin/chromium",
+      args: ["--new-window", "https://example.com/"],
+      env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+      label: "Chromium",
+      workspace: 3,
+      focus: true,
+      commandExists: (command) => command === "systemd-run" || command === "/usr/bin/chromium",
+      pathExists: (path) => path === "/run/user/1000/systemd/private",
+      spawnCommand: (command, args) => {
+        spawned.push([command, args]);
+      },
+      coldStartMs: 0,
+    });
+
+    expect(spawned).toEqual([[
+      "systemd-run",
+      [
+        "--user",
+        "--scope",
+        "--collect",
+        "--quiet",
+        "--",
+        "/usr/bin/chromium",
+        "--new-window",
+        "https://example.com/",
+      ],
+    ]]);
+    // El resultado sigue describiendo el programa real: los mensajes al usuario
+    // y la deteccion de ventana no deben saber nada del scope.
+    expect(result).toMatchObject({
+      ok: true,
+      command: "/usr/bin/chromium",
+      args: ["--new-window", "https://example.com/"],
+    });
+  });
+
+  test("keeps the plain spawn when the caller opts out", async () => {
+    const spawned: Array<[string, string[]]> = [];
+    await launchGraphicalApplication({
+      command: "/usr/bin/chromium",
+      args: ["--new-window"],
+      env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+      label: "Chromium",
+      workspace: 3,
+      focus: true,
+      escapeServiceCgroup: false,
+      commandExists: () => true,
+      pathExists: () => true,
+      spawnCommand: (command, args) => {
+        spawned.push([command, args]);
+      },
+      coldStartMs: 0,
+    });
+
+    expect(spawned).toEqual([["/usr/bin/chromium", ["--new-window"]]]);
   });
 });

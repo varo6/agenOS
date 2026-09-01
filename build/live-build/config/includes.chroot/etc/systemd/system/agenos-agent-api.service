@@ -17,6 +17,12 @@ WorkingDirectory=/home/agenos
 ExecStart=/usr/local/bin/agenos-installer-server
 Restart=on-failure
 RestartSec=3
+# El broker abre ventanas del usuario (Chromium sobre todo). Con el KillMode por
+# defecto, control-group, cada reinicio de esta unidad -- el de Restart= o el que
+# hace agenos-resume-health al despertar -- mataria tambien esas ventanas y con
+# ellas las sesiones web abiertas. El lanzador grafico ya mete cada ventana en su
+# propio scope de systemd; esto cubre el caso en que no haya gestor de usuario.
+KillMode=process
 
 [Install]
 WantedBy=graphical.target

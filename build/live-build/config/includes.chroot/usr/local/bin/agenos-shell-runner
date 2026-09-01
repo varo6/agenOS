@@ -19,6 +19,12 @@ start_session_helpers() {
   if command -v agenos-output-autoscale >/dev/null 2>&1; then
     agenos-output-autoscale >>"${SESSION_HELPER_LOG}" 2>&1 &
   fi
+
+  # Despues de mako: el aviso de "sin persistencia" se manda por notificacion y
+  # necesita que el demonio ya este escuchando.
+  if command -v agenos-persistence-notice >/dev/null 2>&1; then
+    agenos-persistence-notice >>"${SESSION_HELPER_LOG}" 2>&1 &
+  fi
 }
 
 is_live_session() {

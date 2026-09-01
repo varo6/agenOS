@@ -473,7 +473,10 @@ printf '%s\n' \
   'else' \
   '  RUNTIME_DIR="${HOME:-/tmp}/.cache/agenos-system/runtime"' \
   'fi' \
-  'PROFILE_DIR="${RUNTIME_DIR}/electron-profile"' \
+  '# El perfil del shell guarda sesiones web (localStorage, cookies de lo que se' \
+  '# abra dentro). En XDG_RUNTIME_DIR vivia en tmpfs y se borraba en cada cierre' \
+  '# de sesion; en el home entra en la persistencia live junto al resto de /home.' \
+  'PROFILE_DIR="${AGENOS_SYSTEM_PROFILE_DIR:-${HOME:-/tmp}/.agenos/system-ui-profile}"' \
   'LOCK_FILE="${RUNTIME_DIR}/electron.lock"' \
   'API_URL="http://127.0.0.1:4173/health"' \
   'API_PID_FILE="${RUNTIME_DIR}/api.pid"' \

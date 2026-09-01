@@ -13,6 +13,13 @@ DESKTOP_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/desktop-inst
 BAR_LAUNCHER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-bar"
 KEYBOARD_DEFAULTS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/default/keyboard"
 RUN_VM="${ROOT_DIR}/scripts/run-vm.sh"
+AGENT_API_UNIT="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/systemd/system/agenos-agent-api.service"
+BROWSER_LAUNCHER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-browser"
+BROWSER_DESKTOP="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/share/applications/agenos-browser.desktop"
+MIMEAPPS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/xdg/mimeapps.list"
+SHELL_RUNNER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-shell-runner"
+PERSISTENCE_NOTICE="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-persistence-notice"
+BASE_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/base.list.chroot"
 
 require_literal() {
   local file="$1"
@@ -70,5 +77,33 @@ require_literal "${SWAY_CONFIG}" 'workspace 5:work'
 require_literal "${KEYBOARD_DEFAULTS}" 'XKBLAYOUT="es"'
 require_literal "${RUN_VM}" "VM_LIVE_PERSISTENCE"
 require_literal "${RUN_VM}" "VM_PERSIST_DISK"
+
+# La sesion iniciada en el navegador tiene que sobrevivir a un reinicio del
+# broker y a cualquier via de apertura de URLs; si no, el usuario aparece
+# desconectado de sus cuentas sin haber cerrado nada.
+require_literal "${AGENT_API_UNIT}" "KillMode=process"
+require_literal "${BROWSER_LAUNCHER}" '.agenos/browser-profile'
+require_literal "${BROWSER_LAUNCHER}" "--password-store=basic"
+require_literal "${BROWSER_LAUNCHER}" "18800"
+require_literal "${BROWSER_DESKTOP}" "Exec=/usr/local/bin/agenos-browser %U"
+require_literal "${MIMEAPPS}" "x-scheme-handler/https=agenos-browser.desktop;"
+require_literal "${MIMEAPPS}" "text/html=agenos-browser.desktop;"
+require_literal "${BUILD_UI}" '${HOME:-/tmp}/.agenos/system-ui-profile'
+require_literal "${SHELL_RUNNER}" "agenos-persistence-notice"
+require_literal "${PERSISTENCE_NOTICE}" "/run/live/persistence"
+require_literal "${BASE_PACKAGES}" "systemd-timesyncd"
+
+if grep --quiet --fixed-strings -- "=chromium.desktop;" "${MIMEAPPS}"; then
+  echo "mimeapps.list vuelve a abrir URLs con el perfil por defecto de Chromium: ${MIMEAPPS}" >&2
+  exit 1
+fi
+
+for script in "${BROWSER_LAUNCHER}" "${PERSISTENCE_NOTICE}"; do
+  if [[ ! -x "${script}" ]]; then
+    echo "Falta el bit de ejecucion en ${script}" >&2
+    exit 1
+  fi
+  sh -n "${script}"
+done
 
 echo "live user state smoke ok"

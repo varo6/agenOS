@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+# Punto de entrada unico al navegador. Todo lo que abre una URL en AgenOS tiene
+# que pasar por aqui: el agente (components/agent/browser-launcher.ts), el
+# manejador de esquemas http/https de /etc/xdg/mimeapps.list y cualquier enlace
+# que una aplicacion abra con xdg-open.
+#
+# El motivo es el perfil. Chromium sin --user-data-dir usa ~/.config/chromium,
+# que es un tarro de cookies distinto del que usa el agente: iniciar sesion por
+# una via y volver por la otra hace que la cuenta aparezca como cerrada aunque
+# nunca se cerrara. Un unico perfil evita esa clase entera de fallo.
+
+PROFILE_DIR="${AGENOS_BROWSER_PROFILE_DIR:-${HOME:-/home/agenos}/.agenos/browser-profile}"
+
+# Mismo puerto que CHROMIUM_DEBUG_PORT en components/agent/browser-launcher.ts.
+# El primer proceso que abre el perfil es el que decide si hay puerto de
+# depuracion; si esta ventana lo abriera sin el, web_control se quedaria ciego el
+# resto de la sesion. Solo escucha en loopback.
+DEBUG_PORT="${AGENOS_BROWSER_DEBUG_PORT:-18800}"
+
+for candidate in /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome-stable; do
+  if [ -x "${candidate}" ]; then
+    BROWSER="${candidate}"
+    break
+  fi
+done
+
+if [ -z "${BROWSER:-}" ]; then
+  echo "agenos-browser: no hay ningun Chromium instalado." >&2
+  exit 1
+fi
+
+mkdir -p "${PROFILE_DIR}"
+chmod 0700 "${PROFILE_DIR}" 2>/dev/null || true
+
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+  PLATFORM=wayland
+else
+  PLATFORM=x11
+fi
+
+exec "${BROWSER}" \
+  --no-first-run \
+  --no-default-browser-check \
+  --password-store=basic \
+  "--ozone-platform=${PLATFORM}" \
+  "--user-data-dir=${PROFILE_DIR}" \
+  "--remote-debugging-port=${DEBUG_PORT}" \
+  --remote-allow-origins='*' \
+  "$@"
