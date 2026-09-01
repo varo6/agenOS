@@ -114,12 +114,30 @@ que es lo unico que se paga en cada conversacion.
 
 ### El destilador
 
-`codex exec` no interactivo, con `--output-schema` para que la respuesta sea
-JSON validado, `--sandbox read-only` porque solo tiene que escribir texto, y
-`--ephemeral` para no dejar sesiones. El broker valida ademas el JSON contra el
-contrato: categoria de la lista cerrada, `name` en kebab-case, cuerpo por
-debajo del limite, confianza y turnos usados. La confianza es auditoria. Un
-valor medio o bajo no bloquea la escritura.
+Un **subagente de Pi**: `gpt-5.6-terra` con razonamiento `medium`, sesion
+propia y en memoria, sin herramientas y con su propio prompt de sistema.
+
+Reutiliza el `AuthStorage` del harness (`<agentDir>/auth.json`), asi que
+destilar cuesta el mismo inicio de sesion que hablar con Pi: ninguno adicional.
+Antes esto era un `codex exec`, que trae su propio `~/.codex/auth.json`; el
+usuario ya habia conectado ChatGPT en la pantalla de Pi y aun asi el boton se
+quedaba mudo, porque el binario pedia un login que nadie iba a completar desde
+un trabajo de fondo.
+
+Es un subagente y no la sesion de Pi a proposito. `ensureSession` tira la
+sesion del modelo cuando cambia el contexto inyectado, y escribir en el hilo
+del usuario para pedirle un JSON le reiniciaria la conversacion a mitad.
+
+`codex exec` validaba la respuesta con `--output-schema`. El SDK del harness no
+tiene equivalente, asi que el esquema viaja en el prompt de sistema y el broker
+valida el JSON contra el contrato igual que antes: categoria de la lista
+cerrada, `name` en kebab-case, cuerpo por debajo del limite, confianza y turnos
+usados. La confianza es auditoria. Un valor medio o bajo no bloquea la
+escritura.
+
+El turno tiene un plazo de 90 segundos. Al vencer, o si se cancela la captura,
+se aborta la sesion y entra el destilador de respaldo: nadie esta mirando un
+trabajo de fondo colgado.
 
 El prompt obliga a reconstruir la peticion original, la correccion o
 preferencia, la solucion aceptada y una regla reutilizable. Por ejemplo, si Pi
@@ -137,8 +155,8 @@ Se le pasan las mejoras existentes que mas se parecen, y puede devolver
 `replaces` para fusionar con una en vez de crear otra. Sin eso, marcar cinco
 veces la misma preferencia dejaria cinco notas casi identicas en el catalogo.
 
-Si Codex no esta disponible o no produce una regla valida, entra el destilador
-de respaldo. Solo escribe cuando encuentra una señal explicita como
+Si Pi todavia no tiene sesion de ChatGPT, o el subagente no produce una regla
+valida, entra el destilador de respaldo. Solo escribe cuando encuentra una señal explicita como
 "prefiero", "mejor", "en vez de", "no uses" o "usa esta". Construye la regla
 con las peticiones del usuario y nunca copia la respuesta de Pi. Sin una señal
 clara se abstiene.

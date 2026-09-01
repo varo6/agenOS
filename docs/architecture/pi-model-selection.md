@@ -18,6 +18,16 @@ El cambio recrea la sesión de Pi y se aplica al siguiente turno.
 La lista es una preferencia, no una imposición: `selectModel()` recorre los ids
 en orden y se queda con el primero que exista en el registro de modelos.
 
+## El subagente destilador
+
+El botón "Guardar en memoria" no habla por la sesión de Pi: levanta un
+subagente aparte con `gpt-5.6-terra` y razonamiento `medium`, definido en
+`components/installer-ui/src/bun/agent/improvement-distiller.ts`. Reutiliza el
+`AuthStorage` y el `models.json` del harness, así que no necesita su propio
+inicio de sesión, y no es configurable desde la pantalla Sistema: el destilado
+es una decisión de producto, no una preferencia. Los detalles están en
+`docs/architecture/improvements-memory.md`.
+
 ## Por qué hace falta un catálogo propio
 
 `selectModel()` solo puede elegir modelos que estén en `ModelRegistry`. El

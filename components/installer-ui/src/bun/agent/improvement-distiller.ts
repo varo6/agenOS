@@ -1,8 +1,17 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+} from "@mariozechner/pi-coding-agent";
 
+import {
+  PI_PROVIDER_ID,
+  resolvePiHarnessPaths,
+  writePiCustomModels,
+} from "../../../../ui/dev/pi-harness";
 import {
   IMPROVEMENT_CATEGORIES,
   isImprovementCategory,
@@ -17,19 +26,39 @@ import {
 } from "../../../../agent/improvements-types";
 import { redactHarnessTraceText } from "../../../../agent/harness-trace";
 
-type SpawnImpl = (
-  command: string,
-  args: string[],
-  options: { env: NodeJS.ProcessEnv; stdio: ["pipe", "pipe", "pipe"] },
-) => ChildProcess;
+/*
+ * El destilador es un subagente de Pi, no un proceso de Codex aparte.
+ *
+ * Antes esto lanzaba `codex exec`, que trae su propio `~/.codex/auth.json`: el
+ * usuario ya habia conectado ChatGPT en la pantalla de Pi y aun asi el boton
+ * "Guardar en memoria" se quedaba mudo, porque el binario pedia un login que
+ * nadie iba a completar desde un trabajo de fondo. Reusando el AuthStorage del
+ * harness, destilar cuesta exactamente el mismo inicio de sesion que hablar
+ * con Pi: ninguno adicional.
+ *
+ * Es un subagente y no la sesion de Pi: sesion propia y en memoria, sin
+ * herramientas y con su propio prompt de sistema. Escribir en el hilo del
+ * usuario para pedir un JSON le cambiaria el contexto a mitad de conversacion.
+ */
+export const IMPROVEMENT_DISTILLER_MODEL_ID = "gpt-5.6-terra";
+export const IMPROVEMENT_DISTILLER_THINKING_LEVEL = "medium" as const;
 
-export type CodexImprovementDistillerOptions = {
-  spawnImpl?: SpawnImpl;
-  env?: NodeJS.ProcessEnv;
-  codexBinary?: string;
+export type ImprovementDistillerSession = {
+  prompt(text: string): Promise<void>;
+  abort?(): Promise<void>;
+  dispose?(): void;
+  state?: { messages?: Array<{ role?: string; content?: unknown }> };
+};
+
+export type CreateImprovementDistillerSession = (input: {
+  modelId: string;
+  thinkingLevel: typeof IMPROVEMENT_DISTILLER_THINKING_LEVEL;
+  systemPrompt: string;
+}) => Promise<ImprovementDistillerSession | null>;
+
+export type PiImprovementDistillerOptions = {
+  createSession?: CreateImprovementDistillerSession;
   timeoutMs?: number;
-  model?: string;
-  now?: () => Date;
 };
 
 export const IMPROVEMENT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
@@ -59,6 +88,18 @@ export const IMPROVEMENT_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/*
+ * `codex exec` validaba la respuesta contra el esquema con `--output-schema`.
+ * El SDK del harness no tiene ese equivalente, asi que el contrato viaja en el
+ * prompt de sistema y `validateImprovementDraft` sigue siendo quien decide si
+ * lo que vuelve se puede guardar.
+ */
+export const IMPROVEMENT_DISTILLER_SYSTEM_PROMPT = [
+  "Eres un subagente de Pi dedicado a destilar mejoras. No tienes herramientas y no actuas sobre el sistema: lees la conversacion que se te pasa y devuelves JSON.",
+  "Responde exclusivamente con un objeto JSON que valide contra este esquema. Sin prosa, sin explicaciones y sin bloques de codigo.",
+  JSON.stringify(IMPROVEMENT_DRAFT_JSON_SCHEMA, null, 2),
+].join("\n\n");
+
 const DEFAULT_TIMEOUT_MS = 90_000;
 const NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+){0,5}$/;
 const STOP_WORDS = new Set([
@@ -68,60 +109,35 @@ const STOP_WORDS = new Set([
   "si", "sin", "sobre", "su", "sus", "te", "un", "una", "y",
 ]);
 
-export function createCodexImprovementDistiller(options: CodexImprovementDistillerOptions = {}): ImprovementDistiller {
-  const env = options.env ?? process.env;
-  const spawnImpl = options.spawnImpl ?? defaultSpawn;
+export function createPiImprovementDistiller(options: PiImprovementDistillerOptions = {}): ImprovementDistiller {
+  const createSession = options.createSession ?? createPiDistillerSession;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const now = options.now ?? (() => new Date());
 
   return {
     async distill(input) {
-      const codexBinary = resolveCodexBinary({ explicit: options.codexBinary, env });
-      if (!codexBinary) {
-        return null;
-      }
-
-      const tempDir = mkdtempSync(join(tmpdir(), `agenos-improvement-${now().getTime().toString(36)}-`));
-      const schemaPath = join(tempDir, "schema.json");
-      const outputPath = join(tempDir, "out.json");
+      let session: ImprovementDistillerSession | null = null;
 
       try {
-        writeFileSync(schemaPath, `${JSON.stringify(IMPROVEMENT_DRAFT_JSON_SCHEMA, null, 2)}\n`, { mode: 0o600 });
-        const args = [
-          "exec",
-          "--skip-git-repo-check",
-          "--ephemeral",
-          "--ignore-user-config",
-          "-s",
-          "read-only",
-          "--color",
-          "never",
-          "--output-schema",
-          schemaPath,
-          "--output-last-message",
-          outputPath,
-          ...(options.model ? ["-m", options.model] : []),
-          "-",
-        ];
-        const result = await runCodex({
-          codexBinary,
-          args,
-          env,
-          prompt: buildDistillerPrompt(input),
-          outputPath,
-          signal: input.signal,
-          timeoutMs,
-          spawnImpl,
+        session = await createSession({
+          modelId: IMPROVEMENT_DISTILLER_MODEL_ID,
+          thinkingLevel: IMPROVEMENT_DISTILLER_THINKING_LEVEL,
+          systemPrompt: IMPROVEMENT_DISTILLER_SYSTEM_PROMPT,
         });
-        return result;
+        if (!session) {
+          return null;
+        }
+
+        const answered = await promptWithDeadline({
+          session,
+          text: buildDistillerPrompt(input),
+          timeoutMs,
+          signal: input.signal,
+        });
+        return answered ? parseDraft(lastAssistantText(session)) : null;
       } catch {
         return null;
       } finally {
-        try {
-          rmSync(tempDir, { recursive: true, force: true });
-        } catch {
-          // El destilado es trabajo de fondo; un fallo limpiando temporales no debe propagarse.
-        }
+        session?.dispose?.();
       }
     },
   };
@@ -278,71 +294,159 @@ export function buildDistillerPrompt(input: { turns: ImprovementSourceTurn[]; re
   ].join("\n");
 }
 
-function runCodex(input: {
-  codexBinary: string;
-  args: string[];
-  env: NodeJS.ProcessEnv;
-  prompt: string;
-  outputPath: string;
-  signal?: AbortSignal;
+/**
+ * Lanza el turno y garantiza que el trabajo termina.
+ *
+ * El destilado corre en segundo plano detras de un boton: si el modelo se
+ * queda colgado, nadie lo esta mirando. Al vencer el plazo o al cancelarse la
+ * captura se aborta la sesion y se devuelve false, que en `distill` significa
+ * "sin borrador" y deja paso al destilador de respaldo.
+ */
+async function promptWithDeadline(input: {
+  session: ImprovementDistillerSession;
+  text: string;
   timeoutMs: number;
-  spawnImpl: SpawnImpl;
-}): Promise<ImprovementDraft | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let child: ChildProcess | null = null;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  if (input.signal?.aborted) {
+    return false;
+  }
 
-    const finish = (result: ImprovementDraft | null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      input.signal?.removeEventListener("abort", abort);
-      resolve(result);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+
+  const stopped = new Promise<false>((resolve) => {
+    const stop = () => {
+      void input.session.abort?.().catch(() => undefined);
+      resolve(false);
     };
-
-    const abort = () => {
-      child?.kill("SIGTERM");
-      finish(null);
-    };
-
-    const timer = setTimeout(() => {
-      child?.kill("SIGTERM");
-      finish(null);
-    }, input.timeoutMs);
-
-    if (input.signal?.aborted) {
-      finish(null);
-      return;
-    }
-    input.signal?.addEventListener("abort", abort, { once: true });
-
-    try {
-      child = input.spawnImpl(input.codexBinary, input.args, {
-        env: input.env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      child.once("error", () => finish(null));
-      child.once("exit", (code) => {
-        if (code !== 0) {
-          finish(null);
-          return;
-        }
-        try {
-          const raw = readFileSync(input.outputPath, "utf8");
-          finish(parseDraft(raw));
-        } catch {
-          finish(null);
-        }
-      });
-      child.stdin?.write(input.prompt);
-      child.stdin?.end();
-    } catch {
-      child?.kill("SIGTERM");
-      finish(null);
-    }
+    timer = setTimeout(stop, input.timeoutMs);
+    onAbort = stop;
+    input.signal?.addEventListener("abort", stop, { once: true });
   });
+
+  try {
+    return await Promise.race([input.session.prompt(input.text).then(() => true), stopped]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) {
+      input.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+}
+
+/**
+ * Sesion de destilado sobre las credenciales del harness de Pi.
+ *
+ * Devuelve null cuando el usuario todavia no ha conectado ChatGPT: sin
+ * credenciales no hay nada que reutilizar y el destilado no es un buen momento
+ * para pedir un login.
+ */
+async function createPiDistillerSession(input: {
+  modelId: string;
+  thinkingLevel: typeof IMPROVEMENT_DISTILLER_THINKING_LEVEL;
+  systemPrompt: string;
+}): Promise<ImprovementDistillerSession | null> {
+  const paths = resolvePiHarnessPaths();
+  const authStorage = AuthStorage.create(paths.authPath);
+  if (authStorage.get(PI_PROVIDER_ID)?.type !== "oauth") {
+    return null;
+  }
+
+  // Mismo motivo que en el harness: sin models.json el registro no conoce los
+  // GPT-5.6 y `find` no encontraria el modelo del destilador.
+  writePiCustomModels(paths.modelsPath);
+  const modelRegistry = ModelRegistry.create(authStorage, paths.modelsPath);
+  const model = selectDistillerModel(modelRegistry, input.modelId);
+  if (!model) {
+    return null;
+  }
+
+  const settingsManager = SettingsManager.inMemory();
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: process.cwd(),
+    agentDir: paths.agentDir,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    systemPromptOverride: () => input.systemPrompt,
+    appendSystemPromptOverride: () => [],
+  });
+  await resourceLoader.reload();
+
+  const created = await createAgentSession({
+    cwd: process.cwd(),
+    agentDir: paths.agentDir,
+    authStorage,
+    modelRegistry,
+    model,
+    thinkingLevel: input.thinkingLevel,
+    // El destilador solo escribe texto. Sin herramientas no hay nada que
+    // confirmar ni que aislar, que es lo que daba `--sandbox read-only`.
+    noTools: "all",
+    tools: [],
+    customTools: [],
+    // En memoria a proposito: el subagente no debe aparecer en el historial de
+    // la conversacion del usuario ni heredarlo.
+    sessionManager: SessionManager.inMemory(process.cwd()),
+    settingsManager,
+    resourceLoader,
+  });
+
+  return created.session as unknown as ImprovementDistillerSession;
+}
+
+function selectDistillerModel(
+  modelRegistry: ModelRegistry,
+  modelId: string,
+): ReturnType<ModelRegistry["find"]> {
+  const exact = modelRegistry.find(PI_PROVIDER_ID, modelId);
+  if (exact) {
+    return exact;
+  }
+
+  // Mismo criterio que `selectModel` en el harness: preferimos destilar con
+  // otro modelo a perder la funcionalidad, pero la caida no puede ser muda.
+  const fallback = modelRegistry.getAll().find((candidate) => candidate.provider === PI_PROVIDER_ID);
+  if (fallback) {
+    console.warn(`[improvements] ${modelId} no esta en el registro. Destilo con ${fallback.id}.`);
+  }
+  return fallback;
+}
+
+function lastAssistantText(session: ImprovementDistillerSession): string {
+  const messages = session.state?.messages;
+  if (!Array.isArray(messages)) {
+    return "";
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant") {
+      return extractTextContent(message.content);
+    }
+  }
+
+  return "";
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((item) => {
+      const candidate = item as { type?: unknown; text?: unknown } | null;
+      return candidate?.type === "text" && typeof candidate.text === "string" ? candidate.text : "";
+    })
+    .join("");
 }
 
 function parseDraft(raw: string): ImprovementDraft | null {
@@ -357,29 +461,6 @@ function parseDraft(raw: string): ImprovementDraft | null {
 function stripJsonFence(value: string): string {
   const match = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return match?.[1]?.trim() ?? value;
-}
-
-function defaultSpawn(command: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: ["pipe", "pipe", "pipe"] }): ChildProcess {
-  return spawn(command, args, options);
-}
-
-function resolveCodexBinary(input: { explicit?: string; env: NodeJS.ProcessEnv }): string | null {
-  return input.explicit?.trim()
-    || input.env.AGENOS_CODEX_BIN?.trim()
-    || lookupOnPath("codex", input.env.PATH);
-}
-
-function lookupOnPath(binary: string, pathValue: string | undefined): string | null {
-  for (const dir of (pathValue ?? "").split(":")) {
-    if (!dir) {
-      continue;
-    }
-    const candidate = join(dir, binary);
-    if (existsSync(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
 }
 
 function validName(value: unknown): value is string {

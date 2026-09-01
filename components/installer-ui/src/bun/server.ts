@@ -39,8 +39,8 @@ import { createLearnedMemoryStore } from "./agent/learned-memory";
 import { createImprovementStore } from "./agent/improvements";
 import { createImprovementCaptureService } from "./agent/improvement-capture";
 import {
-  createCodexImprovementDistiller,
   createFallbackImprovementDistiller,
+  createPiImprovementDistiller,
 } from "./agent/improvement-distiller";
 import { createSelfImprovementLoop } from "./agent/self-improvement";
 import { decidePolicy } from "./agent/policy";
@@ -737,7 +737,7 @@ export function createInstallerApiHandler(
   };
   const improvementCapture = dependencies.improvementCapture ?? createImprovementCaptureService({
     store: improvements,
-    distiller: createCodexImprovementDistiller(),
+    distiller: createPiImprovementDistiller(),
     fallbackDistiller: createFallbackImprovementDistiller(),
     /*
      * El texto de la mejora sale del historial del harness, no del cuerpo de la

@@ -1,34 +1,49 @@
 import { describe, expect, test } from "bun:test";
-import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
-import { writeFileSync } from "node:fs";
-import { PassThrough } from "node:stream";
 
+import { getModels } from "@mariozechner/pi-ai";
+
+import { PI_CUSTOM_MODELS, PI_PROVIDER_ID } from "../../../../ui/dev/pi-harness";
 import type { Improvement, ImprovementDraft } from "../../../../agent/improvements-types";
 import {
   buildDistillerPrompt,
-  createCodexImprovementDistiller,
   createFallbackImprovementDistiller,
+  createPiImprovementDistiller,
+  IMPROVEMENT_DISTILLER_MODEL_ID,
+  IMPROVEMENT_DISTILLER_SYSTEM_PROMPT,
+  IMPROVEMENT_DISTILLER_THINKING_LEVEL,
   isReusableImprovementDraft,
   validateImprovementDraft,
+  type CreateImprovementDistillerSession,
+  type ImprovementDistillerSession,
 } from "./improvement-distiller";
 
-class FakeChild extends EventEmitter {
-  stdin = new PassThrough();
-  stdout = new PassThrough();
-  stderr = new PassThrough();
-  killed = false;
-  signal: NodeJS.Signals | number | undefined;
+/** Subagente de mentira: responde lo que se le diga y anota lo que le llega. */
+class FakeDistillerSession implements ImprovementDistillerSession {
+  readonly prompts: string[] = [];
+  aborted = false;
+  disposed = false;
+  state: { messages: Array<{ role?: string; content?: unknown }> } = { messages: [] };
 
-  kill(signal?: NodeJS.Signals | number): boolean {
-    this.killed = true;
-    this.signal = signal;
-    return true;
+  constructor(private readonly reply: string | null, private readonly hang = false) {}
+
+  async prompt(text: string): Promise<void> {
+    this.prompts.push(text);
+    if (this.hang) {
+      await new Promise(() => {});
+      return;
+    }
+    if (this.reply !== null) {
+      this.state.messages.push({ role: "assistant", content: [{ type: "text", text: this.reply }] });
+    }
   }
-}
 
-function asChildProcess(child: FakeChild): ChildProcess {
-  return child as unknown as ChildProcess;
+  async abort(): Promise<void> {
+    this.aborted = true;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+  }
 }
 
 const validDraft: ImprovementDraft = {
@@ -58,75 +73,112 @@ const sourceInput = {
 };
 
 describe("improvement distiller", () => {
-  test("distills a valid draft from Codex output", async () => {
-    const calls: Array<{ command: string; args: string[] }> = [];
-    const distiller = createCodexImprovementDistiller({
-      codexBinary: "/fake/codex",
-      env: {},
-      spawnImpl(command, args) {
-        calls.push({ command, args });
-        const child = new FakeChild();
-        const outputPath = args[args.indexOf("--output-last-message") + 1]!;
-        setTimeout(() => {
-          writeFileSync(outputPath, `\`\`\`json\n${JSON.stringify(validDraft)}\n\`\`\``);
-          child.emit("exit", 0);
-        }, 1);
-        return asChildProcess(child);
-      },
-    });
+  test("distills a valid draft from the Pi subagent reply", async () => {
+    const session = new FakeDistillerSession(`\`\`\`json\n${JSON.stringify(validDraft)}\n\`\`\``);
+    const distiller = createPiImprovementDistiller({ createSession: async () => session });
 
-    const result = await distiller.distill(sourceInput);
-
-    expect(result).toEqual(validDraft);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.command).toBe("/fake/codex");
+    await expect(distiller.distill(sourceInput)).resolves.toEqual(validDraft);
+    expect(session.prompts[0]).toContain("turn_marked");
+    expect(session.disposed).toBe(true);
   });
 
-  test("passes the expected non-interactive Codex arguments", async () => {
-    const calls: Array<{ args: string[] }> = [];
-    const distiller = createCodexImprovementDistiller({
-      codexBinary: "/fake/codex",
-      env: {},
-      model: "gpt-test",
-      spawnImpl(_command, args) {
-        calls.push({ args });
-        const child = new FakeChild();
-        const outputPath = args[args.indexOf("--output-last-message") + 1]!;
-        setTimeout(() => {
-          writeFileSync(outputPath, JSON.stringify(validDraft));
-          child.emit("exit", 0);
-        }, 1);
-        return asChildProcess(child);
+  test("runs on gpt-5.6-terra with medium reasoning and the JSON-only system prompt", async () => {
+    const calls: Array<Parameters<CreateImprovementDistillerSession>[0]> = [];
+    const distiller = createPiImprovementDistiller({
+      createSession: async (input) => {
+        calls.push(input);
+        return new FakeDistillerSession(JSON.stringify(validDraft));
       },
     });
 
     await expect(distiller.distill(sourceInput)).resolves.toMatchObject({ name: "reservar-restaurante" });
-    const args = calls[0]?.args ?? [];
-
-    expect(args).toContain("--output-schema");
-    expect(args).toContain("--output-last-message");
-    expect(args).toContain("--ephemeral");
-    expect(args.slice(args.indexOf("-s"), args.indexOf("-s") + 2)).toEqual(["-s", "read-only"]);
-    expect(args.slice(args.indexOf("-m"), args.indexOf("-m") + 2)).toEqual(["-m", "gpt-test"]);
-    expect(args.at(-1)).toBe("-");
+    expect(calls[0]?.modelId).toBe("gpt-5.6-terra");
+    expect(IMPROVEMENT_DISTILLER_MODEL_ID).toBe("gpt-5.6-terra");
+    expect(calls[0]?.thinkingLevel).toBe("medium");
+    expect(IMPROVEMENT_DISTILLER_THINKING_LEVEL).toBe("medium");
+    // El SDK no tiene equivalente a --output-schema, asi que el contrato tiene
+    // que viajar en el prompt de sistema.
+    expect(calls[0]?.systemPrompt).toBe(IMPROVEMENT_DISTILLER_SYSTEM_PROMPT);
+    expect(calls[0]?.systemPrompt).toContain("sourceTurnIds");
   });
 
-  test("rejects invalid JSON from Codex", async () => {
-    const distiller = createCodexImprovementDistiller({
-      codexBinary: "/fake/codex",
-      env: {},
-      spawnImpl(_command, args) {
-        const child = new FakeChild();
-        const outputPath = args[args.indexOf("--output-last-message") + 1]!;
-        setTimeout(() => {
-          writeFileSync(outputPath, "{no-json");
-          child.emit("exit", 0);
-        }, 1);
-        return asChildProcess(child);
+  // El destilador no aparece en la pantalla Sistema, asi que un id fantasma no
+  // rompe nada visible: `selectDistillerModel` cae a otro modelo con un aviso
+  // por consola que nadie lee. Este test es el unico sitio donde salta.
+  test("the distiller model exists in the catalog the registry will load", () => {
+    const builtIn = getModels(PI_PROVIDER_ID).map((model) => model.id);
+    const custom = PI_CUSTOM_MODELS.providers[PI_PROVIDER_ID].models.map((model) => model.id);
+
+    expect(new Set([...builtIn, ...custom]).has(IMPROVEMENT_DISTILLER_MODEL_ID)).toBe(true);
+  });
+
+  test("rejects a reply that is not the JSON of the contract", async () => {
+    const distiller = createPiImprovementDistiller({
+      createSession: async () => new FakeDistillerSession("{no-json"),
+    });
+
+    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
+  });
+
+  test("returns null without prompting when Pi has no session to reuse", async () => {
+    let prompted = false;
+    const distiller = createPiImprovementDistiller({
+      createSession: async () => {
+        prompted = true;
+        return null;
       },
     });
 
     await expect(distiller.distill(sourceInput)).resolves.toBeNull();
+    expect(prompted).toBe(true);
+  });
+
+  test("returns null when the subagent answers nothing", async () => {
+    const distiller = createPiImprovementDistiller({
+      createSession: async () => new FakeDistillerSession(null),
+    });
+
+    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
+  });
+
+  test("aborts the subagent and returns null on timeout", async () => {
+    const session = new FakeDistillerSession(null, true);
+    const distiller = createPiImprovementDistiller({
+      timeoutMs: 5,
+      createSession: async () => session,
+    });
+
+    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
+    expect(session.aborted).toBe(true);
+    expect(session.disposed).toBe(true);
+  });
+
+  test("aborts the subagent when the capture is cancelled mid-turn", async () => {
+    const session = new FakeDistillerSession(null, true);
+    const controller = new AbortController();
+    const distiller = createPiImprovementDistiller({ createSession: async () => session });
+
+    const pending = distiller.distill({ ...sourceInput, signal: controller.signal });
+    await Promise.resolve();
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(pending).resolves.toBeNull();
+    expect(session.prompts).toHaveLength(1);
+    expect(session.aborted).toBe(true);
+    expect(session.disposed).toBe(true);
+  });
+
+  test("never prompts when the capture was cancelled before the session existed", async () => {
+    const session = new FakeDistillerSession(JSON.stringify(validDraft));
+    const distiller = createPiImprovementDistiller({ createSession: async () => session });
+
+    await expect(distiller.distill({
+      ...sourceInput,
+      signal: AbortSignal.abort(),
+    })).resolves.toBeNull();
+    expect(session.prompts).toHaveLength(0);
+    expect(session.disposed).toBe(true);
   });
 
   test("validates category, name and long body according to the contract", () => {
@@ -153,50 +205,6 @@ describe("improvement distiller", () => {
     expect(isReusableImprovementDraft({ ...validDraft, body: longReply }, turns)).toBe(false);
     expect(isReusableImprovementDraft({ ...validDraft, body: "Usa esta opcion; hay 1432 plazas disponibles ahora." }, turns)).toBe(false);
     expect(isReusableImprovementDraft({ ...validDraft, body: "Cuando quiera jugar al ajedrez, abre Lichess." }, turns)).toBe(true);
-  });
-
-  test("returns null without spawning when Codex is absent", async () => {
-    let spawned = false;
-    const distiller = createCodexImprovementDistiller({
-      env: { PATH: "" },
-      spawnImpl() {
-        spawned = true;
-        return asChildProcess(new FakeChild());
-      },
-    });
-
-    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
-    expect(spawned).toBe(false);
-  });
-
-  test("returns null when Codex exits with a non-zero code", async () => {
-    const distiller = createCodexImprovementDistiller({
-      codexBinary: "/fake/codex",
-      env: {},
-      spawnImpl() {
-        const child = new FakeChild();
-        setTimeout(() => child.emit("exit", 12), 1);
-        return asChildProcess(child);
-      },
-    });
-
-    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
-  });
-
-  test("kills Codex and returns null on timeout", async () => {
-    const child = new FakeChild();
-    const distiller = createCodexImprovementDistiller({
-      codexBinary: "/fake/codex",
-      env: {},
-      timeoutMs: 5,
-      spawnImpl() {
-        return asChildProcess(child);
-      },
-    });
-
-    await expect(distiller.distill(sourceInput)).resolves.toBeNull();
-    expect(child.killed).toBe(true);
-    expect(child.signal).toBe("SIGTERM");
   });
 
   test("builds a prompt with source turns and related improvements", () => {
