@@ -20,6 +20,7 @@ MIMEAPPS="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/xdg/mimeapps.l
 SHELL_RUNNER="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-shell-runner"
 PERSISTENCE_NOTICE="${ROOT_DIR}/build/live-build/config/includes.chroot/usr/local/bin/agenos-persistence-notice"
 BASE_PACKAGES="${ROOT_DIR}/build/live-build/config/package-lists/base.list.chroot"
+CHROMIUM_POLICY="${ROOT_DIR}/build/live-build/config/includes.chroot/etc/chromium/policies/managed/agenos-sessions.json"
 
 require_literal() {
   local file="$1"
@@ -84,7 +85,16 @@ require_literal "${RUN_VM}" "VM_PERSIST_DISK"
 require_literal "${AGENT_API_UNIT}" "KillMode=process"
 require_literal "${BROWSER_LAUNCHER}" '.agenos/browser-profile'
 require_literal "${BROWSER_LAUNCHER}" "--password-store=basic"
+require_literal "${BROWSER_LAUNCHER}" "--restore-last-session"
 require_literal "${BROWSER_LAUNCHER}" "18800"
+
+# Sin restaurar la sesion anterior, Chromium tira las cookies de sesion en cada
+# arranque; sin la politica, bloquea cookies de terceros y no ofrece guardar
+# contrasenas. Las dos cosas se ven igual desde fuera: el usuario aparece
+# desconectado sin haber cerrado nada.
+require_literal "${CHROMIUM_POLICY}" '"DefaultCookiesSetting": 1'
+require_literal "${CHROMIUM_POLICY}" '"BlockThirdPartyCookies": false'
+require_literal "${CHROMIUM_POLICY}" '"PasswordManagerEnabled": true'
 require_literal "${BROWSER_DESKTOP}" "Exec=/usr/local/bin/agenos-browser %U"
 require_literal "${MIMEAPPS}" "x-scheme-handler/https=agenos-browser.desktop;"
 require_literal "${MIMEAPPS}" "text/html=agenos-browser.desktop;"
@@ -95,6 +105,11 @@ require_literal "${BASE_PACKAGES}" "systemd-timesyncd"
 
 if grep --quiet --fixed-strings -- "=chromium.desktop;" "${MIMEAPPS}"; then
   echo "mimeapps.list vuelve a abrir URLs con el perfil por defecto de Chromium: ${MIMEAPPS}" >&2
+  exit 1
+fi
+
+if ! python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${CHROMIUM_POLICY}"; then
+  echo "La politica de Chromium no es JSON valido: ${CHROMIUM_POLICY}" >&2
   exit 1
 fi
 

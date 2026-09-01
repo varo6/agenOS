@@ -101,6 +101,9 @@ describe("browser tool", () => {
     expect(spawned[0]?.[1]).toContain("--ozone-platform=wayland");
     expect(spawned[0]?.[1]).not.toContain("--ozone-platform-hint=auto");
     expect(spawned[0]?.[1]).not.toContain("--no-sandbox");
+    // Las cookies de sesion solo sobreviven si Chromium retoma la sesion
+    // anterior; sin esto el usuario aparece desconectado en cada arranque.
+    expect(spawned[0]?.[1]).toContain("--restore-last-session");
     expect(swayCommands).toEqual(['[con_id=51] move to workspace "3:web", focus']);
   });
 

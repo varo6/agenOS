@@ -148,6 +148,13 @@ export function buildChromiumArgs(input: {
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
+    // Sin esto Chromium arranca cada vez como una sesion nueva y tira las
+    // cookies de sesion, que es con lo que muchas webs mantienen el login. El
+    // perfil persistia, pero el usuario volvia a aparecer desconectado en todo
+    // lo que no hubiera marcado "recordarme". Restaurar la sesion anterior es
+    // lo unico que las conserva; las cookies persistentes ya vivian en el
+    // perfil.
+    "--restore-last-session",
     `--ozone-platform=${input.platform}`,
     `--user-data-dir=${input.profileDir}`,
     `--remote-debugging-port=${debugPort}`,

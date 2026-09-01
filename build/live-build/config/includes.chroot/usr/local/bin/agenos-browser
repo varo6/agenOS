@@ -10,6 +10,12 @@ set -eu
 # que es un tarro de cookies distinto del que usa el agente: iniciar sesion por
 # una via y volver por la otra hace que la cuenta aparezca como cerrada aunque
 # nunca se cerrara. Un unico perfil evita esa clase entera de fallo.
+#
+# Lo que el perfil no arregla por si solo son los ajustes con los que Chromium
+# arranca de fabrica: bloquea cookies de terceros y no ofrece guardar
+# contrasenas. Eso se corrige por politica en
+# /etc/chromium/policies/managed/agenos-sessions.json, no aqui: no existen
+# flags de linea de comandos para ello.
 
 PROFILE_DIR="${AGENOS_BROWSER_PROFILE_DIR:-${HOME:-/home/agenos}/.agenos/browser-profile}"
 
@@ -40,10 +46,16 @@ else
   PLATFORM=x11
 fi
 
+# --restore-last-session es lo que conserva las cookies de sesion. Sin el,
+# Chromium empieza una sesion limpia en cada arranque y el usuario aparece
+# desconectado de todo lo que no hubiera marcado "recordarme", aunque el perfil
+# siga intacto. Mismo motivo y mismo flag que en
+# components/agent/browser-launcher.ts.
 exec "${BROWSER}" \
   --no-first-run \
   --no-default-browser-check \
   --password-store=basic \
+  --restore-last-session \
   "--ozone-platform=${PLATFORM}" \
   "--user-data-dir=${PROFILE_DIR}" \
   "--remote-debugging-port=${DEBUG_PORT}" \
