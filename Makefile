@@ -28,7 +28,11 @@ test:
 	cd components/installer-ui && bun run test
 	cd components/installer-ui && bun test ../agent
 	cd components/installer-ui && bun test ../stt
+	cd components/installer-ui && bun test ../tts
+	cd components/installer-ui && bun test ../remote
 	python3 -m unittest discover -s tests -p 'test_*.py' -t tests
+	bash scripts/source-hash.test.sh
+	bash scripts/stt-build-cache.test.sh
 
 release:
 	VERSION="$(VERSION)" ./scripts/release.sh

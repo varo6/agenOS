@@ -325,6 +325,14 @@ describe("robustez del indice", () => {
 });
 
 describe("olvido y auditoria", () => {
+  test("una fusión que no se puede escribir conserva la nota original", () => {
+    const improvements = store();
+    improvements.write(draft(), ["turn_1"]);
+    mkdirSync(join(rootDir, "web", "nuevo-nombre.md"));
+    expect(() => improvements.write({ ...draft(), name: "nuevo-nombre", replaces: "reservar-restaurante" }, ["turn_2"])).toThrow();
+    expect(improvements.get("reservar-restaurante")?.sourceTurnIds).toEqual(["turn_1"]);
+  });
+
   test("forget borra el .md y lo saca del indice", () => {
     const improvements = store();
     improvements.write(draft(), ["turn_1"]);

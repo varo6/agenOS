@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -91,6 +95,16 @@ const STOP_WORDS = new Set([
   "a", "al", "algo", "como", "con", "de", "del", "el", "en", "es", "esta", "este", "la", "las", "lo",
   "los", "me", "mi", "no", "para", "por", "que", "se", "si", "sin", "su", "un", "una", "y",
 ]);
+
+function writeAtomic(path: string, text: string): void {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
 
 function defaultRootDir(): string {
   const configured = process.env.AGENOS_IMPROVEMENTS_DIR?.trim();
@@ -356,7 +370,7 @@ export function createImprovementStore(options: ImprovementStoreOptions = {}): I
 
   function persistIndex(records: ImprovementIndexRecord[]): void {
     mkdirSync(rootDir, { recursive: true });
-    writeFileSync(indexPath, `${JSON.stringify({ version: 1, entries: records }, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    writeAtomic(indexPath, `${JSON.stringify({ version: 1, entries: records }, null, 2)}\n`);
   }
 
   function readIndexFile(): ImprovementIndexRecord[] | null {
@@ -435,7 +449,7 @@ export function createImprovementStore(options: ImprovementStoreOptions = {}): I
   function touch(improvement: Improvement, path: string): Improvement {
     const stamped: Improvement = { ...improvement, lastUsedAt: now().toISOString() };
     try {
-      writeFileSync(path, serializeImprovementFile(stamped), { encoding: "utf8", mode: 0o600 });
+      writeAtomic(path, serializeImprovementFile(stamped));
     } catch {
       return improvement;
     }
@@ -596,18 +610,13 @@ export function createImprovementStore(options: ImprovementStoreOptions = {}): I
       ensureDirs();
       const destination = pathFor(name, category);
       const records = loadIndex().filter((record) => record.name !== name && record.name !== target?.name);
-      if (target && targetPath && targetPath !== destination) {
-        try {
-          unlinkSync(targetPath);
-        } catch {
-          // La mejora fusionada ya no estaba en disco; la nueva se escribe igual.
-        }
-      }
+      writeAtomic(destination, serializeImprovementFile(improvement));
       if (!target) {
         evictIfFull(records);
       }
-
-      writeFileSync(destination, serializeImprovementFile(improvement), { encoding: "utf8", mode: 0o600 });
+      if (target && targetPath && targetPath !== destination) {
+        rmSync(targetPath, { force: true });
+      }
       records.push(toRecord(improvement));
       persistIndex(records);
       appendEvent({
@@ -655,7 +664,16 @@ export function createImprovementStore(options: ImprovementStoreOptions = {}): I
         createdAt: job.createdAt || now().toISOString(),
         ...(job.error ? { error: cleanText(job.error, 300) } : {}),
       };
-      appendFileSync(join(rootDir, JOBS_FILE), `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+      const path = join(rootDir, JOBS_FILE);
+      appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+      if (statSync(path).size > 1_048_576) {
+        const latest = new Map<string, ImprovementCaptureJob>();
+        for (const item of readLines<ImprovementCaptureJob>(path)) latest.set(item.jobId, item);
+        const items = [...latest.values()];
+        const recent = new Set(items.slice(-50).map((item) => item.jobId));
+        const retained = items.filter((item) => recent.has(item.jobId) || item.status === "queued" || item.status === "running");
+        writeAtomic(path, retained.map((item) => JSON.stringify(item)).join("\n") + "\n");
+      }
     },
     jobs(limit = 20): ImprovementCaptureJob[] {
       return readLines<ImprovementCaptureJob>(join(rootDir, JOBS_FILE)).slice(-Math.max(1, limit)).reverse();

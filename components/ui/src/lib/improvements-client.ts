@@ -1,6 +1,8 @@
+import type { ImprovementsBridge } from "./improvements-bridge";
 import type {
   ImprovementCaptureJobResponse,
   ImprovementCaptureResponse,
+  SavedReply,
 } from "../../../agent/improvements-types";
 
 const AGENT_API_BASE_DEFAULT = "http://127.0.0.1:4173";
@@ -83,12 +85,24 @@ async function requestJson<T>(
  */
 export function createImprovementsClient(options: ImprovementsClientOptions = {}) {
   const baseUrl = resolveHttpBase(options);
+  const bridge: ImprovementsBridge | undefined = !options.baseUrl && !options.fetchImpl ? globalThis.window?.agenosImprovements : undefined;
   // Se resuelve en cada llamada y no al crear el cliente para no congelar el
   // `fetch` global del entorno.
   const doFetch: FetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
 
   return {
+    listSavedReplies(query = "", offset = 0): Promise<SavedReply[]> {
+      if (bridge?.isAvailable()) return bridge.listSavedReplies(query, offset);
+      return requestJson(doFetch, baseUrl, `/api/agent/saved-replies?${new URLSearchParams({ query, offset: String(offset) })}`);
+    },
+    forgetSavedReply(turnId: string): Promise<{ ok: boolean }> {
+      if (bridge?.isAvailable()) return bridge.forgetSavedReply(turnId);
+      return requestJson(doFetch, baseUrl, `/api/agent/saved-replies/${encodeURIComponent(turnId)}`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ explicitUserIntent: true }),
+      });
+    },
     captureTurn(turnId: string): Promise<ImprovementCaptureResponse> {
+      if (bridge?.isAvailable()) return bridge.captureTurn(turnId);
       return requestJson<ImprovementCaptureResponse>(doFetch, baseUrl, "/api/agent/improvements/capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -96,6 +110,7 @@ export function createImprovementsClient(options: ImprovementsClientOptions = {}
       });
     },
     getCaptureJob(jobId: string): Promise<ImprovementCaptureJobResponse> {
+      if (bridge?.isAvailable()) return bridge.getCaptureJob(jobId);
       return requestJson<ImprovementCaptureJobResponse>(
         doFetch,
         baseUrl,

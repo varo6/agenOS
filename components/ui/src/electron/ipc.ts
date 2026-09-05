@@ -53,9 +53,28 @@ export const TTS_IPC_CHANNELS = {
 } as const;
 
 /**
+ * Interruptor de los servicios de voz en la nube (Groq para dictar, Azure para
+ * hablar). Lo que viaja de vuelta al renderer es siempre la vista redactada: la
+ * clave de API se queda en el proceso principal y de ella solo se comunica si
+ * está puesta o no, nunca su valor.
+ */
+export const REMOTE_IPC_CHANNELS = {
+  get: "agenos-remote:get",
+  update: "agenos-remote:update",
+  setSecret: "agenos-remote:set-secret",
+} as const;
+
+/**
  * Fases observables de una captura de voz local.
  *
  * `speech` es nueva y la empuja el VAD: es el instante en el que Silero
  * confirma que lo que entra por el micrófono es voz y no ruido de sala.
  */
 export type SpeechCapturePhase = "listening" | "speech" | "transcribing";
+
+export const IMPROVEMENTS_IPC_CHANNELS = {
+  capture: "agenos:improvements:capture",
+  job: "agenos:improvements:job",
+  list: "agenos:improvements:list-saved",
+  forget: "agenos:improvements:forget-saved",
+} as const;

@@ -80,6 +80,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}) {
     paths,
     engine,
     baseUrl: "http://127.0.0.1:8178",
+    activeEngine: () => engine.status().engine,
   };
 
   return { runtime, requests };

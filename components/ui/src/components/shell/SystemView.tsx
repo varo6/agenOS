@@ -10,11 +10,13 @@ import { AgentAdminPanel } from "../AgentAdminPanel";
 import { AgentDiagnosticsButton } from "../AgentDiagnosticsButton";
 import { AgentHealthChecklist } from "../AgentHealthChecklist";
 import { LearningPanel } from "../LearningPanel";
+import { SavedRepliesPanel } from "../SavedRepliesPanel";
 import { Button, Panel } from "../ui";
 import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnectionPanel";
 import type { NetworkClient } from "../../../../network/client";
 import { ConnectionPanel } from "./ConnectionPanel";
 import { AudioSettingsPanel } from "./AudioSettingsPanel";
+import { RemoteServicesPanel } from "./RemoteServicesPanel";
 import { DisplaySettingsPanel } from "./DisplaySettingsPanel";
 import { PowerPanel } from "./PowerPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -95,6 +97,7 @@ export function SystemView({
           <NetworkConnectionPanel allowDisconnect client={networkClient} embedded />
           <DisplaySettingsPanel />
           <AudioSettingsPanel />
+          <RemoteServicesPanel />
           <PowerPanel />
         </section>
       ) : null}
@@ -109,6 +112,7 @@ export function SystemView({
       </Panel>
 
       <LearningPanel client={adminClient} />
+      <SavedRepliesPanel />
 
       {/*
        * Un `details` y no una pestaña: se abre con teclado, se anuncia como

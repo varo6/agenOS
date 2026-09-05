@@ -17,8 +17,8 @@ export type SpeechTranscriptionOutcome =
   | {
       ok: true;
       transcript: string;
-      engine: "whisper.cpp" | "voxtype";
-      /** Voxtype y el fallback transcriben siempre en español. */
+      engine: "whisper.cpp" | "voxtype" | "groq";
+      /** Los tres motores transcriben siempre en español. */
       language: "es";
       model: string;
     }

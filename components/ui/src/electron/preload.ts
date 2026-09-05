@@ -1,7 +1,10 @@
+import type { ImprovementsBridge } from "../lib/improvements-bridge";
 import { contextBridge, ipcRenderer } from "electron";
 
 import {
   PI_IPC_CHANNELS,
+  IMPROVEMENTS_IPC_CHANNELS,
+  REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
   TTS_IPC_CHANNELS,
@@ -19,6 +22,7 @@ import type {
 } from "../lib/system-types";
 import type { SpeechTranscriptionOutcome } from "../lib/speech-bridge";
 import type { TextToSpeechOutcome, TextToSpeechStatus } from "../lib/tts-bridge";
+import type { RemoteSecretName, RemoteServicesPatch, RemoteServicesView } from "../lib/remote-bridge";
 import type {
   PiAuthAttemptResponse,
   PiChatResponse,
@@ -207,6 +211,19 @@ contextBridge.exposeInMainWorld("agenosTts", {
   isAvailable,
 });
 
+contextBridge.exposeInMainWorld("agenosRemote", {
+  get(): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.get);
+  },
+  update(patch: RemoteServicesPatch): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.update, patch);
+  },
+  setSecret(name: RemoteSecretName, value: string): Promise<RemoteServicesView> {
+    return invokePi<RemoteServicesView>(REMOTE_IPC_CHANNELS.setSecret, { name, value });
+  },
+  isAvailable,
+});
+
 contextBridge.exposeInMainWorld(
   "__AGENOS_CAPTIVE_PORTAL_URL__",
   process.env.AGENOS_CAPTIVE_PORTAL_URL?.trim() || null,
@@ -233,3 +250,11 @@ contextBridge.exposeInMainWorld("agenosNetwork", {
   },
   isAvailable,
 });
+
+contextBridge.exposeInMainWorld("agenosImprovements", {
+  isAvailable,
+  captureTurn: (turnId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.capture, { turnId }),
+  getCaptureJob: (jobId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.job, { jobId }),
+  listSavedReplies: (query = "", offset = 0) => invokePi(IMPROVEMENTS_IPC_CHANNELS.list, { query, offset }),
+  forgetSavedReply: (turnId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.forget, { turnId }),
+} satisfies ImprovementsBridge);

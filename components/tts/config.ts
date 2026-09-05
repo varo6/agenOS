@@ -6,6 +6,12 @@
  * solo cuando hay una respuesta nueva que leer.
  */
 
+/**
+ * Motores capaces de leer una respuesta. `espeak-ng` es el de siempre y corre
+ * en local; `azure` solo entra si el usuario enciende el servicio remoto.
+ */
+export type TtsEngineName = "espeak-ng" | "azure";
+
 export type TtsSettings = {
   voice: string;
   rate: number;

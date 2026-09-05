@@ -1,16 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
-import type { TtsSettings } from "./config";
+import type { TtsEngineName, TtsSettings } from "./config";
 import type { TtsPaths } from "./paths";
 
 export type LocalTtsFailureCode = "unavailable" | "cancelled" | "synthesis-failed";
 
 export type LocalTtsResult =
-  | { ok: true; engine: "espeak-ng"; voice: string }
+  | { ok: true; engine: TtsEngineName; voice: string }
   | { ok: false; code: LocalTtsFailureCode; message: string };
 
 export type LocalTtsService = {
-  status(): { available: boolean; reason: string | null; engine: "espeak-ng"; voice: string };
+  status(): { available: boolean; reason: string | null; engine: TtsEngineName; voice: string };
   speak(text: string): Promise<LocalTtsResult>;
   stop(): void;
   isSpeaking(): boolean;
@@ -25,7 +25,12 @@ type SpawnedTtsProcess = ChildProcess & {
   stderr: NodeJS.ReadableStream & { setEncoding(encoding: BufferEncoding): void };
 };
 
-function normalizeText(text: string, maxChars: number): string {
+/**
+ * Se exporta porque el TTS remoto tiene que limpiar exactamente igual: la voz
+ * no debe leer los asteriscos ni las comillas invertidas del markdown, venga la
+ * sintesis de donde venga.
+ */
+export function normalizeText(text: string, maxChars: number): string {
   return text
     .replace(/```[\s\S]*?```/g, " bloque de codigo ")
     .replace(/`([^`]+)`/g, "$1")

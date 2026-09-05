@@ -16,7 +16,8 @@ type ImprovementsClient = ReturnType<typeof createImprovementsClient>;
 const HISTORY_LIMIT = 20;
 /** Turnos que se conservan en memoria; el historial completo vive en el equipo. */
 const MAX_TURNS = 40;
-const CAPTURE_POLL_MS = 350;
+const CAPTURE_POLL_MS = 1_000;
+const CAPTURE_TIMEOUT_MS = 120_000;
 
 export type ConversationState = "idle" | "processing" | "error";
 
@@ -92,6 +93,8 @@ export function useConversation({
    */
   const pendingCaptures = useRef<Set<string>>(new Set());
   const capturedTurns = useRef<Set<string>>(new Set());
+  const captureGeneration = useRef(0);
+  useEffect(() => () => { captureGeneration.current++; }, []);
 
   const upsertTurn = useCallback((turn: PiTurnState) => {
     setTurns((current) => {
@@ -354,6 +357,7 @@ export function useConversation({
       return;
     }
 
+    captureGeneration.current++;
     setTurns([]);
     setActiveTurnId(null);
     setState("idle");
@@ -380,6 +384,7 @@ export function useConversation({
         return;
       }
 
+      const generation = captureGeneration.current;
       pendingCaptures.current.add(turnId);
       setSavingTurnIds((current) => new Set(current).add(turnId));
       setFailedTurnIds((current) => {
@@ -390,19 +395,30 @@ export function useConversation({
 
       try {
         const accepted = await improvementsClient.captureTurn(turnId);
-        let job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
-        while (job.status === "queued" || job.status === "running") {
-          await new Promise((resolve) => window.setTimeout(resolve, CAPTURE_POLL_MS));
-          job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
+        if (generation !== captureGeneration.current) return;
+        if (!accepted.ok) throw new Error(accepted.message);
+        if (!accepted.saved) {
+          const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+          let job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
+          while (job.status === "queued" || job.status === "running") {
+            if (Date.now() >= deadline) throw new Error("El guardado sigue pendiente. Reintenta para comprobarlo.");
+            await new Promise((resolve) => window.setTimeout(resolve, CAPTURE_POLL_MS));
+            if (generation !== captureGeneration.current) return;
+            job = (await improvementsClient.getCaptureJob(accepted.jobId)).job;
+          }
+          if (job.status !== "succeeded") {
+            throw new Error(job.error ?? "No se pudo guardar. Inténtalo de nuevo.");
+          }
         }
-        if (job.status !== "succeeded") {
-          throw new Error(job.error ?? "No se pudo guardar. Inténtalo de nuevo.");
-        }
+        if (generation !== captureGeneration.current) return;
         capturedTurns.current.add(turnId);
         setSavedTurnIds((current) => new Set(current).add(turnId));
-      } catch {
+      } catch (error) {
+        if (generation !== captureGeneration.current) return;
+        alert.raise(error);
         setFailedTurnIds((current) => new Set(current).add(turnId));
       } finally {
+        if (generation !== captureGeneration.current) return;
         pendingCaptures.current.delete(turnId);
         setSavingTurnIds((current) => {
           const next = new Set(current);

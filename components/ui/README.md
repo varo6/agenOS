@@ -6,7 +6,8 @@ Proyecto React de la shell principal del sistema. Aquí vive el micro, el comand
 
 ```bash
 cd components/ui
-bun install
+bun install --frozen-lockfile
+bun run install:electron
 bun dev
 ```
 
@@ -35,4 +36,4 @@ Electron monta `dist/index.html` con `loadFile(...)` y el renderer consume capac
 - IPC por `window.agenosSystem` y `window.agenosPi` cuando el preload está disponible.
 - Fallback HTTP al API Bun para desarrollo web, rollback y compatibilidad.
 
-El flujo detallado está documentado en [docs/installer/electron-system-shell.md](/home/varose/code/agenOS/docs/installer/electron-system-shell.md).
+El flujo detallado está documentado en [docs/installer/electron-system-shell.md](../../docs/installer/electron-system-shell.md).

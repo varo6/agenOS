@@ -129,6 +129,8 @@ export type ImprovementSourceTurn = {
   reply: string;
 };
 
+export type SavedReply = ImprovementSourceTurn & { savedAt: string };
+
 /** Trabajo de destilado encolado por el boton. */
 export type ImprovementCaptureJobStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -143,6 +145,8 @@ export type ImprovementCaptureJob = {
   category?: ImprovementCategory;
   /** Motivo del fallo, en espanol y sin datos del usuario. */
   error?: string;
+  /** Contexto acotado para reanudar el trabajo aunque cambie la conversación. */
+  sourceTurns?: ImprovementSourceTurn[];
 };
 
 /** Respuesta de `POST /api/agent/improvements/capture`. */
@@ -152,6 +156,8 @@ export type ImprovementCaptureResponse = {
   status: ImprovementCaptureJobStatus;
   /** Frase para el usuario; nunca explica el mecanismo. */
   message: string;
+  /** La respuesta original ya está escrita, independientemente del destilado. */
+  saved?: boolean;
 };
 
 /** Respuesta de `GET /api/agent/improvements/capture/:jobId`. */
@@ -160,13 +166,7 @@ export type ImprovementCaptureJobResponse = {
   job: ImprovementCaptureJob;
 };
 
-/**
- * Destilador: convierte hasta cuatro turnos en un borrador de mejora.
- *
- * Es una interfaz y no una funcion concreta porque hay tres implementaciones
- * previstas: la real (`codex exec`), la de respaldo (sin modelo, cuando Codex
- * no esta disponible) y la falsa de los tests.
- */
+/** Extrae una preferencia reutilizable de hasta cuatro turnos. */
 export type ImprovementDistiller = {
   distill(input: {
     turns: ImprovementSourceTurn[];
