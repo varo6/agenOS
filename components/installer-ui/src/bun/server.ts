@@ -37,6 +37,7 @@ import { createConfirmationStore } from "./agent/confirmations";
 import { createMemoryStore } from "./agent/memory";
 import { createLearnedMemoryStore } from "./agent/learned-memory";
 import { createImprovementStore } from "./agent/improvements";
+import { createSavedReplyStore } from "./agent/saved-replies";
 import { createImprovementCaptureService } from "./agent/improvement-capture";
 import {
   createFallbackImprovementDistiller,
@@ -735,8 +736,10 @@ export function createInstallerApiHandler(
     }
     return improvements.list(isImprovementCategory(record.category) ? record.category : undefined);
   };
+  const savedReplies = createSavedReplyStore(improvements.rootDir);
   const improvementCapture = dependencies.improvementCapture ?? createImprovementCaptureService({
     store: improvements,
+    savedReplies,
     distiller: createPiImprovementDistiller(),
     fallbackDistiller: createFallbackImprovementDistiller(),
     /*
@@ -1399,6 +1402,20 @@ export function createInstallerApiHandler(
          * Mejoras del usuario. El orden importa: las tres rutas literales van
          * antes que el patron de :name, que si no se las tragaria.
          */
+        if (url.pathname === "/api/agent/saved-replies") {
+          if (request.method !== "GET") return methodNotAllowed(["GET", "OPTIONS"]);
+          const offset = Math.max(0, Math.floor(Number(url.searchParams.get("offset"))) || 0);
+          return json(savedReplies.list(url.searchParams.get("query") ?? "", 50, offset));
+        }
+        const savedReplyMatch = url.pathname.match(/^\/api\/agent\/saved-replies\/([^/]+)$/);
+        if (savedReplyMatch) {
+          if (request.method !== "DELETE") return methodNotAllowed(["DELETE", "OPTIONS"]);
+          const payload = await readJsonBody(request) as { explicitUserIntent?: unknown };
+          if (payload.explicitUserIntent !== true) return json({ ok: false, message: "Borrar requiere una petición explícita." }, { status: 403 });
+          savedReplies.forget(decodeURIComponent(savedReplyMatch[1] ?? ""));
+          return json({ ok: true });
+        }
+
         if (url.pathname === "/api/agent/improvements/capture") {
           if (request.method !== "POST") {
             return methodNotAllowed(["POST", "OPTIONS"]);

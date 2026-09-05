@@ -10,6 +10,7 @@ import { AgentAdminPanel } from "../AgentAdminPanel";
 import { AgentDiagnosticsButton } from "../AgentDiagnosticsButton";
 import { AgentHealthChecklist } from "../AgentHealthChecklist";
 import { LearningPanel } from "../LearningPanel";
+import { SavedRepliesPanel } from "../SavedRepliesPanel";
 import { Button, Panel } from "../ui";
 import { NetworkConnectionPanel } from "../../../../network/react/NetworkConnectionPanel";
 import type { NetworkClient } from "../../../../network/client";
@@ -111,6 +112,7 @@ export function SystemView({
       </Panel>
 
       <LearningPanel client={adminClient} />
+      <SavedRepliesPanel />
 
       {/*
        * Un `details` y no una pestaña: se abre con teclado, se anuncia como

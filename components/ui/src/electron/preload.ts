@@ -1,7 +1,9 @@
+import type { ImprovementsBridge } from "../lib/improvements-bridge";
 import { contextBridge, ipcRenderer } from "electron";
 
 import {
   PI_IPC_CHANNELS,
+  IMPROVEMENTS_IPC_CHANNELS,
   REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
@@ -248,3 +250,11 @@ contextBridge.exposeInMainWorld("agenosNetwork", {
   },
   isAvailable,
 });
+
+contextBridge.exposeInMainWorld("agenosImprovements", {
+  isAvailable,
+  captureTurn: (turnId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.capture, { turnId }),
+  getCaptureJob: (jobId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.job, { jobId }),
+  listSavedReplies: (query = "", offset = 0) => invokePi(IMPROVEMENTS_IPC_CHANNELS.list, { query, offset }),
+  forgetSavedReply: (turnId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.forget, { turnId }),
+} satisfies ImprovementsBridge);

@@ -7,6 +7,7 @@ import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from ".
 import { loadPreferredFrontend } from "./frontend-loader";
 import {
   PI_IPC_CHANNELS,
+  IMPROVEMENTS_IPC_CHANNELS,
   REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
   SYSTEM_IPC_CHANNELS,
@@ -347,6 +348,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle(PI_IPC_CHANNELS.logout, () => wrapPi(() => {
     return getPiClient().logout();
   }));
+  ipcMain.handle(IMPROVEMENTS_IPC_CHANNELS.capture, (_event, payload: { turnId?: unknown }) => wrapPi(() =>
+    getPiClient().captureTurn(String(payload?.turnId ?? ""))));
+  ipcMain.handle(IMPROVEMENTS_IPC_CHANNELS.job, (_event, payload: { jobId?: unknown }) => wrapPi(() =>
+    getPiClient().getCaptureJob(String(payload?.jobId ?? ""))));
+  ipcMain.handle(IMPROVEMENTS_IPC_CHANNELS.list, (_event, payload: { query?: unknown; offset?: unknown }) => wrapPi(() =>
+    getPiClient().listSavedReplies(String(payload?.query ?? ""), typeof payload?.offset === "number" ? payload.offset : 0)));
+  ipcMain.handle(IMPROVEMENTS_IPC_CHANNELS.forget, (_event, payload: { turnId?: unknown }) => wrapPi(() =>
+    getPiClient().forgetSavedReply(String(payload?.turnId ?? ""))));
   ipcMain.handle(PI_IPC_CHANNELS.newConversation, () => wrapPi(() => {
     return getPiClient().startNewConversation();
   }));

@@ -3,6 +3,23 @@ import { describe, expect, test } from "bun:test";
 import { BrokerApiError, createBrokerPiClient } from "../src/electron/broker-pi-client";
 
 describe("Electron Pi broker client", () => {
+  test("autentica el guardado y limita la espera sin exponer el token al renderer", async () => {
+    let called = false;
+    const client = createBrokerPiClient({
+      readToken: () => "private-token",
+      fetchImpl: (async (input, init) => {
+        called = true;
+        expect(String(input)).toBe("http://127.0.0.1:4173/api/agent/improvements/capture");
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer private-token");
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+        expect(JSON.parse(String(init?.body))).toEqual({ turnId: "t1" });
+        return Response.json({ ok: true, saved: true, jobId: "j1", status: "queued" });
+      }) as typeof fetch,
+    });
+    expect((await client.captureTurn("t1")).saved).toBe(true);
+    expect(called).toBe(true);
+  });
+
   test("delegates Pi turns to the authenticated broker API", async () => {
     const calls: Array<{ url: string; method: string; authorization: string | null; body: string }> = [];
     const client = createBrokerPiClient({

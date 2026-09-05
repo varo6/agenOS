@@ -28,6 +28,22 @@ function createFetch(response: () => Response) {
 }
 
 describe("createImprovementsClient", () => {
+  test("usa el puente autenticado al arrancar desde archivos locales", async () => {
+    const previous = globalThis.window;
+    const calls: string[] = [];
+    globalThis.window = {
+      location: new URL("file:///opt/agenos/dist/index.html"),
+      agenosImprovements: {
+        isAvailable: () => true,
+        captureTurn: async (turnId: string) => { calls.push(turnId); return { ok: true, saved: true, jobId: "job", status: "queued", message: "Guardada" }; },
+      },
+    } as unknown as Window & typeof globalThis;
+    try {
+      expect((await createImprovementsClient().captureTurn("turn_1")).saved).toBe(true);
+      expect(calls).toEqual(["turn_1"]);
+    } finally { globalThis.window = previous; }
+  });
+
   test("encola la captura de un turno en el broker", async () => {
     const { fetchImpl, requests } = createFetch(() =>
       new Response(JSON.stringify({

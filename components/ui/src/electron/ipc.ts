@@ -71,3 +71,10 @@ export const REMOTE_IPC_CHANNELS = {
  * confirma que lo que entra por el micrófono es voz y no ruido de sala.
  */
 export type SpeechCapturePhase = "listening" | "speech" | "transcribing";
+
+export const IMPROVEMENTS_IPC_CHANNELS = {
+  capture: "agenos:improvements:capture",
+  job: "agenos:improvements:job",
+  list: "agenos:improvements:list-saved",
+  forget: "agenos:improvements:forget-saved",
+} as const;
