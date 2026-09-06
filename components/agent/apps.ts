@@ -10,8 +10,6 @@ import {
   defaultRunCommand,
   executableExists,
   launchGraphicalApplication,
-  type CommandRunOptions,
-  type CommandRunResult,
   type GraphicalLaunchStatus,
   type RunCommand,
   type SpawnGraphicalCommand,

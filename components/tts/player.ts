@@ -2,17 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 
 import type { TtsPaths } from "./paths";
 
-/**
- * Reproductor del WAV que devuelve el TTS remoto.
- *
- * espeak-ng escribe el sonido el mismo, asi que hasta ahora nada en AgenOS
- * tenia que reproducir audio. Azure devuelve bytes, y alguien tiene que
- * sacarlos por los altavoces.
- *
- * Se usa `aplay` y no `pw-play` ni `paplay` por dos razones: ya viene instalado
- * con alsa-utils, que la imagen trae por el microfono, y acepta un WAV por una
- * tuberia no buscable. Los reproductores basados en libsndfile fallan ahi.
- */
+/** Reproduce WAV por stdin con aplay, incluido en alsa-utils. */
 
 export type WavPlayerFailureCode = "unavailable" | "cancelled" | "synthesis-failed";
 
@@ -51,8 +41,7 @@ export function createWavPlayer(options: WavPlayerOptions): WavPlayer {
       return;
     }
 
-    // Mismo ritual que el TTS local: aviso amable y, si no se entera, a la
-    // fuerza. Sin esto una respuesta larga sigue sonando tras pulsar "parar".
+    // Si SIGTERM no detiene la reproducción, fuerza la salida tras 750 ms.
     child.kill("SIGTERM");
     setTimeout(() => {
       if (active === child && child.exitCode === null && child.signalCode === null) {

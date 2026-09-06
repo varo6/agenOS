@@ -26,8 +26,6 @@ const ENV_NAMES: Record<RemoteSecretName, string> = {
   azureSpeechKey: "AGENOS_AZURE_SPEECH_KEY",
 };
 
-export const REMOTE_SECRET_ENV_NAMES = ENV_NAMES;
-
 export type RemoteSecretsStoreOptions = {
   env?: Record<string, string | undefined>;
   /** Ruta del `secrets.env`. Por defecto `~/.agenos/remote/secrets.env`. */

@@ -60,7 +60,7 @@ function fakeRuntime(options: FakeRuntimeOptions = {}) {
       engine: "whisper.cpp",
     }),
     ensureReady: async () => {},
-    transcribeWav: async (wav, transcribeOptions): Promise<TranscribeWavResult> => {
+    transcribeWav: async (wav): Promise<TranscribeWavResult> => {
       if (options.transcribeError) {
         throw options.transcribeError;
       }

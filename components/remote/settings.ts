@@ -1,33 +1,12 @@
-/**
- * Ajustes de los servicios remotos opcionales de voz.
- *
- * Por defecto AgenOS transcribe y habla en local. Este modulo describe el
- * interruptor que permite delegar cualquiera de las dos cosas en un servicio
- * externo para liberar CPU del equipo, sin tocar la ruta local: si el
- * interruptor esta apagado nada de esto llega a ejecutarse.
- *
- * El idioma es castellano fijo en las dos direcciones, igual que en la ruta
- * local. No hay autodeteccion ni ingles.
- */
+/** Ajustes de dictado y lectura remotos. Ambos están desactivados por defecto. */
 
-/** Groq sirve Whisper large v3 por una API compatible con la de OpenAI. */
 export type RemoteSttProvider = "groq";
-
-/**
- * Azure AI Speech es el unico proveedor con voces castellanas nativas, medio
- * millon de caracteres gratis al mes de forma recurrente y salida WAV directa.
- * Groq no vale aqui: sus modelos de voz solo hablan ingles y arabe.
- */
 export type RemoteTtsProvider = "azure";
 
 export type RemoteSttSettings = {
   /** Interruptor del usuario. Apagado = se usa Voxtype en local. */
   enabled: boolean;
   provider: RemoteSttProvider;
-  /**
-   * `whisper-large-v3-turbo` es 2,8 veces mas barato y mas rapido;
-   * `whisper-large-v3` acierta algo mas. Los dos son multiidioma.
-   */
   model: string;
   baseUrl: string;
   timeoutMs: number;
@@ -41,10 +20,7 @@ export type RemoteTtsSettings = {
   region: string;
   /** Voz neuronal castellana. */
   voice: string;
-  /**
-   * WAV a secas y no mp3: asi el audio se reproduce con `aplay`, que ya viene
-   * en la imagen por el microfono, y no hace falta ningun descodificador.
-   */
+  /** Formato WAV compatible con aplay. */
   outputFormat: string;
   timeoutMs: number;
 };
@@ -120,8 +96,7 @@ export function normalizeGroqModel(value: unknown, fallback: string): string {
 
 export function normalizeAzureVoice(value: unknown, fallback: string): string {
   const raw = typeof value === "string" ? value.trim() : "";
-  // Cualquier voz `es-ES-*` vale: Azure anade voces nuevas mas a menudo de lo
-  // que se actualiza esta lista, pero el castellano no es negociable.
+  // Acepta voces es-ES aunque todavía no estén en la lista del panel.
   return /^es-ES-[A-Za-z0-9:]+$/.test(raw) ? raw : fallback;
 }
 
@@ -180,12 +155,7 @@ export function parseRemoteServicesSettings(raw: unknown): RemoteServicesSetting
   });
 }
 
-/**
- * Las variables de entorno mandan sobre el fichero.
- *
- * Es la valvula de escape para fijar el modo desde la imagen o desde un
- * despliegue sin depender de que alguien pulse el interruptor.
- */
+/** Las variables de entorno tienen prioridad sobre los ajustes del fichero. */
 export function applyRemoteServicesEnv(
   settings: RemoteServicesSettings,
   env: EnvLike = process.env,

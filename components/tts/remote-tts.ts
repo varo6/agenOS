@@ -3,17 +3,7 @@ import { normalizeText } from "./local-tts";
 import type { LocalTtsResult, LocalTtsService } from "./local-tts";
 import type { WavPlayer } from "./player";
 
-/**
- * TTS remoto contra Azure AI Speech.
- *
- * Es el unico proveedor grande con voces castellanas nativas, medio millon de
- * caracteres gratis al mes de forma recurrente y salida WAV directa. Groq, que
- * es quien pone el dictado, no sirve para hablar: sus voces solo hacen ingles y
- * arabe.
- *
- * Se pide WAV y no mp3 a proposito: asi el audio se reproduce con `aplay`, que
- * ya esta en la imagen, y no hace falta arrastrar ningun descodificador.
- */
+/** Sintetiza voz con Azure Speech y reproduce el WAV mediante aplay. */
 
 const MISSING_KEY_REASON =
   "Voz en la nube no disponible: falta la clave de Azure Speech. Anadela en el panel de servicios remotos.";

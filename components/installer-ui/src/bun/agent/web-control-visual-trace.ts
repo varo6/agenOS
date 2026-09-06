@@ -104,7 +104,7 @@ export function createWebControlVisualTracer(options: TraceOptions): WebControlV
   let sequence = 0;
 
   return {
-    async run<T>(input, context, operation) {
+    async run(input, context, operation) {
       const startedAtMs = now();
       const action = normalizeAction(input.action);
       const stepId = options.createStepId?.(startedAtMs)
