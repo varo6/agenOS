@@ -7,6 +7,7 @@ import { BrokerApiError, createBrokerPiClient, DEFAULT_BROKER_BASE_URL } from ".
 import { loadPreferredFrontend } from "./frontend-loader";
 import {
   PI_IPC_CHANNELS,
+  ACTIVITY_IPC_CHANNELS,
   IMPROVEMENTS_IPC_CHANNELS,
   REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
@@ -294,6 +295,17 @@ function wrapPi<T>(operation: () => T | Promise<T>): Promise<IpcEnvelope<T>> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.handle(ACTIVITY_IPC_CHANNELS.confirmations, () => wrapPi(() => getPiClient().listConfirmations()));
+  ipcMain.handle(ACTIVITY_IPC_CHANNELS.tasks, () => wrapPi(() => getPiClient().listTasks()));
+  ipcMain.handle(ACTIVITY_IPC_CHANNELS.events, (_event, payload: { taskId?: unknown }) => wrapPi(() => {
+    if (typeof payload?.taskId !== "string" || !payload.taskId.trim()) throw new Error("Falta la tarea.");
+    return getPiClient().taskEvents(payload.taskId);
+  }));
+  ipcMain.handle(ACTIVITY_IPC_CHANNELS.resolve, (_event, payload: { confirmationId?: unknown; decision?: unknown }) => wrapPi(() => {
+    if (typeof payload?.confirmationId !== "string" || !payload.confirmationId.trim()
+      || (payload.decision !== "confirm" && payload.decision !== "deny")) throw new Error("Decisión no válida.");
+    return getPiClient().resolveConfirmation(payload.confirmationId, payload.decision);
+  }));
   ipcMain.handle(SYSTEM_IPC_CHANNELS.getPreflight, async (): Promise<PreflightResponse> => systemServices.getPreflight());
   ipcMain.handle(SYSTEM_IPC_CHANNELS.runMaintenance, async (_event, action: unknown): Promise<ApiMessageResponse> => (
     normalizeApiMessageResponse(await systemServices.runMaintenance(action))

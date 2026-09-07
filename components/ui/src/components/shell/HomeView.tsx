@@ -17,8 +17,11 @@ import { ConnectionPanel } from "./ConnectionPanel";
 import { ConversationPanel } from "./ConversationPanel";
 import { LatestReply } from "./LatestReply";
 import { NewConversationButton } from "./NewConversationButton";
+import { ActivityPanel } from "./ActivityPanel";
+import type { Activity } from "../../hooks/useActivity";
 
 export type HomeViewProps = {
+  activity: Activity;
   voice: VoiceController;
   conversation: Conversation;
   session: PiSession;
@@ -67,6 +70,7 @@ export function HomeView({
   busy,
   actions,
   tts,
+  activity,
 }: HomeViewProps) {
   const readiness = resolveShellReadiness({
     harnessAvailable: session.ready,
@@ -82,6 +86,7 @@ export function HomeView({
         id="contenido"
       >
         <h1 className="sr-only">Falta un paso para hablar con Pi</h1>
+        <ActivityPanel activity={activity} />
 
         <AgentOnboardingPanel
           adminStatus={health.status}
@@ -171,6 +176,7 @@ export function HomeView({
           />
 
           <StopTtsButton tts={tts} />
+          <ActivityPanel activity={activity} />
         </>
       ) : (
         <>
@@ -232,6 +238,7 @@ export function HomeView({
            * buscar.
            */}
           <LatestReply onStop={() => void conversation.stop()} turns={conversation.turns} />
+          <ActivityPanel activity={activity} />
           <ConversationPanel
             onSaveToMemory={conversation.saveToMemory}
             savedTurnIds={conversation.savedTurnIds}

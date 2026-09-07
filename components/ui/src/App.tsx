@@ -13,6 +13,7 @@ import { NetworkConnectionPanel } from "../../network/react/NetworkConnectionPan
 import {
   agentAdminClient,
   agentClient,
+  activityClient,
   improvementsClient,
   networkClient,
   piClient,
@@ -25,6 +26,7 @@ import {
   resolveBlockedReason,
 } from "./lib/shell-state";
 import { useAgentHealth } from "./hooks/useAgentHealth";
+import { useActivity } from "./hooks/useActivity";
 import { useConversation } from "./hooks/useConversation";
 import { useNetworkStatus } from "./hooks/useNetworkStatus";
 import { usePiSession } from "./hooks/usePiSession";
@@ -50,6 +52,7 @@ export default function App() {
   const { alert, sink } = useSystemAlert();
   const network = useNetworkStatus(networkClient);
   const health = useAgentHealth(agentAdminClient);
+  const activity = useActivity(activityClient);
   const session = usePiSession({ client: piClient, alert: sink });
   const workspaces = useWorkspaces({ client: agentClient, alert: sink, subscribe: workspaceSubscription });
 
@@ -58,8 +61,8 @@ export default function App() {
 
   const handleTurnSettled = useCallback(() => {
     // Un turno puede haber abierto una app o cambiado de escritorio.
-    void Promise.allSettled([session.refresh(), workspaces.refresh()]);
-  }, [session.refresh, workspaces.refresh]);
+    void Promise.allSettled([session.refresh(), workspaces.refresh(), activity.refresh()]);
+  }, [session.refresh, workspaces.refresh, activity.refresh]);
 
   const conversation = useConversation({
     piClient,
@@ -81,8 +84,8 @@ export default function App() {
   );
 
   const currentTool = conversation.activeTurn?.progress.currentTool ?? null;
-  const activity = { conversationState: conversation.state, sessionBusy: session.busy, currentTool };
-  const busy = isAgentBusy(activity);
+  const agentState = { conversationState: conversation.state, sessionBusy: session.busy, currentTool };
+  const busy = isAgentBusy(agentState);
   const blockedReason = resolveBlockedReason({
     online: network.online,
     authState: session.authState,
@@ -91,7 +94,7 @@ export default function App() {
 
   const voice = useVoice({
     onTranscript: handleTranscript,
-    agentState: resolveAgentState(activity),
+    agentState: resolveAgentState(agentState),
     currentTool,
     blockedReason,
     agentIssue: alert?.hint ?? null,
@@ -177,6 +180,7 @@ export default function App() {
         />
       ) : (
         <HomeView
+          activity={activity}
           actions={actions}
           blockedReason={blockedReason}
           busy={busy}
