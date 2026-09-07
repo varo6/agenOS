@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 
 import { PI_CUSTOM_MODELS, PI_PROVIDER_ID } from "../../../../ui/dev/pi-harness";
 import type { Improvement, ImprovementDraft } from "../../../../agent/improvements-types";

@@ -1,3 +1,4 @@
+import type { ImprovementCaptureResponse, ImprovementCaptureJobResponse, SavedReply } from "../../../agent/improvements-types";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -65,7 +66,21 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
     return payload as T;
   }
 
+  const memoryRequest = <T>(path: string, init: RequestInit = {}) => request<T>(path, { ...init, signal: AbortSignal.timeout(8_000) });
+
   return {
+    captureTurn(turnId: string): Promise<ImprovementCaptureResponse> {
+      return memoryRequest("/api/agent/improvements/capture", { method: "POST", body: JSON.stringify({ turnId }) });
+    },
+    getCaptureJob(jobId: string): Promise<ImprovementCaptureJobResponse> {
+      return memoryRequest(`/api/agent/improvements/capture/${encodeURIComponent(jobId)}`);
+    },
+    listSavedReplies(query = "", offset = 0): Promise<SavedReply[]> {
+      return memoryRequest(`/api/agent/saved-replies?${new URLSearchParams({ query, offset: String(offset) })}`);
+    },
+    forgetSavedReply(turnId: string): Promise<{ ok: boolean }> {
+      return memoryRequest(`/api/agent/saved-replies/${encodeURIComponent(turnId)}`, { method: "DELETE", body: JSON.stringify({ explicitUserIntent: true }) });
+    },
     getStatus(): Promise<PiStatusResponse> {
       return request("/api/pi/status");
     },

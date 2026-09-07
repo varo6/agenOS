@@ -218,7 +218,7 @@ export async function launchBrowserUrl(
       disableSandbox: securityDegraded,
       disableGpu: graphicsDegraded,
     });
-    const launch = await launchGraphicalApplication({
+    return launchGraphicalApplication({
       command,
       args,
       env,
@@ -237,11 +237,10 @@ export async function launchBrowserUrl(
       signal: options.signal,
       onProgress: options.onProgress,
     });
-    return { args, launch };
   };
 
   let actualPlatform = platform;
-  let { args, launch } = await launchOnPlatform(platform);
+  let launch = await launchOnPlatform(platform);
   const configuredPlatform = env.AGENOS_BROWSER_OZONE_PLATFORM?.trim().toLowerCase();
   const canFallbackToX11 = platform === "wayland"
     && Boolean(env.DISPLAY)
@@ -251,12 +250,11 @@ export async function launchBrowserUrl(
     options.onProgress?.("Chromium falló sobre Wayland; reintentando mediante XWayland…");
     actualPlatform = "x11";
     const fallback = await launchOnPlatform(actualPlatform);
-    args = fallback.args;
     launch = {
-      ...fallback.launch,
-      message: fallback.launch.ok
-        ? `El arranque Wayland falló; ${fallback.launch.message} Se usó XWayland como respaldo.`
-        : `Chromium falló sobre Wayland y también sobre XWayland. ${fallback.launch.message}`,
+      ...fallback,
+      message: fallback.ok
+        ? `El arranque Wayland falló; ${fallback.message} Se usó XWayland como respaldo.`
+        : `Chromium falló sobre Wayland y también sobre XWayland. ${fallback.message}`,
     };
   }
 
@@ -271,12 +269,11 @@ export async function launchBrowserUrl(
   if (usedScope && launch.status === "failed") {
     options.onProgress?.("Chromium no arrancó en su propio scope de systemd; reintentando sin él…");
     const retry = await launchOnPlatform(actualPlatform, false);
-    args = retry.args;
     launch = {
-      ...retry.launch,
-      message: retry.launch.ok
-        ? `${retry.launch.message} Se lanzó fuera del scope de systemd, así que se cerrará si se reinicia el broker.`
-        : retry.launch.message,
+      ...retry,
+      message: retry.ok
+        ? `${retry.message} Se lanzó fuera del scope de systemd, así que se cerrará si se reinicia el broker.`
+        : retry.message,
     };
   }
 

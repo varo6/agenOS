@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createInstallerApiHandler } from "../server";
 import { createImprovementStore } from "./improvements";
+import { createSavedReplyStore } from "./saved-replies";
 import { createImprovementCaptureService } from "./improvement-capture";
 import type { ImprovementDraft, ImprovementSourceTurn } from "../../../../agent/improvements-types";
 
@@ -43,6 +44,7 @@ beforeEach(() => {
   store = createImprovementStore({ rootDir });
   capture = createImprovementCaptureService({
     store,
+    savedReplies: createSavedReplyStore(rootDir),
     distiller: { distill: () => Promise.resolve(draft) },
     listTurns: () => TURNS,
   });
@@ -70,7 +72,7 @@ describe("rutas de mejoras", () => {
     const payload = await response.json() as { ok: boolean; jobId: string; message: string };
     expect(payload.ok).toBe(true);
     // El mensaje es para el usuario: no puede hablar de destilados ni de colas.
-    expect(payload.message).toBe("Guardando…");
+    expect(payload.message).toBe("Respuesta guardada. Puedes verla en Sistema.");
 
     const running = await get(`/api/agent/improvements/capture/${payload.jobId}`);
     expect(running.status).toBe(200);
@@ -82,6 +84,19 @@ describe("rutas de mejoras", () => {
     expect(store.get("reservar-restaurante")?.body).toContain("TheFork");
     // Se guardan los dos turnos: el marcado y el anterior, que da el contexto.
     expect(store.get("reservar-restaurante")?.sourceTurnIds).toEqual(["turn_0", "turn_1"]);
+    const saved = await (await get("/api/agent/saved-replies?query=TheFork")).json();
+    expect(saved).toMatchObject([{ turnId: "turn_1", reply: TURNS[1]?.reply }]);
+  });
+
+  test("borra una respuesta solo con intención explícita y la retira de la búsqueda", async () => {
+    createSavedReplyStore(rootDir).save(TURNS[1]!);
+    const remove = (body: unknown) => handler.fetch(new Request("http://127.0.0.1:4173/api/agent/saved-replies/turn_1", {
+      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }));
+    expect((await remove({})).status).toBe(403);
+    expect((await (await get("/api/agent/saved-replies")).json())).toHaveLength(1);
+    expect((await remove({ explicitUserIntent: true })).status).toBe(200);
+    expect(await (await get("/api/agent/saved-replies")).json()).toEqual([]);
   });
 
   test("capturar sin turno es un 400", async () => {

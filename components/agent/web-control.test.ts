@@ -86,6 +86,7 @@ type ScriptValue = unknown | (() => unknown);
 type HarnessOptions = {
   targets?: () => unknown[];
   listFailures?: number;
+  onNewTarget?: () => void;
   scripts?: Record<string, ScriptValue>;
   commands?: Record<string, CdpReply>;
   /** Permite inyectar ruido en el canal antes o despues de la respuesta buena. */
@@ -123,6 +124,7 @@ function createHarness(options: HarnessOptions = {}) {
     }
     if (url.includes("/json/new")) {
       expect(String(init?.method)).toBe("PUT");
+      options.onNewTarget?.();
       return new Response(JSON.stringify({ id: "TARGET-NUEVO" }), { status: 200 });
     }
     return new Response("[]", { status: 200 });
@@ -152,7 +154,7 @@ function createHarness(options: HarnessOptions = {}) {
     if (value === undefined) {
       return {};
     }
-    return { result: { value } };
+    return { result: { result: { value } } };
   }
 
   const connectWebSocket = async (url: string): Promise<CdpSocket> => {
@@ -341,7 +343,7 @@ describe("scripts inyectados", () => {
 
   test("buildClickScript y buildTypeScript escapan lo que viene del modelo", () => {
     const click = buildClickScript('e1"] , script[src');
-    expect(click).toContain(JSON.stringify(JSON.stringify('e1"] , script[src')));
+    expect(click).toContain(`JSON.stringify(${JSON.stringify('e1"] , script[src')})`);
 
     expect(buildTypeScript("e7", 'hola "mundo"', true)).toContain('var VALUE = "hola \\"mundo\\"";');
     expect(buildTypeScript("e7", "x", true)).toContain("var CLEAR = true;");
@@ -487,8 +489,7 @@ describe("canal CDP", () => {
     const { controller } = createHarness({
       commands: {
         "Runtime.evaluate": {
-          result: { exceptionDetails: {} },
-          exceptionDetails: { exception: { description: "TypeError: x is not a function" } },
+          result: { exceptionDetails: { exception: { description: "TypeError: x is not a function" } } },
         },
       },
     });
@@ -644,21 +645,10 @@ describe("open", () => {
     const abiertas: unknown[] = [];
     const { controller, state } = createHarness({
       targets: () => [...abiertas],
+      onNewTarget: () => { abiertas.push(PAGE_TARGET); },
       scripts: { info: { ok: true, url: "https://example.com/", title: "Ejemplo", readyState: "complete" } },
     });
-    // La primera consulta no ve pestañas; tras /json/new aparece una.
-    const original = state.fetched;
-    const { controller: _unused } = { controller };
-    void _unused;
-    void original;
-
-    const promise = (async () => {
-      const result = await controller.open("https://example.com/");
-      return result;
-    })();
-    // /json/new es lo que hace aparecer la pestaña.
-    queueMicrotask(() => abiertas.push(PAGE_TARGET));
-    const result = await promise;
+    const result = await controller.open("https://example.com/");
 
     expect(state.fetched.some((url) => url.includes("/json/new?https%3A%2F%2Fexample.com%2F"))).toBe(true);
     expect(result.ok).toBe(true);

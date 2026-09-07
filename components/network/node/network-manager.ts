@@ -28,7 +28,6 @@ const NM_STATE_CONNECTING = 40;
 const NM_STATE_CONNECTED_LOCAL = 50;
 const NM_STATE_CONNECTED_SITE = 60;
 const NM_STATE_CONNECTED_GLOBAL = 70;
-const NM_DEVICE_TYPE_ETHERNET = 1;
 const NM_DEVICE_TYPE_WIFI = 2;
 const NM_DEVICE_STATE_ACTIVATED = 100;
 
@@ -441,7 +440,7 @@ export function createNetworkManagerService(dependencies: Partial<NetworkManager
     });
   }
 
-  async function resolveActiveConnection(bus: BusLike, nmProxy: ProxyObject, active: ActiveConnectionSummary[], devices: DeviceSummary[]): Promise<NetworkStatusResponse["activeConnection"]> {
+  async function resolveActiveConnection(bus: BusLike, active: ActiveConnectionSummary[], devices: DeviceSummary[]): Promise<NetworkStatusResponse["activeConnection"]> {
     const activated = devices.find((device) => device.state === NM_DEVICE_STATE_ACTIVATED);
     if (!activated) {
       return undefined;
@@ -518,7 +517,7 @@ export function createNetworkManagerService(dependencies: Partial<NetworkManager
           checkedAt: deps.now().toISOString(),
           wifiEnabled,
           wirelessHardware,
-          activeConnection: await resolveActiveConnection(bus, nmProxy, activeConnections, devices),
+          activeConnection: await resolveActiveConnection(bus, activeConnections, devices),
           internet: {
             ok: overall === "online",
             captivePortalSuspected: overall === "portal",

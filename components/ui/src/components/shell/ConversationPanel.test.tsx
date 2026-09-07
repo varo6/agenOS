@@ -180,12 +180,12 @@ describe("ConversationPanel", () => {
       });
 
       const button = screen.getByRole("button", { name: /Ya guardada en memoria/ });
-      expect(button).toHaveTextContent("Lo tendré en cuenta");
+      expect(button).toHaveTextContent("Respuesta guardada");
       expect(button).toBeDisabled();
 
       const status = screen.getByRole("status");
       expect(status).toHaveAttribute("aria-live", "polite");
-      expect(status).toHaveTextContent("Guardado. Tendré en cuenta cómo resolví “abre Chrome”.");
+      expect(status).toHaveTextContent("Guardado en Sistema. Puedes volver a leer la respuesta a “abre Chrome”.");
     });
 
     test("un fallo se muestra con discreción y permite reintentar", () => {

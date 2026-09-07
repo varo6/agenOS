@@ -4,8 +4,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { OAuthCredentials, OAuthPrompt } from "@mariozechner/pi-ai/oauth";
-import { loginOpenAICodex } from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials, OAuthPrompt } from "@earendil-works/pi-ai/oauth";
+import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
 import {
   AuthStorage,
   createAgentSession,
@@ -13,7 +13,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 import {
   createHarnessTraceId,
@@ -116,7 +116,7 @@ export const SELECTABLE_PI_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-lu
 export const SELECTABLE_PI_REASONING_LEVELS = ["off", "low", "medium", "high"] as const;
 
 // Modelos que la suscripcion de Codex sirve pero que el catalogo interno de
-// @mariozechner/pi-ai todavia no trae. Sin esto, selectModel no puede elegirlos:
+// @earendil-works/pi-ai todavia no trae. Sin esto, selectModel no puede elegirlos:
 // solo mira lo que hay en el registro, asi que un id desconocido caia en
 // silencio al siguiente de la lista y Pi acababa hablando por gpt-5.4 mientras
 // la interfaz mostraba, con razon, "gpt-5.4".
@@ -524,7 +524,7 @@ function toAttemptResponse(attempt: LoginAttempt): PiAuthAttemptResponse {
 }
 
 const TURN_TEXT_MAX_CHARS = 4000;
-const MAX_RETAINED_TURNS = 20;
+const MAX_RETAINED_TURNS = 40;
 
 function truncateTurnText(value: string): string {
   return value.length > TURN_TEXT_MAX_CHARS ? value.slice(value.length - TURN_TEXT_MAX_CHARS) : value;

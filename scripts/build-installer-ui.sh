@@ -12,30 +12,13 @@ VIEW_DIST_DIR="${UI_DIR}/dist"
 SYSTEM_DIST_DIR="${SYSTEM_UI_DIR}/dist"
 ELECTRON_APP_DIR="${UI_DIR}/build/electron"
 ELECTRON_DIST_DIR="${UI_DIR}/node_modules/electron/dist"
-PI_AGENT_PACKAGE_DIR="${UI_DIR}/node_modules/@mariozechner/pi-coding-agent"
+PI_AGENT_PACKAGE_DIR="${UI_DIR}/node_modules/@earendil-works/pi-coding-agent"
 PLAYWRIGHT_PACKAGE_DIR="${UI_DIR}/node_modules/playwright-core"
 PACKAGED_BUN="$(command -v bun)"
 STAMP_FILE="${OUTPUT_DIR}/.build-stamp"
 
-# Los tests quedan fuera del hash a proposito: no se empaquetan ni se importan
-# desde el codigo que se compila, asi que editarlos solo disparaba un rebuild
-# completo cuyo resultado era byte a byte identico.
-source_hash() {
-  local target_dir="$1"
-  shift
-  (
-    cd "${target_dir}"
-    local inputs=()
-
-    for path in "$@"; do
-      [[ -e "${path}" ]] && inputs+=("${path}")
-    done
-
-    find "${inputs[@]}" -type f -not -path "*/node_modules/*" -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
-      | LC_ALL=C sort \
-      | xargs sha256sum
-  )
-}
+source "${ROOT_DIR}/scripts/source-hash.sh"
+source_hash() { hash_sources "$@"; }
 
 cd "${UI_DIR}"
 
@@ -43,9 +26,13 @@ CURRENT_HASH="$(
   {
     source_hash "${UI_DIR}" src public package.json bun.lock bun.lockb index.html vite.config.ts vitest.config.ts tsconfig.json tsconfig.node.json
     source_hash "${SYSTEM_UI_DIR}" src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
+    source_hash "${ROOT_DIR}/components/stt" .
+    source_hash "${ROOT_DIR}/components/tts" .
+    source_hash "${ROOT_DIR}/components/remote" .
     source_hash "${AGENT_DIR}" .
     source_hash "${NETWORK_DIR}" package.json bun.lock bun.lockb types.ts client.ts node react
-    sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh"
+    sha256sum "${ROOT_DIR}/scripts/build-installer-ui.sh" "${ROOT_DIR}/scripts/build-ui.sh" "${ROOT_DIR}/scripts/source-hash.sh"
+    bun --version
   } | sha256sum | awk '{print $1}'
 )"
 CURRENT_STAMP=""
@@ -64,6 +51,9 @@ if [[ -f bun.lock || -f bun.lockb ]]; then
 else
   bun install
 fi
+
+# Electron 42 descarga su runtime mediante un comando explícito.
+bun run install:electron
 
 if [[ -f "${NETWORK_DIR}/node/package.json" ]]; then
   (

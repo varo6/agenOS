@@ -121,51 +121,15 @@ download_verified_model() {
   mv "${path}.tmp" "${path}"
 }
 
+source "${ROOT_DIR}/scripts/source-hash.sh"
+
 source_hash() {
-  (
-    cd "${UI_DIR}"
-    local inputs=()
-
-    for path in src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json; do
-      [[ -e "${path}" ]] && inputs+=("${path}")
-    done
-
-    find "${inputs[@]}" -type f -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
-      | LC_ALL=C sort \
-      | xargs sha256sum
-  )
+  hash_sources "${UI_DIR}" src dev public package.json bun.lock bun.lockb index.html vite.config.ts tsconfig.json tsconfig.node.json
 }
-
-# Los tests quedan fuera del hash a proposito: no se empaquetan ni se importan
-# desde el codigo que se compila, asi que editarlos solo disparaba un rebuild
-# completo cuyo resultado era byte a byte identico.
-agent_source_hash() {
-  (
-    cd "${AGENT_DIR}"
-    find . -type f -not -name '*.test.ts' -not -name '*.test.tsx' -print 2>/dev/null \
-      | LC_ALL=C sort \
-      | xargs sha256sum
-  )
-}
-
-# components/stt lo importan tanto el main de Electron como el servidor HTTP,
-# asi que un cambio ahi tiene que invalidar el build empaquetado.
-stt_source_hash() {
-  (
-    cd "${STT_DIR}"
-    find . -type f -not -name '*.test.ts' -print 2>/dev/null \
-      | LC_ALL=C sort \
-      | xargs sha256sum
-  )
-}
-
+agent_source_hash() { hash_sources "${AGENT_DIR}" .; }
+stt_source_hash() { hash_sources "${STT_DIR}" .; }
 network_source_hash() {
-  (
-    cd "${NETWORK_DIR}"
-    find package.json bun.lock bun.lockb types.ts client.ts node react -type f -print 2>/dev/null \
-      | LC_ALL=C sort \
-      | xargs sha256sum
-  )
+  hash_sources "${NETWORK_DIR}" package.json bun.lock bun.lockb types.ts client.ts node react
 }
 
 install_whisper_native() {
@@ -398,6 +362,10 @@ CURRENT_HASH="$(
     agent_source_hash
     network_source_hash
     stt_source_hash
+    hash_sources "${ROOT_DIR}/components/tts" .
+    hash_sources "${ROOT_DIR}/components/remote" .
+    bun --version
+    sha256sum "${ROOT_DIR}/scripts/source-hash.sh"
     sha256sum "${ROOT_DIR}/scripts/build-ui.sh"
   } | sha256sum | awk '{print $1}'
 )"
@@ -418,6 +386,9 @@ if [[ -f bun.lock || -f bun.lockb ]]; then
 else
   bun install
 fi
+
+# Electron 42 descarga su runtime mediante un comando explícito.
+bun run install:electron
 
 if [[ -f "${NETWORK_DIR}/bun.lock" || -f "${NETWORK_DIR}/bun.lockb" ]]; then
   (cd "${NETWORK_DIR}" && bun install --frozen-lockfile)

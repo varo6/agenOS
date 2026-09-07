@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { WhisperEngineError, type SttEngineName } from "../../../../stt/engine";
 import { createSttRuntime, type SttRuntime } from "../../../../stt/runtime";
+import { createRemoteServicesStore } from "../../../../remote";
 
 /**
  * Ruta HTTP del STT local.
@@ -179,7 +180,10 @@ export function createSttService(options: SttServiceOptions = {}): SttService {
   const runCommand = options.runCommand ?? defaultSttCommandRunner;
   const tempDir = options.tempDir ?? tmpdir();
   const now = options.now ?? (() => Date.now());
-  const runtime = options.runtime ?? createSttRuntime({ env });
+  // El mismo interruptor que usa Electron: si el usuario ha encendido el
+  // dictado en la nube, la ruta HTTP tiene que ir por Groq tambien. Si no,
+  // encenderlo desde los ajustes solo habria cambiado la mitad del sistema.
+  const runtime = options.runtime ?? createSttRuntime({ env, remote: createRemoteServicesStore({ env }) });
 
   function status(): SttStatusResponse {
     const engineStatus = runtime.engine.status();

@@ -47,7 +47,7 @@ type SaveToMemoryButtonProps = {
  * "Guardar en memoria": el gesto con el que el usuario dice que esta respuesta
  * le ha servido.
  *
- * No pregunta nada ni enseña la nota. Mantiene el estado de escritura visible
+ * Mantiene el estado de escritura visible
  * y solo cambia el texto final cuando el broker confirma el fichero.
  */
 function SaveToMemoryButton({ turn, saved, saving, failed, onSave }: SaveToMemoryButtonProps) {
@@ -72,7 +72,7 @@ function SaveToMemoryButton({ turn, saved, saving, failed, onSave }: SaveToMemor
         size="md"
         variant="ghost"
       >
-        {saved ? "Lo tendré en cuenta" : saving ? "Guardando…" : "Guardar en memoria"}
+        {saved ? "Respuesta guardada" : saving ? "Guardando…" : "Guardar en memoria"}
       </Button>
 
       {/*
@@ -82,8 +82,9 @@ function SaveToMemoryButton({ turn, saved, saving, failed, onSave }: SaveToMemor
        * abrir el historial no dispare ningún anuncio.
        */}
       <p aria-live="polite" className="sr-only" role="status">
-        {saved ? `Guardado. Tendré en cuenta cómo resolví “${subject}”.` : ""}
+        {saved ? `Guardado en Sistema. Puedes volver a leer la respuesta a “${subject}”.` : ""}
       </p>
+      {saved ? <p className="mt-1 text-sm text-ink-muted">Puedes volver a leerla en Sistema, Respuestas guardadas.</p> : null}
       {failed ? (
         <p className="mt-1 text-sm text-danger" role="status">
           No se pudo guardar. Puedes intentarlo de nuevo.

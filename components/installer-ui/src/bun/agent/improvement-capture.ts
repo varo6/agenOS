@@ -5,6 +5,8 @@ import type {
   ImprovementSourceTurn,
 } from "../../../../agent/improvements-types";
 import type { createImprovementStore } from "./improvements";
+import { redactHarnessTraceText } from "../../../../agent/harness-trace";
+import type { createSavedReplyStore } from "./saved-replies";
 import { isReusableImprovementDraft } from "./improvement-distiller";
 
 type ImprovementStore = ReturnType<typeof createImprovementStore>;
@@ -24,7 +26,7 @@ const MAX_RETAINED_JOBS = 50;
 
 export type ImprovementCaptureServiceOptions = {
   store: ImprovementStore;
-  /** Destilador real. Puede devolver `null` si no hay Codex disponible. */
+  /** Devuelve null cuando no hay una sesión o preferencia reutilizable. */
   distiller: ImprovementDistiller;
   /** Respaldo sin modelo. Solo entra cuando el real no ha producido nada. */
   fallbackDistiller?: ImprovementDistiller;
@@ -37,6 +39,8 @@ export type ImprovementCaptureServiceOptions = {
   now?: () => Date;
   jobIdFactory?: () => string;
   maxConcurrent?: number;
+  timeoutMs?: number;
+  savedReplies?: ReturnType<typeof createSavedReplyStore>;
 };
 
 export type ImprovementCaptureService = {
@@ -62,7 +66,7 @@ export function createImprovementCaptureService(
   function remember(job: ImprovementCaptureJob): ImprovementCaptureJob {
     jobs.set(job.jobId, job);
     while (jobs.size > MAX_RETAINED_JOBS) {
-      const oldest = jobs.keys().next().value;
+      const oldest = [...jobs.values()].find((item) => item.status === "succeeded" || item.status === "failed")?.jobId;
       if (oldest === undefined) {
         break;
       }
@@ -73,11 +77,11 @@ export function createImprovementCaptureService(
   }
 
   function settle(job: ImprovementCaptureJob, patch: Partial<ImprovementCaptureJob>): void {
-    remember({ ...job, ...patch, finishedAt: now().toISOString() });
+    remember({ ...job, ...patch, sourceTurns: undefined, finishedAt: now().toISOString() });
   }
 
   function sourceTurnsFor(turnId: string): ImprovementSourceTurn[] {
-    const recent = options.listTurns(20);
+    const recent = options.listTurns(40);
     const index = recent.findIndex((turn) => turn.turnId === turnId);
     if (index === -1) {
       return [];
@@ -85,8 +89,8 @@ export function createImprovementCaptureService(
     const window = recent.slice(Math.max(0, index - (SOURCE_TURN_WINDOW - 1)), index + 1);
     return window.map((turn) => ({
       ...turn,
-      input: turn.input.slice(0, SOURCE_FIELD_MAX_CHARS),
-      reply: turn.reply.slice(0, SOURCE_FIELD_MAX_CHARS),
+      input: redactHarnessTraceText(turn.input).slice(0, SOURCE_FIELD_MAX_CHARS),
+      reply: redactHarnessTraceText(turn.reply).slice(0, SOURCE_FIELD_MAX_CHARS),
     }));
   }
 
@@ -105,15 +109,26 @@ export function createImprovementCaptureService(
   }
 
   async function run(job: ImprovementCaptureJob): Promise<void> {
-    const turns = sourceTurnsFor(job.turnId);
+    const turns = job.sourceTurns ?? sourceTurnsFor(job.turnId);
     if (turns.length === 0) {
       settle(job, { status: "failed", error: "El turno ya no esta en el historial." });
       return;
     }
 
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const related = relatedTo(turns);
-      const primary = await options.distiller.distill({ turns, related });
+      const timeout = new Promise<null>((resolve) => {
+        timer = setTimeout(() => { controller.abort(); resolve(null); }, options.timeoutMs ?? 30_000);
+      });
+      const primary = await Promise.race([
+        options.distiller.distill({ turns, related, signal: controller.signal }).catch((error) => {
+          if (!options.fallbackDistiller) throw error;
+          return null;
+        }),
+        timeout,
+      ]);
       const draft = primary && isReusableImprovementDraft(primary, turns)
         ? primary
         : await options.fallbackDistiller?.distill({ turns, related }) ?? null;
@@ -131,15 +146,13 @@ export function createImprovementCaptureService(
       const written = options.store.write(draft, sourceTurnIds.length > 0 ? sourceTurnIds : turns.map((turn) => turn.turnId));
       settle(job, { status: "succeeded", name: written.name, category: written.category });
     } catch (error) {
-      /*
-       * El destilado es trabajo de fondo de algo que el usuario ya da por
-       * hecho: si falla, se anota y se calla. Propagarlo solo serviria para
-       * tumbar al broker por una nota que nadie estaba esperando.
-       */
+      // Un fallo al extraer preferencias no borra la respuesta guardada.
       settle(job, {
         status: "failed",
         error: error instanceof Error ? error.message : "Fallo al guardar la mejora.",
       });
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -150,7 +163,9 @@ export function createImprovementCaptureService(
         return;
       }
       remember({ ...job, status: "running" });
-      const task = run(job).finally(() => {
+      const task = run(job).catch((error) => {
+        console.error("[improvements] No se pudo registrar el resultado del guardado:", error);
+      }).finally(() => {
         running.delete(task);
         pump();
       });
@@ -172,20 +187,34 @@ export function createImprovementCaptureService(
         turnId: persisted.turnId,
         status: "queued",
         createdAt: persisted.createdAt,
+        sourceTurns: persisted.sourceTurns,
       };
       remember(recovered);
       queue.push(recovered);
     }
   }
+  for (const job of [...jobs.values()]) {
+    if (jobs.size <= MAX_RETAINED_JOBS) break;
+    if (job.status === "succeeded" || job.status === "failed") jobs.delete(job.jobId);
+  }
   pump();
 
   return {
     capture(turnId: string): ImprovementCaptureResponse {
+      const original = options.listTurns(40).find((turn) => turn.turnId === turnId);
+      const saved = original ? options.savedReplies?.save(original) : options.savedReplies?.get(turnId);
+      const previous = [...jobs.values()].reverse().find((item) => item.turnId === turnId && item.status !== "failed");
+      if (previous) {
+        return { ok: true, jobId: previous.jobId, status: previous.status, message: "Guardando…", saved: Boolean(options.savedReplies?.get(turnId)) };
+      }
+      const sourceTurns = sourceTurnsFor(turnId);
+      if (!sourceTurns.length && saved) sourceTurns.push({ turnId, input: saved.input.slice(0, SOURCE_FIELD_MAX_CHARS), reply: saved.reply.slice(0, SOURCE_FIELD_MAX_CHARS) });
       const job: ImprovementCaptureJob = {
         jobId: jobIdFactory(),
         turnId,
         status: "queued",
         createdAt: now().toISOString(),
+        sourceTurns,
       };
       remember(job);
       queue.push(job);
@@ -195,7 +224,8 @@ export function createImprovementCaptureService(
         ok: true,
         jobId: job.jobId,
         status: job.status,
-        message: "Guardando…",
+        message: saved ? "Respuesta guardada. Puedes verla en Sistema." : "Guardando…",
+        saved: Boolean(saved),
       };
     },
     job(jobId: string) {

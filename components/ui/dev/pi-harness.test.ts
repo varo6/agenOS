@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getModels } from "@mariozechner/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 
 import type { AgentTaskClient } from "../../agent/agent-task-tool";
 import type { LearningMemoryClient } from "../../agent/learning-memory-tool";

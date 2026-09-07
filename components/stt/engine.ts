@@ -13,7 +13,8 @@ import type { SttPaths } from "./paths";
  * los mismos parametros, asi que las dos rutas transcriben igual.
  */
 
-export type SttEngineName = "whisper.cpp" | "voxtype";
+/** `groq` corre fuera del equipo; los otros dos cargan el modelo en local. */
+export type SttEngineName = "whisper.cpp" | "voxtype" | "groq";
 
 export type WhisperEngineStatus = {
   available: boolean;

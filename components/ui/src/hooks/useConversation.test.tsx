@@ -52,6 +52,36 @@ function setup(
 }
 
 describe("useConversation: guardar en memoria", () => {
+  test("confirma una respuesta persistida sin esperar al modelo ni sondearlo", async () => {
+    const { harness, result } = setup(() => Promise.resolve({ ok: true, saved: true, jobId: "j1", status: "running" }));
+    await act(async () => { await result.current.saveToMemory("turn_1"); });
+    expect(result.current.savedTurnIds.has("turn_1")).toBe(true);
+    expect(harness.getCaptureJob).not.toHaveBeenCalled();
+  });
+
+  test("un guardado antiguo no marca una conversación nueva", async () => {
+    let resolve!: (value: unknown) => void;
+    const { result } = setup(() => new Promise((done) => { resolve = done; }));
+    let pending!: Promise<void>;
+    act(() => { pending = result.current.saveToMemory("turn_1"); });
+    await act(async () => { await result.current.startNew(); });
+    await act(async () => { resolve({ ok: true, saved: true }); await pending; });
+    expect(result.current.savedTurnIds.size).toBe(0);
+    expect(result.current.savingTurnIds.size).toBe(0);
+  });
+
+  test("un servidor antiguo no mantiene el botón esperando indefinidamente", async () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = setup(undefined, () => Promise.resolve({ job: { status: "running" } }));
+      let pending!: Promise<void>;
+      await act(async () => { pending = result.current.saveToMemory("turn_1"); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(121_000); await pending; });
+      expect(result.current.failedTurnIds.has("turn_1")).toBe(true);
+      expect(result.current.savingTurnIds.size).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   test("marca el turno cuando el trabajo confirma la escritura", async () => {
     const { harness, result } = setup();
 
