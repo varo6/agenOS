@@ -16,12 +16,23 @@ export type PiPendingAttempt = {
   userCode?: string;
 };
 
+export type PiSpeechMessage = {
+  id: number;
+  /** Solo texto público del asistente, sin pensamiento ni resultados de tools. */
+  text: string;
+  complete: boolean;
+  /** Herramientas terminadas al comenzar este mensaje. */
+  afterTools: number;
+};
+
 export type PiTurnProgress = {
   startedAt: string;
   streamedText: string;
   currentTool: string | null;
   currentToolMessage?: string;
   completedTools: string[];
+  /** Ausente en runtimes antiguos. Los IDs son estables durante el turno. */
+  speechMessages?: PiSpeechMessage[];
 };
 
 export type PiTurnStatus = "processing" | "succeeded" | "cancelled" | "failed";

@@ -160,7 +160,7 @@ export function HomeView({
 
           <VoiceConsole
             buttonLabel={voice.buttonLabel}
-            onActivate={voice.start}
+            onActivate={() => { tts.stop(); voice.start(); }}
             onFinish={voice.finish}
             status={voice.status}
           />
@@ -171,7 +171,7 @@ export function HomeView({
             disabled={composerDisabled}
             disabledReason={composerHint}
             onChange={conversation.setDraft}
-            onSubmit={actions.sendDraft}
+            onSubmit={() => { tts.stop(); actions.sendDraft(); }}
             value={conversation.draft}
           />
 
@@ -199,7 +199,7 @@ export function HomeView({
               <VoiceConsole
                 buttonLabel={voice.buttonLabel}
                 className="shrink-0"
-                onActivate={voice.start}
+                onActivate={() => { tts.stop(); voice.start(); }}
                 onFinish={voice.finish}
                 size="compact"
                 status={voice.status}
@@ -211,7 +211,7 @@ export function HomeView({
                 disabled={composerDisabled}
                 disabledReason={composerHint}
                 onChange={conversation.setDraft}
-                onSubmit={actions.sendDraft}
+                onSubmit={() => { tts.stop(); actions.sendDraft(); }}
                 value={conversation.draft}
               />
             </div>
@@ -237,7 +237,7 @@ export function HomeView({
            * es deliberado: primero lo que acaba de pasar, después lo que hay que
            * buscar.
            */}
-          <LatestReply onStop={() => void conversation.stop()} turns={conversation.turns} />
+          <LatestReply onStop={() => { tts.stop(); void conversation.stop(); }} turns={conversation.turns} />
           <ActivityPanel activity={activity} />
           <ConversationPanel
             onSaveToMemory={conversation.saveToMemory}

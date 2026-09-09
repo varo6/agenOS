@@ -150,6 +150,15 @@ const deviceAttempt = {
 };
 
 describe("HomeView", () => {
+  test("para la narración antes de abrir el micrófono", () => {
+    const calls: string[] = [];
+    renderHome({
+      tts: { speaking: true, stop: () => { calls.push("stop"); } },
+      voice: { ...voiceController(), start: () => { calls.push("listen"); } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Hablar con Pi" }));
+    expect(calls).toEqual(["stop", "listen"]);
+  });
   test("las aprobaciones siguen accesibles aunque la cuenta del modelo esté desconectada", async () => {
     const resolve = vi.fn();
     renderHome({

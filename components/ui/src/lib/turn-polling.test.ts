@@ -3,6 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { turnPollDelayMs } from "./turn-polling";
 
 describe("turn polling cadence", () => {
+  test("keeps narration responsive during long and hidden turns", () => {
+    expect(turnPollDelayMs(120_000, false, true)).toBe(400);
+    expect(turnPollDelayMs(120_000, true, true)).toBe(750);
+  });
   test("is responsive at first and backs off for long turns", () => {
     expect(turnPollDelayMs(0, false)).toBe(750);
     expect(turnPollDelayMs(14_999, false)).toBe(750);

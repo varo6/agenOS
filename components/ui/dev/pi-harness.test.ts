@@ -247,6 +247,7 @@ function createHarnessFixture(fixtureOptions: { turnStore?: PiTurnStoreLike; age
     authData,
     loginDeferred,
     emitAssistantReply,
+    emitEvent: (event: unknown) => { for (const listener of listeners) listener(event); },
     emitToolResult,
     emitToolStart,
     emitToolUpdate,
@@ -684,6 +685,40 @@ describe("PiHarness", () => {
     expect(delegated).toEqual(["investiga precios"]);
     expect(result?.content[0]?.text).toContain("task_1");
     expect(result?.content[0]?.text).toContain("completada");
+  });
+
+  test("publishes separate speech messages during execution, excluding thinking and tools", async () => {
+    const { harness, authData, emitEvent, emitAssistantReply, emitToolStart, emitToolUpdate, emitToolResult, setPromptImpl } = createHarnessFixture();
+    authData.set("openai-codex", {
+      type: "oauth", access: "access-token", refresh: "refresh-token",
+      expires: Date.parse("2026-04-22T12:00:00.000Z"), accountId: "acct_123",
+    });
+    const snapshots: NonNullable<ReturnType<typeof harness.getLatestTurn>>[] = [];
+    setPromptImpl(async () => {
+      emitEvent({ type: "message_start", message: { role: "assistant" } });
+      emitEvent({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "private reasoning" } });
+      emitEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Voy a buscar" } });
+      snapshots.push(harness.getLatestTurn()!);
+      emitEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: " el archivo." } });
+      emitEvent({ type: "message_end", message: { role: "assistant", content: [
+        { type: "thinking", thinking: "private reasoning" },
+        { type: "text", text: "Voy a buscar el archivo." },
+        { type: "toolCall", name: "files_open", arguments: { path: "private-path" } },
+      ] } });
+      emitToolStart("files_open");
+      emitToolUpdate("files_open", "technical progress");
+      snapshots.push(harness.getLatestTurn()!);
+      emitToolResult("files_open", "technical result");
+      emitAssistantReply("Archivo abierto.");
+    });
+    await harness.chat({ message: "abre el archivo", source: "voice" });
+    expect(snapshots[0].status).toBe("processing");
+    expect(snapshots[0].progress.speechMessages).toEqual([{ id: 1, text: "Voy a buscar", complete: false, afterTools: 0 }]);
+    expect(snapshots[1].progress.speechMessages).toEqual([{ id: 1, text: "Voy a buscar el archivo.", complete: true, afterTools: 0 }]);
+    expect(harness.getLatestTurn()?.progress.speechMessages).toEqual([
+      { id: 1, text: "Voy a buscar el archivo.", complete: true, afterTools: 0 },
+      { id: 2, text: "Archivo abierto.", complete: true, afterTools: 1 },
+    ]);
   });
 
   test("exposes turn progress while a chat is running and clears it afterwards", async () => {

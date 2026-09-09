@@ -536,6 +536,7 @@ function snapshotTurn(turn: PiTurnState): PiTurnState {
     progress: {
       ...turn.progress,
       completedTools: [...turn.progress.completedTools],
+      ...(turn.progress.speechMessages ? { speechMessages: turn.progress.speechMessages.map((message) => ({ ...message })) } : {}),
     },
   };
 }
@@ -1166,6 +1167,17 @@ export class PiHarness {
     let streamedReply = "";
     let completedReply = "";
     let toolReply = "";
+    const speechMessages: NonNullable<PiTurnState["progress"]["speechMessages"]> = [];
+    turn.progress.speechMessages = speechMessages;
+    let speechId = 0;
+    let currentSpeech: (typeof speechMessages)[number] | undefined;
+    const beginSpeech = () => {
+      if (currentSpeech) currentSpeech.complete = true;
+      currentSpeech = { id: ++speechId, text: "", complete: false, afterTools: turn.progress.completedTools.length };
+      speechMessages.push(currentSpeech);
+      if (speechMessages.length > 32) speechMessages.shift();
+      return currentSpeech;
+    };
 
     try {
       model = this.selectModel();
@@ -1176,13 +1188,20 @@ export class PiHarness {
         throw new Error("Respuesta detenida.");
       }
       unsubscribe = session.subscribe((event) => {
+        if (this.cancelledTurnIds.has(turn.turnId)) return;
+        if (event.type === "message_start" && event.message?.role === "assistant") beginSpeech();
         if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
           streamedReply += event.assistantMessageEvent.delta ?? "";
           turn.progress.streamedText = truncateTurnText(streamedReply);
+          const speech = !currentSpeech || currentSpeech.complete ? beginSpeech() : currentSpeech;
+          speech.text = (speech.text + (event.assistantMessageEvent.delta ?? "")).slice(0, 16_000);
         }
 
         if (event.type === "message_end" && event.message?.role === "assistant") {
           completedReply = extractTextContent(event.message.content);
+          const speech = !currentSpeech || currentSpeech.complete ? beginSpeech() : currentSpeech;
+          speech.text = completedReply.slice(0, 16_000);
+          speech.complete = true;
         }
 
         if (event.type === "tool_execution_start" && event.toolName) {
