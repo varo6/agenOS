@@ -177,6 +177,7 @@ export type AgentPolicyResponse = {
 };
 
 export type AgentConfirmation = {
+  taskId?: string;
   schemaVersion: 1;
   confirmationId: string;
   correlationId: string;

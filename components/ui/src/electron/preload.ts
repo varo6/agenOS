@@ -1,8 +1,10 @@
 import type { ImprovementsBridge } from "../lib/improvements-bridge";
+import type { ActivityBridge } from "../lib/activity-client";
 import { contextBridge, ipcRenderer } from "electron";
 
 import {
   PI_IPC_CHANNELS,
+  ACTIVITY_IPC_CHANNELS,
   IMPROVEMENTS_IPC_CHANNELS,
   REMOTE_IPC_CHANNELS,
   SPEECH_IPC_CHANNELS,
@@ -258,3 +260,11 @@ contextBridge.exposeInMainWorld("agenosImprovements", {
   listSavedReplies: (query = "", offset = 0) => invokePi(IMPROVEMENTS_IPC_CHANNELS.list, { query, offset }),
   forgetSavedReply: (turnId) => invokePi(IMPROVEMENTS_IPC_CHANNELS.forget, { turnId }),
 } satisfies ImprovementsBridge);
+
+contextBridge.exposeInMainWorld("agenosActivity", {
+  isAvailable,
+  listConfirmations: () => invokePi(ACTIVITY_IPC_CHANNELS.confirmations),
+  listTasks: () => invokePi(ACTIVITY_IPC_CHANNELS.tasks),
+  taskEvents: (taskId) => invokePi(ACTIVITY_IPC_CHANNELS.events, { taskId }),
+  resolve: (confirmationId, decision) => invokePi(ACTIVITY_IPC_CHANNELS.resolve, { confirmationId, decision }),
+} satisfies ActivityBridge);

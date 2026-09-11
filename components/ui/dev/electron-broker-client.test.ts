@@ -3,6 +3,31 @@ import { describe, expect, test } from "bun:test";
 import { BrokerApiError, createBrokerPiClient } from "../src/electron/broker-pi-client";
 
 describe("Electron Pi broker client", () => {
+  test("autentica actividad y decisiones sin repetir un efecto ante un error", async () => {
+    const calls: Array<{ url: string; method: string; body: string }> = [];
+    const client = createBrokerPiClient({
+      readToken: () => "private-token",
+      fetchImpl: (async (input, init) => {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer private-token");
+        expect(init?.signal).toBeInstanceOf(AbortSignal);
+        calls.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") });
+        return init?.method === "POST"
+          ? Response.json({ message: "El envío falló." }, { status: 500 })
+          : Response.json([]);
+      }) as typeof fetch,
+    });
+    await client.listConfirmations();
+    await client.listTasks();
+    await client.taskEvents("t/1");
+    await expect(client.resolveConfirmation("c/1", "confirm")).rejects.toThrow("El envío falló.");
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://127.0.0.1:4173/api/agent/confirmations",
+      "http://127.0.0.1:4173/api/agent/tasks?limit=50",
+      "http://127.0.0.1:4173/api/agent/tasks/t%2F1/events",
+      "http://127.0.0.1:4173/api/agent/confirmations/c%2F1/confirm",
+    ]);
+    expect(calls[3].body).toBe(JSON.stringify({ explicitUserIntent: true }));
+  });
   test("autentica el guardado y limita la espera sin exponer el token al renderer", async () => {
     let called = false;
     const client = createBrokerPiClient({

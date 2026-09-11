@@ -78,3 +78,10 @@ export const IMPROVEMENTS_IPC_CHANNELS = {
   list: "agenos:improvements:list-saved",
   forget: "agenos:improvements:forget-saved",
 } as const;
+
+export const ACTIVITY_IPC_CHANNELS = {
+  confirmations: "agenos-activity:confirmations",
+  tasks: "agenos-activity:tasks",
+  events: "agenos-activity:events",
+  resolve: "agenos-activity:resolve",
+} as const;

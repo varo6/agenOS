@@ -120,6 +120,11 @@ function renderHome(overrides: Partial<HomeViewProps> = {}) {
   };
 
   const props: HomeViewProps = {
+    activity: {
+      confirmations: [], tasks: [], receipts: {}, busyIds: new Set(), error: null, checking: false,
+      refresh: vi.fn(), resolve: vi.fn(),
+      client: { listConfirmations: vi.fn(), listTasks: vi.fn(), taskEvents: vi.fn(), resolve: vi.fn() },
+    },
     actions,
     blockedReason: null,
     busy: false,
@@ -145,6 +150,28 @@ const deviceAttempt = {
 };
 
 describe("HomeView", () => {
+  test("para la narración antes de abrir el micrófono", () => {
+    const calls: string[] = [];
+    renderHome({
+      tts: { speaking: true, stop: () => { calls.push("stop"); } },
+      voice: { ...voiceController(), start: () => { calls.push("listen"); } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Hablar con Pi" }));
+    expect(calls).toEqual(["stop", "listen"]);
+  });
+  test("las aprobaciones siguen accesibles aunque la cuenta del modelo esté desconectada", async () => {
+    const resolve = vi.fn();
+    renderHome({
+      blockedReason: "disconnected", session: session({ authState: "disconnected" }),
+      activity: {
+        confirmations: [{ schemaVersion: 1, confirmationId: "c1", correlationId: "corr1", timestamp: "2026-09-07T12:00:00Z", source: "ui", status: "pending", tool: "shell.exec", summary: "Cambiar un servicio", input: { command: "systemctl restart agenos" } }],
+        tasks: [], receipts: {}, busyIds: new Set(), error: null, checking: false, refresh: vi.fn(), resolve,
+        client: { listConfirmations: vi.fn(), listTasks: vi.fn(), taskEvents: vi.fn(), resolve: vi.fn() },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar: Ejecutar un comando" }));
+    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({ confirmationId: "c1" }), "deny");
+  });
   test("con todo listo la pantalla no pide nada: solo hablar", () => {
     renderHome();
 

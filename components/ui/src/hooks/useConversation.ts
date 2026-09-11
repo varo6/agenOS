@@ -6,6 +6,7 @@ import type { createImprovementsClient } from "../lib/improvements-client";
 import { PiClientError, type createPiClient } from "../lib/pi-client";
 import type { PiChatSource, PiTurnState } from "../lib/pi-types";
 import { turnPollDelayMs } from "../lib/turn-polling";
+import { getTtsBridge } from "../lib/tts-bridge";
 import { useLatest } from "./useLatest";
 import type { AlertSink } from "./useSystemAlert";
 
@@ -281,6 +282,7 @@ export function useConversation({
       const delay = turnPollDelayMs(
         performance.now() - startedAt,
         document.visibilityState === "hidden",
+        getTtsBridge()?.isAvailable() ?? false,
       );
       timeoutId = window.setTimeout(() => void tick(), delay);
     };

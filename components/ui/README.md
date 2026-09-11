@@ -2,6 +2,9 @@
 
 Proyecto React de la shell principal del sistema. Aquí vive el micro, el comando local y la entrada mínima al mantenimiento.
 
+Inicio también muestra tareas y aprobaciones pendientes con su contenido y
+resultado. Ver [tareas y aprobaciones](../../docs/architecture/activity-approvals.md).
+
 ## Desarrollo local
 
 ```bash

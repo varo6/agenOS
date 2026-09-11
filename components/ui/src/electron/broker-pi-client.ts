@@ -2,6 +2,8 @@ import type { ImprovementCaptureResponse, ImprovementCaptureJobResponse, SavedRe
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AgentConfirmation } from "../lib/system-types";
+import type { ConfirmationDecision, ConfirmationResult, WorkerTask, WorkerProgressEvent } from "../lib/activity-client";
 
 import type {
   PiAuthAttemptResponse,
@@ -69,6 +71,20 @@ export function createBrokerPiClient(options: BrokerPiClientOptions = {}) {
   const memoryRequest = <T>(path: string, init: RequestInit = {}) => request<T>(path, { ...init, signal: AbortSignal.timeout(8_000) });
 
   return {
+    listConfirmations(): Promise<AgentConfirmation[]> {
+      return memoryRequest("/api/agent/confirmations");
+    },
+    listTasks(): Promise<WorkerTask[]> {
+      return memoryRequest("/api/agent/tasks?limit=50");
+    },
+    taskEvents(taskId: string): Promise<WorkerProgressEvent[]> {
+      return memoryRequest(`/api/agent/tasks/${encodeURIComponent(taskId)}/events`);
+    },
+    resolveConfirmation(id: string, decision: ConfirmationDecision): Promise<ConfirmationResult> {
+      return request(`/api/agent/confirmations/${encodeURIComponent(id)}/${decision}`, {
+        method: "POST", body: JSON.stringify({ explicitUserIntent: true }), signal: AbortSignal.timeout(120_000),
+      });
+    },
     captureTurn(turnId: string): Promise<ImprovementCaptureResponse> {
       return memoryRequest("/api/agent/improvements/capture", { method: "POST", body: JSON.stringify({ turnId }) });
     },

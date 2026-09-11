@@ -6,7 +6,9 @@ const LONG_TURN_THRESHOLD_MS = 60_000;
  * calls and tools that have already been running for a while. A hidden shell
  * has no useful intermediate animation, so it can wait longer.
  */
-export function turnPollDelayMs(elapsedMs: number, hidden: boolean): number {
+export function turnPollDelayMs(elapsedMs: number, hidden: boolean, voiceAvailable = false): number {
+  // La narración sigue siendo útil cuando el usuario está en otra ventana.
+  if (voiceAvailable) return hidden ? 750 : 400;
   if (hidden) {
     return 5_000;
   }
